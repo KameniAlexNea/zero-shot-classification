@@ -9,13 +9,15 @@ class OllamaClient:
         self.client = Client()
         self.model = model
 
-    def generate_dataset(self, num_samples: int, min_labels: int = 1, max_labels: int = 5) -> List[Dict[str, List[str]]]:
+    def generate_dataset(
+        self, num_samples: int, min_labels: int = 1, max_labels: int = 5
+    ) -> List[Dict[str, List[str]]]:
         import random
-        
+
         # Randomize temperature and seed for diversity
         temperature = random.uniform(0.7, 0.9)
         seed = random.randint(1, 100000)
-        
+
         prompt = f"""You are an expert data generator for machine learning classification tasks.
 
 TASK: Generate exactly {num_samples} diverse text examples for zero-shot classification training.
@@ -45,36 +47,41 @@ OUTPUT FORMAT: Return as valid JSON array only:
 ]
 
 Generate exactly {num_samples} diverse entries:"""
-        
+
         response = self.client.generate(
-            model=self.model, 
-            prompt=prompt, 
-            temperature=temperature,
-            options={"seed": seed}
+            model=self.model,
+            prompt=prompt,
+            options={
+                "seed": seed,
+                "temperature": temperature,
+            },
         )
         data = parse_json(response.text.strip())
         return data if isinstance(data, list) else []
 
-    def generate_large_dataset(self, total_samples: int, batch_size: int = 50, output_dir: str = "batches") -> List[Dict[str, List[str]]]:
+    def generate_large_dataset(
+        self, total_samples: int, batch_size: int = 50, output_dir: str = "batches"
+    ) -> List[Dict[str, List[str]]]:
         import os
+
         os.makedirs(output_dir, exist_ok=True)
-        
+
         all_data = []
         batches = (total_samples + batch_size - 1) // batch_size
-        
+
         for batch_num in range(batches):
             current_batch_size = min(batch_size, total_samples - len(all_data))
             batch_file = os.path.join(output_dir, f"batch_{batch_num + 1:04d}.json")
-            
+
             batch_data = self.generate_dataset(current_batch_size)
-            
+
             # Save batch immediately
             with open(batch_file, "w") as f:
                 json.dump(batch_data, f, indent=2)
-            
+
             all_data.extend(batch_data)
             print(f"✓ Batch {batch_num + 1} saved to {batch_file}")
-        
+
         return all_data
 
 
@@ -131,7 +138,9 @@ def main():
     client = OllamaClient(model=args.model)
 
     if args.num_samples > args.batch_size:
-        dataset = client.generate_large_dataset(args.num_samples, args.batch_size, args.batch_dir)
+        dataset = client.generate_large_dataset(
+            args.num_samples, args.batch_size, args.batch_dir
+        )
     else:
         dataset = client.generate_dataset(args.num_samples)
 
