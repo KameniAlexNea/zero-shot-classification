@@ -4,6 +4,7 @@ from ollama import Client
 from llm_output_parser import parse_json
 from tqdm import tqdm
 from loguru import logger
+from prompts import generate_prompt
 
 
 class OllamaClient:
@@ -13,35 +14,11 @@ class OllamaClient:
 
     def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
         """Create the prompt for generating synthetic data."""
-        return f"""You are an expert data generator for machine learning classification tasks.
-
-TASK: Generate exactly {num_samples} diverse text examples for zero-shot classification training.
-
-WHAT IS A LABEL: A label is a category or classification that describes what the text is about, its purpose, tone, domain, or type. Labels help classify text into meaningful groups for machine learning.
-
-Examples of good labels:
-- Content type: "news_article", "product_review", "social_media_post", "email", "instruction"  
-- Domain: "technology", "sports", "finance", "healthcare", "entertainment", "politics"
-- Sentiment: "positive", "negative", "neutral", "complaint", "praise"
-- Intent: "question", "request", "announcement", "opinion", "fact"
-- Style: "formal", "casual", "technical", "promotional", "educational"
-
-REQUIREMENTS:
-- Create {num_samples} completely different sentences (5-25 words each)
-- Mix topics: technology, business, sports, health, entertainment, science, politics, lifestyle, education
-- Mix text types: statements, questions, reviews, news, instructions, opinions, social posts
-- Mix writing styles: formal, casual, technical, promotional, conversational
-- For each sentence, provide {min_labels}-{max_labels} relevant, specific labels
-- Labels should be descriptive and useful for classification
-- Ensure maximum diversity in both content and labels
-
-OUTPUT FORMAT: Return as valid JSON array only:
-[
-  {{"sentence": "The new smartphone camera produces amazing low-light photos.", "labels": ["technology", "product_review", "positive", "consumer_electronics"]}},
-  {{"sentence": "How do I reset my password for the company portal?", "labels": ["question", "technical_support", "workplace", "instruction_request"]}}
-]
-
-Generate exactly {num_samples} diverse entries:"""
+        return generate_prompt(
+            num_samples=num_samples,
+            min_labels=min_labels,
+            max_labels=max_labels,
+        )
 
     def generate_dataset(
         self, num_samples: int, min_labels: int = 1, max_labels: int = 5
@@ -146,13 +123,13 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="synthetic_data.json",
+        default="data/synthetic_data.json",
         help="Output JSON filepath",
     )
     parser.add_argument(
         "--batch-dir",
         type=str,
-        default="batches",
+        default="data/batches",
         help="Directory to save batch files (default: batches)",
     )
     args = parser.parse_args()
