@@ -2,6 +2,8 @@ import json
 from typing import List, Dict
 from ollama import Client
 from llm_output_parser import parse_json
+from tqdm import tqdm
+from loguru import logger
 
 
 class OllamaClient:
@@ -9,16 +11,9 @@ class OllamaClient:
         self.client = Client()
         self.model = model
 
-    def generate_dataset(
-        self, num_samples: int, min_labels: int = 1, max_labels: int = 5
-    ) -> List[Dict[str, List[str]]]:
-        import random
-
-        # Randomize temperature and seed for diversity
-        temperature = random.uniform(0.7, 0.9)
-        seed = random.randint(1, 100000)
-
-        prompt = f"""You are an expert data generator for machine learning classification tasks.
+    def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
+        """Create the prompt for generating synthetic data."""
+        return f"""You are an expert data generator for machine learning classification tasks.
 
 TASK: Generate exactly {num_samples} diverse text examples for zero-shot classification training.
 
@@ -48,6 +43,17 @@ OUTPUT FORMAT: Return as valid JSON array only:
 
 Generate exactly {num_samples} diverse entries:"""
 
+    def generate_dataset(
+        self, num_samples: int, min_labels: int = 1, max_labels: int = 5
+    ) -> List[Dict[str, List[str]]]:
+        import random
+
+        # Randomize temperature and seed for diversity
+        temperature = random.uniform(0.7, 0.9)
+        seed = random.randint(1, 100000)
+
+        prompt = self._create_prompt(num_samples, min_labels, max_labels)
+
         response = self.client.generate(
             model=self.model,
             prompt=prompt,
@@ -56,7 +62,7 @@ Generate exactly {num_samples} diverse entries:"""
                 "temperature": temperature,
             },
         )
-        data = parse_json(response.text.strip())
+        data = parse_json(response.response.strip())
         return data if isinstance(data, list) else []
 
     def generate_large_dataset(
@@ -69,19 +75,35 @@ Generate exactly {num_samples} diverse entries:"""
         all_data = []
         batches = (total_samples + batch_size - 1) // batch_size
 
-        for batch_num in range(batches):
-            current_batch_size = min(batch_size, total_samples - len(all_data))
-            batch_file = os.path.join(output_dir, f"batch_{batch_num + 1:04d}.json")
+        # Use tqdm for progress tracking
+        with tqdm(total=batches, desc="Generating batches", unit="batch") as pbar:
+            for batch_num in range(batches):
+                current_batch_size = min(batch_size, total_samples - len(all_data))
+                batch_file = os.path.join(output_dir, f"batch_{batch_num + 1:04d}.json")
 
-            batch_data = self.generate_dataset(current_batch_size)
+                # Update progress bar description
+                pbar.set_description(
+                    f"Batch {batch_num + 1}/{batches} ({current_batch_size} samples)"
+                )
 
-            # Save batch immediately
-            with open(batch_file, "w") as f:
-                json.dump(batch_data, f, indent=2)
+                batch_data = self.generate_dataset(current_batch_size)
 
-            all_data.extend(batch_data)
-            print(f"✓ Batch {batch_num + 1} saved to {batch_file}")
+                # Save batch immediately
+                with open(batch_file, "w") as f:
+                    json.dump(batch_data, f, indent=2)
 
+                all_data.extend(batch_data)
+
+                # Update progress bar
+                pbar.set_postfix(
+                    {
+                        "samples": len(all_data),
+                        "file": f"batch_{batch_num + 1:04d}.json",
+                    }
+                )
+                pbar.update(1)
+
+        logger.success(f"Generated {len(all_data)} samples across {batches} batches")
         return all_data
 
 
@@ -135,19 +157,24 @@ def main():
     )
     args = parser.parse_args()
 
+    logger.info(f"Starting synthetic data generation with model: {args.model}")
+    logger.info(f"Target samples: {args.num_samples}, Batch size: {args.batch_size}")
+
     client = OllamaClient(model=args.model)
 
     if args.num_samples > args.batch_size:
+        logger.info("Using batch processing for large dataset")
         dataset = client.generate_large_dataset(
             args.num_samples, args.batch_size, args.batch_dir
         )
     else:
+        logger.info("Generating small dataset in single batch")
         dataset = client.generate_dataset(args.num_samples)
 
     with open(args.output, "w") as f:
         json.dump(dataset, f, indent=2)
 
-    print(f"Generated {len(dataset)} samples and saved to {args.output}")
+    logger.success(f"Generated {len(dataset)} samples and saved to {args.output}")
 
 
 if __name__ == "__main__":

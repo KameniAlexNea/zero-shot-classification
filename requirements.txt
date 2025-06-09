@@ -1,3 +1,5 @@
 ollama
 llm-output-parser
+tqdm
+loguru
 loguru
