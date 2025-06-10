@@ -1,5 +1,12 @@
-ollama
-llm-output-parser
-tqdm
-loguru
-loguru
+torch>=2.0.0
+transformers>=4.30.0
+sentence-transformers>=2.2.0
+scikit-learn>=1.3.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+tqdm>=4.65.0
+loguru>=0.7.0
+wandb>=0.15.0
+datasets>=2.12.0
+accelerate>=0.20.0

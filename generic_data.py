@@ -56,7 +56,7 @@ class OllamaClient:
         with tqdm(total=batches, desc="Generating batches", unit="batch") as pbar:
             for batch_num in range(batches):
                 current_batch_size = min(batch_size, total_samples - len(all_data))
-                batch_file = os.path.join(output_dir, f"batch_{batch_num + 1:04d}.json")
+                batch_file = os.path.join(output_dir, f"batch_{batch_num + 1:06d}.json")
 
                 # Update progress bar description
                 pbar.set_description(
