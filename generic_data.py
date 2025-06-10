@@ -86,13 +86,13 @@ def main():
         "--provider",
         type=str,
         choices=["groq", "ollama"],
-        default="groq",
+        default="ollama",
         help="LLM provider to use",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="llama-3.3-70b-versatile",
+        default="cogito:latest",
         help="Model name to use",
     )
     parser.add_argument(
