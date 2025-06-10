@@ -1,16 +1,17 @@
 import json
+import os
 from typing import List, Dict
-from ollama import Client
-from llm_output_parser import parse_json
 from tqdm import tqdm
 from loguru import logger
 from prompts import generate_prompt
+from llm_output_parser import parse_json
+from llm_clients import create_llm_client, BaseLLMClient
 
 
-class OllamaClient:
-    def __init__(self, model: str = "phi4:latest"):
-        self.client = Client()
-        self.model = model
+class DatasetGenerator:
+    def __init__(self, llm_client: BaseLLMClient):
+        self.llm_client = llm_client
+        logger.info(f"Initialized DatasetGenerator with LLM client")
 
     def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
         """Create the prompt for generating synthetic data."""
@@ -23,30 +24,20 @@ class OllamaClient:
     def generate_dataset(
         self, num_samples: int, min_labels: int = 1, max_labels: int = 5
     ) -> List[Dict[str, List[str]]]:
-        import random
-
-        # Randomize temperature and seed for diversity
-        temperature = random.uniform(0.7, 0.9)
-        seed = random.randint(1, 100000)
-
+        """Generate a single batch of synthetic data."""
         prompt = self._create_prompt(num_samples, min_labels, max_labels)
 
-        response = self.client.generate(
-            model=self.model,
-            prompt=prompt,
-            options={
-                "seed": seed,
-                "temperature": temperature,
-            },
-        )
-        data = parse_json(response.response.strip())
+        # LLM call - clearly separated
+        raw_response = self.llm_client.generate_text(prompt)
+
+        # Parse response
+        data = parse_json(raw_response)
         return data if isinstance(data, list) else []
 
     def generate_large_dataset(
         self, total_samples: int, batch_size: int = 50, output_dir: str = "batches"
     ) -> List[Dict[str, List[str]]]:
-        import os
-
+        """Generate large dataset in batches with progress tracking."""
         os.makedirs(output_dir, exist_ok=True)
 
         all_data = []
@@ -63,6 +54,7 @@ class OllamaClient:
                     f"Batch {batch_num + 1}/{batches} ({current_batch_size} samples)"
                 )
 
+                # Generate batch data
                 batch_data = self.generate_dataset(current_batch_size)
 
                 # Save batch immediately
@@ -75,7 +67,7 @@ class OllamaClient:
                 pbar.set_postfix(
                     {
                         "samples": len(all_data),
-                        "file": f"batch_{batch_num + 1:04d}.json",
+                        "file": f"batch_{batch_num + 1:06d}.json",
                     }
                 )
                 pbar.update(1)
@@ -91,10 +83,22 @@ def main():
         description="Generate synthetic data for zero-shot text classification."
     )
     parser.add_argument(
+        "--provider",
+        type=str,
+        choices=["groq", "ollama"],
+        default="groq",
+        help="LLM provider to use",
+    )
+    parser.add_argument(
         "--model",
         type=str,
-        default="phi4:latest",
-        help="Name of the Ollama model to use",
+        default="llama-3.3-70b-versatile",
+        help="Model name to use",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        help="API key for cloud providers (optional if set in env)",
     )
     parser.add_argument(
         "--num-samples",
@@ -129,25 +133,39 @@ def main():
     parser.add_argument(
         "--batch-dir",
         type=str,
-        default="data/batches",
-        help="Directory to save batch files (default: batches)",
+        default="data/batches_cogito",
+        help="Directory to save batch files",
     )
+
     args = parser.parse_args()
 
-    logger.info(f"Starting synthetic data generation with model: {args.model}")
+    logger.info(f"Starting synthetic data generation with {args.provider} provider")
+    logger.info(f"Model: {args.model}")
     logger.info(f"Target samples: {args.num_samples}, Batch size: {args.batch_size}")
 
-    client = OllamaClient(model=args.model)
+    # Create LLM client
+    try:
+        llm_client = create_llm_client(args.provider, args.model, args.api_key)
+    except Exception as e:
+        logger.error(f"Failed to create LLM client: {e}")
+        return
 
+    # Create dataset generator
+    generator = DatasetGenerator(llm_client)
+
+    # Generate data
     if args.num_samples > args.batch_size:
         logger.info("Using batch processing for large dataset")
-        dataset = client.generate_large_dataset(
+        dataset = generator.generate_large_dataset(
             args.num_samples, args.batch_size, args.batch_dir
         )
     else:
         logger.info("Generating small dataset in single batch")
-        dataset = client.generate_dataset(args.num_samples)
+        dataset = generator.generate_dataset(
+            args.num_samples, args.min_labels, args.max_labels
+        )
 
+    # Save final dataset
     with open(args.output, "w") as f:
         json.dump(dataset, f, indent=2)
 

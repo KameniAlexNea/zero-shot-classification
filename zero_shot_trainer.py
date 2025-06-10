@@ -1,17 +1,13 @@
 import json
 import os
 import glob
-from typing import Dict, List, Tuple, Set, Optional
+from typing import List, Tuple
 from dataclasses import dataclass
-from collections import defaultdict, Counter
-import numpy as np
+from collections import Counter
 import torch
 from datasets import Dataset
 from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer, losses, util
 from sentence_transformers.evaluation import BinaryClassificationEvaluator
-from sentence_transformers.readers import InputExample
-from sklearn.metrics import accuracy_score, f1_score
-import matplotlib.pyplot as plt
 from tqdm import tqdm
 import wandb
 from loguru import logger
@@ -28,7 +24,6 @@ class TrainingConfig:
     max_length: int = 512
     warmup_steps: int = 1000
     weight_decay: float = 0.01
-    negative_samples: int = 5  # Number of negative labels per positive
     scale: float = 20.0  # Scale for similarity function
     evaluation_steps: int = 1000
 
@@ -164,7 +159,7 @@ class ZeroShotTrainer:
         train_labels = set(label_info["train_labels"])
         test_labels = set(label_info["test_labels"])
         
-        logger.info(f"Loaded datasets:")
+        logger.info("Loaded datasets:")
         logger.info(f"  Train pairs: {len(train_dataset)}")
         logger.info(f"  Test pairs: {len(test_dataset)}")
         logger.info(f"  Train labels: {len(train_labels)}")
