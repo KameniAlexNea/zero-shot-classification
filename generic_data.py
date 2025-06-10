@@ -104,13 +104,13 @@ def main():
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=100,
+        default=100_000,
         help="Number of synthetic samples to generate",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=50,
+        default=15,
         help="Batch size for large dataset generation (default: 50)",
     )
     parser.add_argument(

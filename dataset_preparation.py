@@ -170,7 +170,7 @@ class DatasetPreparator:
                         test_texts.append(text)
                         test_text_labels.append(test_labels_only)
 
-        logger.info(f"Final split:")
+        logger.info("Final split:")
         logger.info(f"  Train: {len(train_texts)} texts")
         logger.info(f"  Test: {len(test_texts)} texts")
 
@@ -293,7 +293,7 @@ def main():
     parser.add_argument(
         "--batch-dir",
         type=str,
-        required=True,
+        default="data/batches*",
         help="Directory containing batch JSON files",
     )
     parser.add_argument(
