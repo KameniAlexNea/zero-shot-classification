@@ -83,41 +83,29 @@ class ZeroShotTrainer:
     
     def create_contrastive_dataset(self, texts: List[str], labels: List[List[str]]) -> Dataset:
         """
-        Create dataset for contrastive learning with (anchor, positive, negative) triplets.
-        Each text is an anchor, its labels are positives, and random other labels are negatives.
+        Create dataset for contrastive learning with (anchor, positive) pairs.
+        The loss function will handle negative sampling automatically using in-batch negatives.
         """
         logger.info("Creating contrastive learning dataset...")
         
         dataset_dict = {
             'anchor': [],
-            'positive': [],
-            'negative': []
+            'positive': []
         }
         
-        all_labels_list = list(self.all_labels)
-        total_triplets = 0
+        total_pairs = 0
         
-        for text, text_labels in tqdm(zip(texts, labels), total=len(texts), desc="Creating triplets"):
-            # For each text (anchor)
+        for text, text_labels in tqdm(zip(texts, labels), total=len(texts), desc="Creating pairs"):
+            # For each text (anchor), create pairs with all its positive labels
             for positive_label in text_labels:
-                # Get negative labels (labels not assigned to this text)
-                negative_labels = [l for l in all_labels_list if l not in text_labels]
-                
-                if negative_labels:
-                    # Sample multiple negatives for this positive
-                    num_negatives = min(self.config.negative_samples, len(negative_labels))
-                    sampled_negatives = random.sample(negative_labels, num_negatives)
-                    
-                    for negative_label in sampled_negatives:
-                        dataset_dict['anchor'].append(text)
-                        dataset_dict['positive'].append(positive_label)
-                        dataset_dict['negative'].append(negative_label)
-                        total_triplets += 1
+                dataset_dict['anchor'].append(text)
+                dataset_dict['positive'].append(positive_label)
+                total_pairs += 1
         
-        logger.info(f"Created {total_triplets} contrastive triplets")
+        logger.info(f"Created {total_pairs} (anchor, positive) pairs")
         logger.info("  Anchor: text samples")
         logger.info("  Positive: labels that match the text")
-        logger.info("  Negative: labels that do NOT match the text")
+        logger.info("  Negatives: handled automatically by loss function using in-batch sampling")
         
         return Dataset.from_dict(dataset_dict)
     
@@ -150,8 +138,8 @@ class ZeroShotTrainer:
         
         return list(zip(eval_sentences1, eval_sentences2)), eval_labels
     
-    def train(self, batch_dir: str, output_dir: str = "models/zero_shot_classifier"):
-        """Complete training pipeline using SentenceTransformerTrainer."""
+    def train(self, prepared_data_dir: str, output_dir: str = "models/zero_shot_classifier"):
+        """Complete training pipeline using pre-prepared datasets."""
         
         # Initialize wandb
         wandb.init(
@@ -160,25 +148,34 @@ class ZeroShotTrainer:
             name=f"zero-shot-contrastive-{self.config.model_name.split('/')[-1]}"
         )
         
-        # Load data
-        logger.info("Loading training data...")
-        texts, labels = self.load_batch_data(batch_dir)
+        # Load prepared datasets
+        logger.info("Loading pre-prepared datasets...")
+        train_dataset = Dataset.load_from_disk(os.path.join(prepared_data_dir, "train_contrastive"))
+        test_dataset = Dataset.load_from_disk(os.path.join(prepared_data_dir, "test_contrastive"))
         
-        # Split data
-        split_idx = int(len(texts) * 0.8)
-        train_texts, val_texts = texts[:split_idx], texts[split_idx:]
-        train_labels, val_labels = labels[:split_idx], labels[split_idx:]
+        # Load evaluation data
+        with open(os.path.join(prepared_data_dir, "evaluation_data.json"), 'r') as f:
+            eval_data = json.load(f)
         
-        logger.info(f"Training samples: {len(train_texts)}")
-        logger.info(f"Validation samples: {len(val_texts)}")
+        # Load label info
+        with open(os.path.join(prepared_data_dir, "label_info.json"), 'r') as f:
+            label_info = json.load(f)
         
-        # Create datasets
-        logger.info("Preparing contrastive learning dataset...")
-        train_dataset = self.create_contrastive_dataset(train_texts, train_labels)
+        train_labels = set(label_info["train_labels"])
+        test_labels = set(label_info["test_labels"])
         
-        # Create evaluation data
-        logger.info("Preparing evaluation data...")
-        eval_sentences, eval_labels = self.create_evaluation_data(val_texts, val_labels)
+        logger.info(f"Loaded datasets:")
+        logger.info(f"  Train pairs: {len(train_dataset)}")
+        logger.info(f"  Test pairs: {len(test_dataset)}")
+        logger.info(f"  Train labels: {len(train_labels)}")
+        logger.info(f"  Test labels: {len(test_labels)} (completely unseen)")
+        
+        # Verify no label overlap
+        label_overlap = train_labels & test_labels
+        if label_overlap:
+            logger.warning(f"Found label overlap: {label_overlap}")
+        else:
+            logger.success("✓ No label overlap between train and test sets")
         
         # Initialize model
         logger.info("Initializing SentenceTransformer...")
@@ -187,9 +184,9 @@ class ZeroShotTrainer:
             device='cuda' if torch.cuda.is_available() else 'cpu'
         )
         
-        # Create loss function - CachedMultipleNegativesSymmetricRankingLoss for efficient large batch training
-        logger.info("Setting up CachedMultipleNegativesSymmetricRankingLoss...")
-        train_loss = losses.CachedMultipleNegativesSymmetricRankingLoss(
+        # Create loss function - handles negatives automatically with in-batch sampling
+        logger.info("Setting up CachedMultipleNegativesRankingLoss...")
+        train_loss = losses.CachedMultipleNegativesRankingLoss(
             model=self.model,
             scale=self.config.scale,
             mini_batch_size=self.config.mini_batch_size,
@@ -197,13 +194,16 @@ class ZeroShotTrainer:
             similarity_fct=util.cos_sim
         )
         
-        # Create evaluator
-        logger.info("Setting up BinaryClassificationEvaluator...")
+        # Create evaluator for UNSEEN LABELS
+        logger.info("Setting up BinaryClassificationEvaluator with UNSEEN labels...")
+        test_eval_pairs = eval_data["test_eval_pairs"]
+        test_eval_labels = eval_data["test_eval_labels"]
+        
         evaluator = BinaryClassificationEvaluator(
-            sentences1=[pair[0] for pair in eval_sentences],
-            sentences2=[pair[1] for pair in eval_sentences],
-            labels=eval_labels,
-            name="zero_shot_eval"
+            sentences1=[pair[0] for pair in test_eval_pairs],
+            sentences2=[pair[1] for pair in test_eval_pairs],
+            labels=test_eval_labels,
+            name="zero_shot_unseen_labels"
         )
         
         # Training arguments
@@ -221,7 +221,7 @@ class ZeroShotTrainer:
             'save_steps': self.config.evaluation_steps,
             'save_strategy': "steps",
             'load_best_model_at_end': True,
-            'metric_for_best_model': "zero_shot_eval_max_ap",
+            'metric_for_best_model': "zero_shot_unseen_labels_max_ap",
             'greater_is_better': True,
             'report_to': "wandb",
             'run_name': f"zero-shot-{self.config.model_name.split('/')[-1]}",
@@ -240,75 +240,66 @@ class ZeroShotTrainer:
         )
         
         # Train model
-        logger.info("Starting contrastive training...")
+        logger.info("Starting contrastive training with automatic negative sampling...")
         logger.info("Training approach:")
-        logger.info("  • Anchor: Original text")
-        logger.info("  • Positive: Labels that match the text")
-        logger.info("  • Negative: Labels that do NOT match the text")
+        logger.info("  • Input: (text, positive_label) pairs")
+        logger.info("  • Negatives: automatically sampled from other labels in the batch")
         logger.info("  • Goal: Learn embeddings where text and matching labels are close")
+        logger.info("🎯 Key insight: Model is evaluated on completely unseen labels!")
         
         trainer.train()
         
         # Save model and metadata
         os.makedirs(output_dir, exist_ok=True)
-        
-        # Save the trained model
         self.model.save(output_dir)
         
-        # Save label vocabulary
-        with open(os.path.join(output_dir, 'all_labels.json'), 'w') as f:
-            json.dump(list(self.all_labels), f, indent=2)
+        # Copy label info to model directory
+        with open(os.path.join(output_dir, 'label_info.json'), 'w') as f:
+            json.dump(label_info, f, indent=2)
             
         # Save config
         with open(os.path.join(output_dir, 'training_config.json'), 'w') as f:
             json.dump(self.config.__dict__, f, indent=2)
         
-        # Final evaluation
-        logger.info("Performing final evaluation...")
-        final_score = evaluator(self.model, output_path=os.path.join(output_dir, "final_eval.csv"))
+        # Final evaluation on UNSEEN labels
+        logger.info("Performing final evaluation on UNSEEN labels...")
+        final_score = evaluator(self.model, output_path=os.path.join(output_dir, "final_eval_unseen.csv"))
         
-        logger.info(f"Final evaluation score: {final_score:.4f}")
+        logger.success(f"Final zero-shot score on UNSEEN labels: {final_score:.4f}")
         
-        # Log final results
-        wandb.log({"final_eval_score": final_score})
+        wandb.log({"final_eval_unseen_labels": final_score})
         wandb.finish()
         
-        logger.success(f"Training completed! SentenceTransformer model saved to {output_dir}")
-        logger.success("Model is ready for zero-shot classification via similarity search!")
-        
+        logger.success(f"Training completed! Model saved to {output_dir}")
         return self.model
 
 
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="Train zero-shot classification model using contrastive learning")
-    parser.add_argument("--batch-dir", type=str, required=True, help="Directory containing batch JSON files")
+    parser = argparse.ArgumentParser(description="Train zero-shot classification model using prepared datasets")
+    parser.add_argument("--prepared-data-dir", type=str, required=True, help="Directory containing prepared datasets")
     parser.add_argument("--output-dir", type=str, default="models/zero_shot_classifier", help="Output directory for trained model")
     parser.add_argument("--model-name", type=str, default="sentence-transformers/all-MiniLM-L6-v2", help="Base model name")
     parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
     parser.add_argument("--mini-batch-size", type=int, default=32, help="Mini batch size for gradient caching")
     parser.add_argument("--learning-rate", type=float, default=2e-5, help="Learning rate")
     parser.add_argument("--num-epochs", type=int, default=5, help="Number of training epochs")
-    parser.add_argument("--negative-samples", type=int, default=5, help="Number of negative samples per positive")
     parser.add_argument("--scale", type=float, default=20.0, help="Scale for similarity function")
     
     args = parser.parse_args()
     
-    # Create training configuration
     config = TrainingConfig(
         model_name=args.model_name,
         batch_size=args.batch_size,
         mini_batch_size=args.mini_batch_size,
         learning_rate=args.learning_rate,
         num_epochs=args.num_epochs,
-        negative_samples=args.negative_samples,
         scale=args.scale
     )
     
-    # Initialize and run trainer
     trainer = ZeroShotTrainer(config)
-    trainer.train(args.batch_dir, args.output_dir)
+    trainer.train(args.prepared_data_dir, args.output_dir)
 
 
 if __name__ == "__main__":
