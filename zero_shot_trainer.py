@@ -8,11 +8,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset
+from datasets import Dataset
 from transformers import (
     AutoTokenizer, AutoModel, AutoConfig,
     TrainingArguments, Trainer,
-    AutoModelForSequenceClassification
+    AutoModelForSequenceClassification,
+    DataCollatorWithPadding
 )
 from sklearn.metrics import accuracy_score, f1_score
 import matplotlib.pyplot as plt
@@ -38,65 +39,6 @@ class TrainingConfig:
     negative_samples: int = 3  # Number of negative labels per positive
 
 
-class ZeroShotDataset(Dataset):
-    def __init__(self, texts: List[str], labels: List[List[str]], tokenizer, 
-                 config: TrainingConfig, all_labels: Set[str], is_training: bool = True):
-        self.texts = texts
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.config = config
-        self.all_labels = list(all_labels)
-        self.is_training = is_training
-        
-        # Create training pairs (text, label, is_match)
-        self.pairs = self._create_pairs()
-        
-    def _create_pairs(self) -> List[Tuple[str, str, int]]:
-        """Create (text, label, is_match) pairs for training."""
-        pairs = []
-        
-        for text, text_labels in zip(self.texts, self.labels):
-            # Positive pairs
-            for label in text_labels:
-                pairs.append((text, label, 1))
-            
-            # Negative pairs (only during training)
-            if self.is_training:
-                # Sample negative labels
-                negative_labels = [l for l in self.all_labels if l not in text_labels]
-                num_negatives = min(self.config.negative_samples, len(negative_labels))
-                sampled_negatives = random.sample(negative_labels, num_negatives)
-                
-                for neg_label in sampled_negatives:
-                    pairs.append((text, neg_label, 0))
-        
-        return pairs
-    
-    def __len__(self):
-        return len(self.pairs)
-    
-    def __getitem__(self, idx):
-        text, label, is_match = self.pairs[idx]
-        
-        # Cross-encoder input: [CLS] text [SEP] label [SEP]
-        encoding = self.tokenizer(
-            text,
-            label,
-            truncation=True,
-            padding='max_length',
-            max_length=self.config.max_length,
-            return_tensors='pt'
-        )
-        
-        return {
-            'input_ids': encoding['input_ids'].flatten(),
-            'attention_mask': encoding['attention_mask'].flatten(),
-            'labels': torch.tensor(is_match, dtype=torch.long),
-            'text': text,
-            'label': label
-        }
-
-
 class ZeroShotCrossEncoder(nn.Module):
     def __init__(self, config: TrainingConfig):
         super().__init__()
@@ -105,7 +47,7 @@ class ZeroShotCrossEncoder(nn.Module):
         # Use a classification model as base
         self.model = AutoModelForSequenceClassification.from_pretrained(
             config.text_model_name, 
-            num_labels=2,  # Binary: match or no match
+            num_labels=2,  # Binary: match (1) or no match (0)
             hidden_dropout_prob=config.dropout,
             attention_probs_dropout_prob=config.dropout
         )
@@ -172,9 +114,58 @@ class ZeroShotTrainer:
             
         return texts, labels
     
+    def create_training_pairs(self, texts: List[str], labels: List[List[str]]) -> Dict[str, List]:
+        """
+        Create positive and negative training pairs for zero-shot classification.
+        
+        Returns:
+            Dictionary with 'text', 'label', 'is_match' keys for Dataset creation
+        """
+        logger.info("Creating positive and negative training pairs...")
+        
+        training_data = {
+            'text': [],
+            'label': [],
+            'is_match': []  # 1 for positive pairs, 0 for negative pairs
+        }
+        
+        all_labels_list = list(self.all_labels)
+        positive_count = 0
+        negative_count = 0
+        
+        for text, text_labels in tqdm(zip(texts, labels), total=len(texts), desc="Creating pairs"):
+            # POSITIVE PAIRS: text matches its assigned labels
+            for label in text_labels:
+                training_data['text'].append(text)
+                training_data['label'].append(label)
+                training_data['is_match'].append(1)  # Positive class
+                positive_count += 1
+            
+            # NEGATIVE PAIRS: text does NOT match random other labels
+            negative_labels = [l for l in all_labels_list if l not in text_labels]
+            
+            if negative_labels:
+                # Sample negative labels
+                num_negatives = min(self.config.negative_samples, len(negative_labels))
+                sampled_negatives = random.sample(negative_labels, num_negatives)
+                
+                for neg_label in sampled_negatives:
+                    training_data['text'].append(text)
+                    training_data['label'].append(neg_label)
+                    training_data['is_match'].append(0)  # Negative class
+                    negative_count += 1
+        
+        logger.info(f"Created training pairs:")
+        logger.info(f"  Positive pairs (text matches label): {positive_count}")
+        logger.info(f"  Negative pairs (text does NOT match label): {negative_count}")
+        logger.info(f"  Total pairs: {len(training_data['text'])}")
+        logger.info(f"  Class balance: {positive_count / (positive_count + negative_count):.2%} positive")
+        
+        return training_data
+    
     def prepare_datasets(self, texts: List[str], labels: List[List[str]], 
                         train_ratio: float = 0.8) -> Tuple[Dataset, Dataset]:
-        """Prepare train and validation datasets."""
+        """Prepare train and validation datasets using datasets library."""
         
         # Split data
         split_idx = int(len(texts) * train_ratio)
@@ -185,19 +176,44 @@ class ZeroShotTrainer:
         logger.info(f"Validation samples: {len(val_texts)}")
         logger.info(f"Total unique labels: {len(self.all_labels)}")
         
-        # Create datasets
-        train_dataset = ZeroShotDataset(
-            train_texts, train_labels, self.tokenizer, 
-            self.config, self.all_labels, is_training=True
+        # Create training pairs
+        train_data = self.create_training_pairs(train_texts, train_labels)
+        val_data = self.create_training_pairs(val_texts, val_labels)
+        
+        # Create datasets using datasets library
+        train_dataset = Dataset.from_dict(train_data)
+        val_dataset = Dataset.from_dict(val_data)
+        
+        # Tokenize datasets
+        def tokenize_function(examples):
+            # Cross-encoder: concatenate text and label with [SEP]
+            return self.tokenizer(
+                examples['text'],
+                examples['label'],
+                truncation=True,
+                padding=False,  # Will be handled by data collator
+                max_length=self.config.max_length,
+            )
+        
+        # Apply tokenization
+        train_dataset = train_dataset.map(
+            tokenize_function,
+            batched=True,
+            remove_columns=['text', 'label']  # Keep only tokenized inputs and labels
         )
         
-        val_dataset = ZeroShotDataset(
-            val_texts, val_labels, self.tokenizer, 
-            self.config, self.all_labels, is_training=False
+        val_dataset = val_dataset.map(
+            tokenize_function,
+            batched=True,
+            remove_columns=['text', 'label']
         )
         
-        logger.info(f"Training pairs: {len(train_dataset)}")
-        logger.info(f"Validation pairs: {len(val_dataset)}")
+        # Rename 'is_match' to 'labels' for compatibility with Trainer
+        train_dataset = train_dataset.rename_column('is_match', 'labels')
+        val_dataset = val_dataset.rename_column('is_match', 'labels')
+        
+        logger.info(f"Training pairs after tokenization: {len(train_dataset)}")
+        logger.info(f"Validation pairs after tokenization: {len(val_dataset)}")
         
         return train_dataset, val_dataset
     
@@ -209,9 +225,15 @@ class ZeroShotTrainer:
         accuracy = accuracy_score(labels, predictions)
         f1 = f1_score(labels, predictions, average='weighted')
         
+        # Calculate class-specific metrics
+        pos_f1 = f1_score(labels, predictions, pos_label=1)
+        neg_f1 = f1_score(labels, predictions, pos_label=0)
+        
         return {
             'accuracy': accuracy,
-            'f1': f1
+            'f1_weighted': f1,
+            'f1_positive': pos_f1,
+            'f1_negative': neg_f1
         }
     
     def train(self, batch_dir: str, output_dir: str = "models/zero_shot_classifier"):
@@ -238,6 +260,13 @@ class ZeroShotTrainer:
         # Resize token embeddings if needed
         self.model.model.resize_token_embeddings(len(self.tokenizer))
         
+        # Data collator for dynamic padding
+        data_collator = DataCollatorWithPadding(
+            tokenizer=self.tokenizer,
+            padding=True,
+            return_tensors="pt"
+        )
+        
         # Training arguments
         training_args = TrainingArguments(
             output_dir=output_dir,
@@ -254,13 +283,14 @@ class ZeroShotTrainer:
             evaluation_strategy="steps",
             save_strategy="steps",
             load_best_model_at_end=True,
-            metric_for_best_model="f1",
+            metric_for_best_model="f1_weighted",
             greater_is_better=True,
             report_to="wandb",
             run_name=f"zero-shot-{self.config.text_model_name.split('/')[-1]}",
             dataloader_num_workers=4,
             fp16=torch.cuda.is_available(),
             gradient_checkpointing=True,
+            remove_unused_columns=False,  # Keep all columns
         )
         
         # Initialize trainer
@@ -271,10 +301,15 @@ class ZeroShotTrainer:
             eval_dataset=val_dataset,
             compute_metrics=self.compute_metrics,
             tokenizer=self.tokenizer,
+            data_collator=data_collator,
         )
         
         # Train model
         logger.info("Starting training...")
+        logger.info("Model will learn to classify:")
+        logger.info("  Class 0 (Negative): Text does NOT match the given label")
+        logger.info("  Class 1 (Positive): Text MATCHES the given label")
+        
         trainer.train()
         
         # Save final model
@@ -305,7 +340,8 @@ class ZeroShotTrainer:
         wandb.finish()
         
         logger.success(f"Training completed! Model saved to {output_dir}")
-    
+        logger.success("Model is now ready for zero-shot classification!")
+
     def _plot_training_metrics(self, trainer, output_dir: str):
         """Plot training metrics."""
         if hasattr(trainer.state, 'log_history'):
