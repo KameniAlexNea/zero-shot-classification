@@ -11,7 +11,7 @@ from llm_clients import create_llm_client, BaseLLMClient
 class DatasetGenerator:
     def __init__(self, llm_client: BaseLLMClient):
         self.llm_client = llm_client
-        logger.info(f"Initialized DatasetGenerator with LLM client")
+        logger.info("Initialized DatasetGenerator with LLM client")
 
     def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
         """Create the prompt for generating synthetic data."""
@@ -98,6 +98,7 @@ def main():
     parser.add_argument(
         "--api-key",
         type=str,
+        default=None,
         help="API key for cloud providers (optional if set in env)",
     )
     parser.add_argument(

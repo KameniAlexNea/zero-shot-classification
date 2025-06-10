@@ -13,7 +13,7 @@ class LLMConfig:
     model: str
     temperature: float = 0.8
     max_tokens: int = 2048
-    top_p: float = 1.0
+    top_p: float = 0.95
     max_retries: int = 3
     retry_delay: float = 1.0
 
@@ -58,12 +58,15 @@ class GroqClient(BaseLLMClient):
 
     def _make_groq_request(self, prompt: str) -> str:
         """Make a single request to Groq API."""
+        temperature = random.uniform(0.7, 0.9)
+        seed = random.randint(1, 100000)
         completion = self.client.chat.completions.create(
             model=self.config.model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=self.config.temperature,
+            temperature=temperature,
             max_completion_tokens=self.config.max_tokens,
             top_p=self.config.top_p,
+            seed=seed,
             stream=False,
             stop=None,
         )
