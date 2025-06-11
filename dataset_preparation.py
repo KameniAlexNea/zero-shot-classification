@@ -32,16 +32,18 @@ class DatasetPreparator:
 
         logger.info(f"Initialized DatasetPreparator with config: {config}")
 
-    def load_raw_data(self) -> Tuple[List[str], List[List[str]]]:
-        """Load all JSON batch files and extract texts and labels."""
+    def load_raw_data(self) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+        """Load all JSON batch files and extract texts, labels, and not_labels."""
         texts = []
         labels = []
+        not_labels = []
 
         batch_files = glob.glob(os.path.join(self.config.batch_dir, "*.json"))
         batch_files.sort()
 
         logger.info(f"Found {len(batch_files)} batch files in {self.config.batch_dir}")
 
+        has_not_labels = False
         for batch_file in tqdm(batch_files, desc="Loading batches"):
             try:
                 with open(batch_file, "r") as f:
@@ -51,14 +53,24 @@ class DatasetPreparator:
                     if "sentence" in item and "labels" in item:
                         text = item["sentence"]
                         item_labels = item["labels"]
+                        item_not_labels = item.get("not_labels", [])
 
                         texts.append(text)
                         labels.append(item_labels)
+                        not_labels.append(item_not_labels)
 
-                        # Count labels
+                        # Check if we have hard negatives
+                        if item_not_labels:
+                            has_not_labels = True
+
+                        # Count all labels (positive and negative)
                         for label in item_labels:
                             self.all_labels.add(label)
                             self.label_counts[label] += 1
+
+                        for label in item_not_labels:
+                            self.all_labels.add(label)
+                            # Don't count not_labels in frequency stats
 
             except Exception as e:
                 logger.warning(f"Error loading {batch_file}: {e}")
@@ -67,11 +79,18 @@ class DatasetPreparator:
         logger.success(
             f"Loaded {len(texts)} texts with {len(self.all_labels)} unique labels"
         )
-        return texts, labels
+        if has_not_labels:
+            logger.info(
+                "✓ Found hard negative labels (not_labels) - will create triplets"
+            )
+        else:
+            logger.info("✗ No hard negative labels found - will create pairs")
+
+        return texts, labels, not_labels
 
     def filter_rare_labels(
-        self, texts: List[str], labels: List[List[str]]
-    ) -> Tuple[List[str], List[List[str]], Set[str]]:
+        self, texts: List[str], labels: List[List[str]], not_labels: List[List[str]]
+    ) -> Tuple[List[str], List[List[str]], List[List[str]], Set[str]]:
         """Filter out labels that appear less than min_frequency times."""
         frequent_labels = {
             label
@@ -81,29 +100,43 @@ class DatasetPreparator:
 
         filtered_texts = []
         filtered_labels = []
+        filtered_not_labels = []
 
-        for text, text_labels in zip(texts, labels):
-            # Keep only frequent labels
+        for text, text_labels, text_not_labels in zip(texts, labels, not_labels):
+            # Keep only frequent labels for positive labels
             filtered_text_labels = [
                 label for label in text_labels if label in frequent_labels
             ]
 
-            # Only keep texts that have at least one frequent label
+            # Only keep texts that have at least one frequent positive label
             if filtered_text_labels:
                 filtered_texts.append(text)
                 filtered_labels.append(filtered_text_labels)
+                # Keep not_labels as-is (they don't need to be frequent)
+                filtered_not_labels.append(text_not_labels)
 
         logger.info(
             f"Filtered labels: {len(self.all_labels)} -> {len(frequent_labels)}"
         )
         logger.info(f"Filtered texts: {len(texts)} -> {len(filtered_texts)}")
 
-        return filtered_texts, filtered_labels, frequent_labels
+        return filtered_texts, filtered_labels, filtered_not_labels, frequent_labels
 
     def split_by_labels(
-        self, texts: List[str], labels: List[List[str]], frequent_labels: Set[str]
+        self,
+        texts: List[str],
+        labels: List[List[str]],
+        not_labels: List[List[str]],
+        frequent_labels: Set[str],
     ) -> Tuple[
-        List[str], List[List[str]], List[str], List[List[str]], Set[str], Set[str]
+        List[str],
+        List[List[str]],
+        List[List[str]],
+        List[str],
+        List[List[str]],
+        List[List[str]],
+        Set[str],
+        Set[str],
     ]:
         """Split data ensuring test set contains completely unseen labels."""
         logger.info("Creating train/test split with unseen labels...")
@@ -128,10 +161,12 @@ class DatasetPreparator:
         # Split texts based on label assignment
         train_texts = []
         train_text_labels = []
+        train_text_not_labels = []
         test_texts = []
         test_text_labels = []
+        test_text_not_labels = []
 
-        for text, text_labels in zip(texts, labels):
+        for text, text_labels, text_not_labels in zip(texts, labels, not_labels):
             # Check if text has any test labels
             has_test_labels = any(label in test_labels for label in text_labels)
             # Check if text has any train labels
@@ -144,6 +179,7 @@ class DatasetPreparator:
                 ]
                 test_texts.append(text)
                 test_text_labels.append(test_labels_only)
+                test_text_not_labels.append(text_not_labels)
 
             elif has_train_labels and not has_test_labels:
                 # Text only has train labels -> goes to train set
@@ -152,23 +188,26 @@ class DatasetPreparator:
                 ]
                 train_texts.append(text)
                 train_text_labels.append(train_labels_only)
+                train_text_not_labels.append(text_not_labels)
 
             elif has_train_labels and has_test_labels:
                 # Text has both -> split by probability
-                if random.random() < 0.7:  # 70% chance to train
+                if random.random() < 1 - self.config.test_ratio:  # 80% chance to train
                     train_labels_only = [
                         label for label in text_labels if label in train_labels
                     ]
                     if train_labels_only:
                         train_texts.append(text)
                         train_text_labels.append(train_labels_only)
-                else:  # 30% chance to test
+                        train_text_not_labels.append(text_not_labels)
+                else:  # 20% chance to test
                     test_labels_only = [
                         label for label in text_labels if label in test_labels
                     ]
                     if test_labels_only:
                         test_texts.append(text)
                         test_text_labels.append(test_labels_only)
+                        test_text_not_labels.append(text_not_labels)
 
         logger.info("Final split:")
         logger.info(f"  Train: {len(train_texts)} texts")
@@ -177,61 +216,102 @@ class DatasetPreparator:
         return (
             train_texts,
             train_text_labels,
+            train_text_not_labels,
             test_texts,
             test_text_labels,
+            test_text_not_labels,
             train_labels,
             test_labels,
         )
 
     def create_contrastive_dataset(
-        self, texts: List[str], labels: List[List[str]], dataset_name: str
+        self,
+        texts: List[str],
+        labels: List[List[str]],
+        not_labels: List[List[str]],
+        dataset_name: str,
     ) -> Dataset:
-        """Create simple (anchor, positive) pairs dataset."""
+        """Create dataset with (anchor, positive) pairs or (anchor, positive, negative) triplets."""
         logger.info(f"Creating {dataset_name} dataset...")
 
-        dataset_dict = {"anchor": [], "positive": []}
-
-        for text, text_labels in tqdm(
-            zip(texts, labels), total=len(texts), desc=f"Creating {dataset_name} pairs"
-        ):
-            for positive_label in text_labels:
-                dataset_dict["anchor"].append(text)
-                dataset_dict["positive"].append(positive_label)
-
-        logger.info(
-            f"Created {len(dataset_dict['anchor'])} (anchor, positive) pairs for {dataset_name}"
+        # Check if we have hard negatives
+        has_hard_negatives = any(
+            len(not_label_list) > 0 for not_label_list in not_labels
         )
+
+        if has_hard_negatives:
+            logger.info(
+                f"Creating triplets (anchor, positive, negative) for {dataset_name}"
+            )
+            dataset_dict = {"anchor": [], "positive": [], "negative": []}
+
+            for text, text_labels, text_not_labels in tqdm(
+                zip(texts, labels, not_labels),
+                total=len(texts),
+                desc=f"Creating {dataset_name} triplets",
+            ):
+                # Create triplets: each positive label paired with each negative label
+                for positive_label in text_labels:
+                    for negative_label in text_not_labels:
+                        dataset_dict["anchor"].append(text)
+                        dataset_dict["positive"].append(positive_label)
+                        dataset_dict["negative"].append(negative_label)
+
+            logger.info(
+                f"Created {len(dataset_dict['anchor'])} (anchor, positive, negative) triplets for {dataset_name}"
+            )
+        else:
+            logger.info(f"Creating pairs (anchor, positive) for {dataset_name}")
+            dataset_dict = {"anchor": [], "positive": []}
+
+            for text, text_labels in tqdm(
+                zip(texts, labels),
+                total=len(texts),
+                desc=f"Creating {dataset_name} pairs",
+            ):
+                for positive_label in text_labels:
+                    dataset_dict["anchor"].append(text)
+                    dataset_dict["positive"].append(positive_label)
+
+            logger.info(
+                f"Created {len(dataset_dict['anchor'])} (anchor, positive) pairs for {dataset_name}"
+            )
+
         return Dataset.from_dict(dataset_dict)
 
     def prepare_datasets(self):
         """Main method to prepare and save all datasets."""
         logger.info("Starting dataset preparation...")
 
-        # Load raw data
-        texts, labels = self.load_raw_data()
+        # Load raw data (now includes not_labels)
+        texts, labels, not_labels = self.load_raw_data()
 
         # Filter rare labels
-        texts, labels, frequent_labels = self.filter_rare_labels(texts, labels)
+        texts, labels, not_labels, frequent_labels = self.filter_rare_labels(
+            texts, labels, not_labels
+        )
 
         # Split by labels (ensuring test has unseen labels)
         (
             train_texts,
             train_labels,
+            train_not_labels,
             test_texts,
             test_labels,
+            test_not_labels,
             train_label_set,
             test_label_set,
-        ) = self.split_by_labels(texts, labels, frequent_labels)
+        ) = self.split_by_labels(texts, labels, not_labels, frequent_labels)
 
         # Create output directory
         os.makedirs(self.config.output_dir, exist_ok=True)
 
-        # Create simple datasets
+        # Create datasets (pairs or triplets based on availability of not_labels)
         train_dataset = self.create_contrastive_dataset(
-            train_texts, train_labels, "training"
+            train_texts, train_labels, train_not_labels, "training"
         )
         test_dataset = self.create_contrastive_dataset(
-            test_texts, test_labels, "testing"
+            test_texts, test_labels, test_not_labels, "testing"
         )
 
         # Save datasets
@@ -252,6 +332,14 @@ class DatasetPreparator:
             "num_test_texts": len(test_texts),
             "num_train_pairs": len(train_dataset),
             "num_test_pairs": len(test_dataset),
+            "has_hard_negatives": any(
+                len(not_label_list) > 0 for not_label_list in not_labels
+            ),
+            "dataset_format": (
+                "triplets"
+                if any(len(not_label_list) > 0 for not_label_list in not_labels)
+                else "pairs"
+            ),
         }
 
         with open(os.path.join(self.config.output_dir, "label_info.json"), "w") as f:
@@ -260,12 +348,16 @@ class DatasetPreparator:
         # Save raw splits for inspection
         raw_splits = {
             "train": [
-                {"text": text, "labels": labels}
-                for text, labels in zip(train_texts, train_labels)
+                {"text": text, "labels": labels, "not_labels": not_labels}
+                for text, labels, not_labels in zip(
+                    train_texts, train_labels, train_not_labels
+                )
             ],
             "test": [
-                {"text": text, "labels": labels}
-                for text, labels in zip(test_texts, test_labels)
+                {"text": text, "labels": labels, "not_labels": not_labels}
+                for text, labels, not_labels in zip(
+                    test_texts, test_labels, test_not_labels
+                )
             ],
         }
 
@@ -279,8 +371,9 @@ class DatasetPreparator:
         logger.info(f"  Test labels: {len(test_label_set)} (unseen)")
         logger.info(f"  Train texts: {len(train_texts)}")
         logger.info(f"  Test texts: {len(test_texts)}")
-        logger.info(f"  Train pairs: {len(train_dataset)}")
-        logger.info(f"  Test pairs: {len(test_dataset)}")
+        logger.info(f"  Train pairs/triplets: {len(train_dataset)}")
+        logger.info(f"  Test pairs/triplets: {len(test_dataset)}")
+        logger.info(f"  Dataset format: {label_info['dataset_format']}")
         logger.info(f"  Output directory: {self.config.output_dir}")
 
 
