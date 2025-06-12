@@ -37,8 +37,7 @@ class ZeroShotClassificationTokenizer:
         """
         Tokenize a single example for zero-shot classification.
 
-        Format: [CLS] text [SEP] positive_lab1 [SEP] positive_lab2 [SEP] ...
-                negative_lab1 [SEP] negative_lab2 [SEP] ... [END]
+        Format: [CLS] text [SEP] lab1 [SEP] _lab2 [SEP] ...
 
         Args:
             text: Input text to classify
@@ -49,7 +48,7 @@ class ZeroShotClassificationTokenizer:
             Dictionary containing tokenized inputs and metadata
         """
 
-        # Create the sequence: [CLS] text [SEP] lab1 [SEP] lab2 [SEP] ... [END]
+        # Create the sequence: [CLS] text [SEP] lab1 [SEP] lab2 [SEP] ... 
         sequence_parts = []
 
         # Add CLS token
@@ -68,9 +67,6 @@ class ZeroShotClassificationTokenizer:
             sequence_parts.extend(label_tokens)
             if i < len(all_labels) - 1:
                 sequence_parts.append(self.tokenizer.sep_token)
-
-        # remove END token
-        # sequence_parts.append("[END]")
 
         # Convert tokens to IDs, but if too long truncate text only and pad left
         # identify split between text and labels
@@ -166,13 +162,81 @@ class ZeroShotClassificationTokenizer:
         Returns:
             Dictionary containing batched tokenized inputs
         """
-        batch_results = []
-
-        for text, labels in zip(texts, all_labels_list):
-            batch_results.append(
-                self.tokenize_example(text, labels, return_tensors=None)
+        batch_size = len(texts)
+        
+        # Batch tokenize all texts
+        text_encodings = self.tokenizer.batch_encode_plus(
+            texts,
+            add_special_tokens=False,
+            padding=False,
+            return_tensors=None
+        )
+        
+        # Batch tokenize all labels and organize them by example
+        all_labels_tokenized = []
+        for labels in all_labels_list:
+            # Batch tokenize all labels for this example
+            label_encodings = self.tokenizer.batch_encode_plus(
+                labels,
+                add_special_tokens=False,
+                padding=False,
+                return_tensors=None
             )
-
+            all_labels_tokenized.append({
+                "input_ids": label_encodings["input_ids"],
+                "tokens": [self.tokenizer.convert_ids_to_tokens(ids) for ids in label_encodings["input_ids"]]
+            })
+            
+        # Process each example with efficiently tokenized components
+        batch_results = []
+        
+        for idx in range(batch_size):
+            # Get text tokens for this example
+            text_tokens = self.tokenizer.convert_ids_to_tokens(text_encodings["input_ids"][idx])
+            
+            # Create sequence: [CLS] text [SEP] label1 [SEP] label2 [SEP] ...
+            sequence_parts = [self.tokenizer.cls_token]
+            sequence_parts.extend(text_tokens)
+            sequence_parts.append(self.tokenizer.sep_token)
+            
+            # Add tokenized labels with SEP tokens between them
+            labels = all_labels_list[idx]
+            for i, label_tokens in enumerate(all_labels_tokenized[idx]["tokens"]):
+                sequence_parts.extend(label_tokens)
+                if i < len(labels) - 1:
+                    sequence_parts.append(self.tokenizer.sep_token)
+            
+            # Handle truncation similar to tokenize_example
+            sep_idx = 1 + len(text_tokens)  # Position of first SEP token
+            label_part = sequence_parts[sep_idx:]  # includes SEP before labels
+            max_text_len = self.max_length - len(label_part) - 1  # -1 for CLS
+            if max_text_len < 0:
+                raise ValueError(f"max_length too small to include all labels for example {idx}")
+                
+            # Truncate text tokens if needed
+            text_tokens = text_tokens[:max_text_len]
+            sequence_parts = [self.tokenizer.cls_token] + text_tokens + sequence_parts[sep_idx:]
+            
+            # Convert to ids
+            orig_ids = self.tokenizer.convert_tokens_to_ids(sequence_parts)
+            # Left-pad to max_length
+            pad_len = self.max_length - len(orig_ids)
+            input_ids = [self.pad_token_id] * pad_len + orig_ids
+            attention_mask = [0] * pad_len + [1] * len(orig_ids)
+            # Create label mask
+            label_mask = self._create_label_mask(sequence_parts, labels, pad_len)
+            
+            result = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "label_mask": label_mask,
+                "text": texts[idx],
+                "labels": labels,
+                "sequence_length": min(len(sequence_parts), self.max_length),
+            }
+            
+            batch_results.append(result)
+        
         # Stack results
         batched = {
             "input_ids": [r["input_ids"] for r in batch_results],
@@ -182,7 +246,7 @@ class ZeroShotClassificationTokenizer:
             "labels": [r["labels"] for r in batch_results],
             "sequence_lengths": [r["sequence_length"] for r in batch_results],
         }
-
+        
         # Convert to tensors if requested
         if return_tensors == "pt":
             batched["input_ids"] = torch.tensor(batched["input_ids"], dtype=torch.long)
@@ -192,7 +256,7 @@ class ZeroShotClassificationTokenizer:
             batched["label_mask"] = torch.tensor(
                 batched["label_mask"], dtype=torch.bool
             )
-
+        
         return batched
 
     def decode_sequence(self, input_ids: List[int]) -> str:

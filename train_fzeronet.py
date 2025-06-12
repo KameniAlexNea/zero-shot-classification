@@ -6,79 +6,72 @@ Training script for FZeroNet - Zero-shot Classification Model
 import torch
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import json
-import numpy as np
+import random
 from typing import List, Dict, Optional
 import argparse
 from pathlib import Path
+from datasets import Dataset as HFDataset, load_dataset
 
 from gliznet.tokenizer import ZeroShotClassificationTokenizer
 from gliznet.model import FZeroNet
 from loguru import logger
 
+
 class ZeroShotDataset(Dataset):
     """
-    Dataset class for zero-shot classification training.
+    Dataset class for zero-shot classification training using HuggingFace datasets.
     """
 
     def __init__(
         self,
-        data: List[Dict],
+        dataset: HFDataset,
         tokenizer: ZeroShotClassificationTokenizer,
-        max_labels: Optional[int] = None,
+        text_column: str = "text",
+        positive_labels_column: str = "positive_labels",
+        negative_labels_column: str = "negative_labels",
+        shuffle_labels: bool = True,
     ):
         """
         Initialize dataset.
 
         Args:
-            data: List of dictionaries with 'text', 'positive_labels', 'negative_labels'
+            dataset: HuggingFace Dataset with text and labels
             tokenizer: Tokenizer instance
-            max_labels: Maximum number of labels to consider (for padding consistency)
+            text_column: Name of the column containing text
+            positive_labels_column: Name of the column containing positive labels
+            negative_labels_column: Name of the column containing negative labels
+            shuffle_labels: Whether to shuffle the order of labels to avoid bias
         """
-        self.data = data
+        self.dataset = dataset
         self.tokenizer = tokenizer
-        self.max_labels = max_labels
+        self.text_column = text_column
+        self.positive_labels_column = positive_labels_column
+        self.negative_labels_column = negative_labels_column
+        self.shuffle_labels = shuffle_labels
 
-        # Determine max_labels if not provided
-        if self.max_labels is None:
-            self.max_labels = max(
-                len(item["positive_labels"]) + len(item["negative_labels"])
-                for item in data
-            )
-
-        logger.info(
-            f"Dataset initialized with {len(data)} samples, max_labels: {self.max_labels}"
-        )
+        logger.info(f"Dataset initialized with {len(dataset)} samples")
 
     def __len__(self):
-        return len(self.data)
+        return len(self.dataset)
 
     def __getitem__(self, idx) -> Dict:
-        item = self.data[idx]
+        item = self.dataset[idx]
 
-        text = item["text"]
-        positive_labels = item["positive_labels"]
-        negative_labels = item["negative_labels"]
+        text = item[self.text_column]
+        positive_labels = item[self.positive_labels_column]
+        negative_labels = item[self.negative_labels_column]
+
+        # Create combined label list and ground truth
         all_labels = positive_labels + negative_labels
+        ground_truth = [1.0] * len(positive_labels) + [0.0] * len(negative_labels)
 
-        # Pad or truncate labels to max_labels
-        if len(all_labels) > self.max_labels:
-            all_labels = all_labels[: self.max_labels]
-            positive_labels = positive_labels[
-                : min(len(positive_labels), self.max_labels)
-            ]
-            negative_labels = negative_labels[
-                : max(0, self.max_labels - len(positive_labels))
-            ]
-        elif len(all_labels) < self.max_labels:
-            # Pad with dummy labels
-            padding_needed = self.max_labels - len(all_labels)
-            all_labels.extend([f"dummy_label_{i}" for i in range(padding_needed)])
-
-        # Create ground truth
-        ground_truth = [0.0] * self.max_labels
-        for i in range(len(positive_labels)):
-            ground_truth[i] = 1.0
+        # Shuffle labels and ground truth together to avoid positional bias
+        if self.shuffle_labels:
+            combined = list(zip(all_labels, ground_truth))
+            random.shuffle(combined)
+            all_labels, ground_truth = zip(*combined)
+            all_labels = list(all_labels)
+            ground_truth = list(ground_truth)
 
         # Tokenize
         tokenized = self.tokenizer.tokenize_example(
@@ -91,70 +84,20 @@ class ZeroShotDataset(Dataset):
             "label_mask": tokenized["label_mask"].squeeze(0),
             "labels": torch.tensor(ground_truth, dtype=torch.float32),
             "text": text,
-            "positive_labels": positive_labels,
-            "negative_labels": negative_labels,
             "all_labels": all_labels,
         }
 
 
-def create_sample_dataset() -> List[Dict]:
-    """Create a sample dataset for demonstration."""
-    return [
-        {
-            "text": "Scientists at Stanford University have developed a new artificial intelligence system that can predict protein structures with unprecedented accuracy.",
-            "positive_labels": [
-                "artificial_intelligence",
-                "scientific_research",
-                "university_news",
-            ],
-            "negative_labels": ["sports_news", "cooking_recipe", "travel_guide"],
-        },
-        {
-            "text": "The local basketball team won their championship game last night with a final score of 98-87.",
-            "positive_labels": ["sports_news", "basketball", "local_news"],
-            "negative_labels": [
-                "scientific_research",
-                "cooking_recipe",
-                "technology_news",
-            ],
-        },
-        {
-            "text": "This delicious pasta recipe combines traditional Italian techniques with modern molecular gastronomy.",
-            "positive_labels": ["cooking_recipe", "food_preparation", "culinary_arts"],
-            "negative_labels": [
-                "sports_news",
-                "scientific_research",
-                "technology_news",
-            ],
-        },
-        {
-            "text": "Apple announced their latest iPhone model featuring advanced camera capabilities and improved battery life.",
-            "positive_labels": [
-                "technology_news",
-                "product_announcement",
-                "mobile_devices",
-            ],
-            "negative_labels": ["cooking_recipe", "sports_news", "medical_advice"],
-        },
-        {
-            "text": "Researchers have discovered that regular exercise can significantly reduce the risk of cardiovascular disease.",
-            "positive_labels": [
-                "medical_research",
-                "health_advice",
-                "scientific_study",
-            ],
-            "negative_labels": ["technology_news", "cooking_recipe", "sports_news"],
-        },
-        {
-            "text": "The complete guide to visiting Paris includes recommendations for museums, restaurants, and hidden gems.",
-            "positive_labels": ["travel_guide", "tourism", "cultural_information"],
-            "negative_labels": [
-                "scientific_research",
-                "sports_news",
-                "technology_news",
-            ],
-        },
-    ]
+def collate_fn(batch):
+    """Custom collate function to handle variable-length labels."""
+    return {
+        "input_ids": torch.stack([item["input_ids"] for item in batch]),
+        "attention_mask": torch.stack([item["attention_mask"] for item in batch]),
+        "label_mask": torch.stack([item["label_mask"] for item in batch]),
+        "labels": [item["labels"] for item in batch],  # Keep as list for variable sizes
+        "texts": [item["text"] for item in batch],
+        "all_labels": [item["all_labels"] for item in batch],
+    }
 
 
 def train_model(
@@ -185,7 +128,6 @@ def train_model(
 
     train_losses = []
     val_losses = []
-    val_accuracies = []
 
     logger.info(f"Starting training for {num_epochs} epochs on {device}")
 
@@ -200,7 +142,9 @@ def train_model(
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             label_mask = batch["label_mask"].to(device)
-            labels = batch["labels"].to(device)
+            labels = [
+                label.to(device) for label in batch["labels"]
+            ]  # Variable size labels
 
             # Forward pass
             optimizer.zero_grad()
@@ -232,8 +176,6 @@ def train_model(
         if val_loader is not None:
             model.eval()
             epoch_val_loss = 0.0
-            correct_predictions = 0
-            total_predictions = 0
             val_batches = 0
 
             with torch.no_grad():
@@ -242,7 +184,9 @@ def train_model(
                     input_ids = batch["input_ids"].to(device)
                     attention_mask = batch["attention_mask"].to(device)
                     label_mask = batch["label_mask"].to(device)
-                    labels = batch["labels"].to(device)
+                    labels = [
+                        label.to(device) for label in batch["labels"]
+                    ]  # Variable size labels
 
                     # Forward pass
                     outputs = model(
@@ -256,20 +200,15 @@ def train_model(
                     epoch_val_loss += loss.item()
                     val_batches += 1
 
-                    # Calculate accuracy
-                    logits = outputs["logits"]
-                    predictions = (torch.sigmoid(logits) > 0.5).float()
-                    correct_predictions += (predictions == labels).sum().item()
-                    total_predictions += labels.numel()
+                    # Calculate accuracy - simplified for variable sizes
+                    # We'll just track the loss for now
 
             avg_val_loss = epoch_val_loss / val_batches
-            val_accuracy = correct_predictions / total_predictions
             val_losses.append(avg_val_loss)
-            val_accuracies.append(val_accuracy)
 
             logger.info(
                 f"Epoch {epoch+1}/{num_epochs} - Train Loss: {avg_train_loss:.4f}, "
-                f"Val Loss: {avg_val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}"
+                f"Val Loss: {avg_val_loss:.4f}"
             )
         else:
             logger.info(
@@ -283,7 +222,6 @@ def train_model(
                 "model_state_dict": model.state_dict(),
                 "train_losses": train_losses,
                 "val_losses": val_losses,
-                "val_accuracies": val_accuracies,
             },
             save_path,
         )
@@ -292,100 +230,6 @@ def train_model(
     return {
         "train_losses": train_losses,
         "val_losses": val_losses,
-        "val_accuracies": val_accuracies,
-    }
-
-
-def evaluate_model(
-    model: FZeroNet, test_loader: DataLoader, device: torch.device
-) -> Dict:
-    """
-    Evaluate the model on test data.
-
-    Args:
-        model: Trained FZeroNet model
-        test_loader: Test data loader
-        device: Device to run evaluation on
-
-    Returns:
-        Evaluation metrics
-    """
-    model.eval()
-    model.to(device)
-
-    total_loss = 0.0
-    correct_predictions = 0
-    total_predictions = 0
-    num_batches = 0
-
-    all_predictions = []
-    all_labels = []
-
-    with torch.no_grad():
-        for batch in test_loader:
-            # Move batch to device
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            label_mask = batch["label_mask"].to(device)
-            labels = batch["labels"].to(device)
-
-            # Forward pass
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                label_mask=label_mask,
-                labels=labels,
-            )
-
-            loss = outputs["loss"]
-            total_loss += loss.item()
-            num_batches += 1
-
-            # Get predictions
-            logits = outputs["logits"]
-            predictions = (torch.sigmoid(logits) > 0.5).float()
-
-            # Calculate accuracy
-            correct_predictions += (predictions == labels).sum().item()
-            total_predictions += labels.numel()
-
-            # Store for detailed analysis
-            all_predictions.extend(predictions.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-    avg_loss = total_loss / num_batches
-    accuracy = correct_predictions / total_predictions
-
-    # Calculate precision, recall, F1 (simplified for multi-label)
-    all_predictions = np.array(all_predictions)
-    all_labels = np.array(all_labels)
-
-    true_positives = np.sum((all_predictions == 1) & (all_labels == 1))
-    false_positives = np.sum((all_predictions == 1) & (all_labels == 0))
-    false_negatives = np.sum((all_predictions == 0) & (all_labels == 1))
-
-    precision = (
-        true_positives / (true_positives + false_positives)
-        if (true_positives + false_positives) > 0
-        else 0
-    )
-    recall = (
-        true_positives / (true_positives + false_negatives)
-        if (true_positives + false_negatives) > 0
-        else 0
-    )
-    f1 = (
-        2 * (precision * recall) / (precision + recall)
-        if (precision + recall) > 0
-        else 0
-    )
-
-    return {
-        "loss": avg_loss,
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1,
     }
 
 
@@ -416,7 +260,25 @@ def main():
         "--save_path", default="fzeronet_model.pt", help="Path to save the model"
     )
     parser.add_argument(
-        "--data_path", help="Path to training data JSON file (optional)"
+        "--data_path",
+        help="Path to training data JSON file or HuggingFace dataset name",
+    )
+    parser.add_argument("--text_column", default="text", help="Name of text column")
+    parser.add_argument(
+        "--positive_labels_column",
+        default="positive_labels",
+        help="Name of positive labels column",
+    )
+    parser.add_argument(
+        "--negative_labels_column",
+        default="negative_labels",
+        help="Name of negative labels column",
+    )
+    parser.add_argument(
+        "--shuffle_labels",
+        action="store_true",
+        default=True,
+        help="Shuffle label order to avoid bias",
     )
 
     args = parser.parse_args()
@@ -430,22 +292,36 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load or create dataset
-    if args.data_path and Path(args.data_path).exists():
-        logger.info(f"Loading data from {args.data_path}")
-        with open(args.data_path, "r") as f:
-            data = json.load(f)
+    if args.data_path:
+        if Path(args.data_path).exists():
+            # Load from local JSON file
+            dataset = load_dataset("json", data_files=args.data_path)["train"]
+        else:
+            # Try to load from HuggingFace Hub
+            dataset = load_dataset(args.data_path)["train"]
     else:
-        logger.info("Using sample dataset")
-        data = create_sample_dataset()
+        # Create sample dataset using HuggingFace dataset format
+        sample_data = [
+            {
+                "text": "Scientists discovered a new protein structure using AI.",
+                "positive_labels": ["science", "research", "artificial_intelligence"],
+                "negative_labels": ["sports", "cooking", "travel"],
+            },
+            {
+                "text": "The basketball team won the championship.",
+                "positive_labels": ["sports", "basketball", "competition"],
+                "negative_labels": ["science", "cooking", "technology"],
+            },
+        ]
+        dataset = HFDataset.from_list(sample_data)
 
-    # Split data (80% train, 20% validation)
-    split_idx = int(0.8 * len(data))
-    train_data = data[:split_idx]
-    val_data = data[split_idx:] if len(data) > 1 else None
+    # Split dataset
+    dataset = dataset.train_test_split(test_size=0.2, seed=42)
+    train_dataset_hf = dataset["train"]
+    val_dataset_hf = dataset["test"]
 
-    logger.info(f"Training samples: {len(train_data)}")
-    if val_data:
-        logger.info(f"Validation samples: {len(val_data)}")
+    logger.info(f"Training samples: {len(train_dataset_hf)}")
+    logger.info(f"Validation samples: {len(val_dataset_hf)}")
 
     # Initialize tokenizer and model
     tokenizer = ZeroShotClassificationTokenizer(model_name=args.model_name)
@@ -456,15 +332,29 @@ def main():
     )
 
     # Create datasets and data loaders
-    train_dataset = ZeroShotDataset(train_data, tokenizer)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    train_dataset = ZeroShotDataset(
+        train_dataset_hf,
+        tokenizer,
+        text_column=args.text_column,
+        positive_labels_column=args.positive_labels_column,
+        negative_labels_column=args.negative_labels_column,
+        shuffle_labels=args.shuffle_labels,
+    )
+    val_dataset = ZeroShotDataset(
+        val_dataset_hf,
+        tokenizer,
+        text_column=args.text_column,
+        positive_labels_column=args.positive_labels_column,
+        negative_labels_column=args.negative_labels_column,
+        shuffle_labels=args.shuffle_labels,
+    )
 
-    val_loader = None
-    if val_data:
-        val_dataset = ZeroShotDataset(
-            val_data, tokenizer, max_labels=train_dataset.max_labels
-        )
-        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn
+    )
 
     # Initialize optimizer
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
@@ -481,16 +371,6 @@ def main():
     )
 
     # Evaluate on validation set
-    if val_loader:
-        logger.info("Evaluating on validation set...")
-        eval_results = evaluate_model(model, val_loader, device)
-        logger.info("Validation Results:")
-        logger.info(f"  Loss: {eval_results['loss']:.4f}")
-        logger.info(f"  Accuracy: {eval_results['accuracy']:.4f}")
-        logger.info(f"  Precision: {eval_results['precision']:.4f}")
-        logger.info(f"  Recall: {eval_results['recall']:.4f}")
-        logger.info(f"  F1 Score: {eval_results['f1_score']:.4f}")
-
     logger.info("Training completed!")
 
 

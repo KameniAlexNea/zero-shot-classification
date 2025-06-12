@@ -167,7 +167,7 @@ class FZeroNet(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         label_mask: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
+        labels: Optional[List[torch.Tensor]] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass of FZeroNet.
@@ -176,7 +176,7 @@ class FZeroNet(nn.Module):
             input_ids: Token IDs of shape (batch_size, seq_len)
             attention_mask: Attention mask of shape (batch_size, seq_len)
             label_mask: Boolean mask indicating label positions (batch_size, seq_len)
-            labels: Ground truth labels of shape (batch_size, num_labels) for training
+            labels: List of ground truth label tensors (variable size per sample)
             
         Returns:
             Dictionary containing logits, loss (if labels provided), and representations
@@ -212,71 +212,52 @@ class FZeroNet(nn.Module):
         # Extract label representations (first token of each label)
         label_positions = self.get_label_positions(label_mask)
         
-        # Determine max number of labels for this batch
-        max_labels = max(len(positions) for positions in label_positions) if label_positions else 0
+        # For zero-shot, we process each sample individually with its own labels
+        outputs_list = []
+        total_loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
         
-        if max_labels == 0:
-            # No labels found
-            batch_size = input_ids.shape[0]
-            logits = torch.zeros((batch_size, 0), device=input_ids.device)
+        for batch_idx in range(batch_size):
+            positions = label_positions[batch_idx]
+            num_labels = len(positions)
             
-            outputs = {
-                "logits": logits,
-                "text_representations": text_repr,
-                "label_representations": torch.zeros((batch_size, 0, self.hidden_size), device=input_ids.device),
-            }
+            if num_labels == 0:
+                # No labels for this sample
+                sample_logits = torch.zeros((0,), device=input_ids.device)
+            else:
+                # Extract label representations for this sample
+                label_repr = torch.stack([
+                    hidden_states[batch_idx, pos] for pos in positions
+                ])  # (num_labels, hidden_size)
+                
+                # Project label representations
+                label_repr_proj = self.label_projection(label_repr)  # (num_labels, hidden_size)
+                
+                # Compute similarity scores for this sample
+                text_repr_sample = text_repr[batch_idx:batch_idx+1]  # (1, hidden_size)
+                label_repr_sample = label_repr_proj.unsqueeze(0)  # (1, num_labels, hidden_size)
+                
+                sample_logits = self.compute_similarity(text_repr_sample, label_repr_sample).squeeze(0)  # (num_labels,)
             
-            if labels is not None:
-                outputs["loss"] = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
+            outputs_list.append({
+                "logits": sample_logits,
+                "num_labels": num_labels
+            })
             
-            return outputs
+            # Compute loss for this sample if labels provided
+            if labels is not None and batch_idx < len(labels):
+                sample_labels = labels[batch_idx]
+                if len(sample_labels) == len(sample_logits) and len(sample_logits) > 0:
+                    sample_loss = self.loss_fn(sample_logits, sample_labels.float())
+                    total_loss = total_loss + sample_loss
         
-        # Create tensor to store label representations
-        label_repr = torch.zeros(
-            (batch_size, max_labels, self.config.hidden_size),
-            device=hidden_states.device,
-            dtype=hidden_states.dtype
-        )
-        
-        # Fill label representations
-        for batch_idx, positions in enumerate(label_positions):
-            for label_idx, pos in enumerate(positions):
-                if label_idx < max_labels:
-                    label_repr[batch_idx, label_idx] = hidden_states[batch_idx, pos]
-        
-        # Project label representations
-        label_repr_proj = self.label_projection(label_repr)  # (batch_size, max_labels, hidden_size)
-        
-        # Compute similarity scores
-        logits = self.compute_similarity(text_repr, label_repr_proj)  # (batch_size, max_labels)
-        
-        # Prepare outputs
+        # Return structured outputs for variable-size labels
         outputs = {
-            "logits": logits,
+            "outputs_list": outputs_list,  # List of per-sample outputs
             "text_representations": text_repr,
-            "label_representations": label_repr_proj,
         }
         
-        # Compute loss if labels are provided
         if labels is not None:
-            # Ensure labels have the same shape as logits
-            if labels.shape[1] != logits.shape[1]:
-                # Pad or truncate labels to match logits
-                if labels.shape[1] < logits.shape[1]:
-                    # Pad with zeros
-                    padding = torch.zeros(
-                        (labels.shape[0], logits.shape[1] - labels.shape[1]),
-                        device=labels.device,
-                        dtype=labels.dtype
-                    )
-                    labels = torch.cat([labels, padding], dim=1)
-                else:
-                    # Truncate
-                    labels = labels[:, :logits.shape[1]]
-            
-            loss = self.loss_fn(logits, labels.float())
-            outputs["loss"] = loss
-        
+            outputs["loss"] = total_loss / batch_size
         return outputs
     
     def predict(
@@ -285,7 +266,7 @@ class FZeroNet(nn.Module):
         attention_mask: torch.Tensor,
         label_mask: torch.Tensor,
         threshold: float = 0.5,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> List[Dict[str, torch.Tensor]]:
         """
         Make predictions with the model.
         
@@ -296,23 +277,29 @@ class FZeroNet(nn.Module):
             threshold: Threshold for binary classification
             
         Returns:
-            Dictionary containing predictions, probabilities, and logits
+            List of dictionaries containing per-sample predictions
         """
         self.eval()
         with torch.no_grad():
             outputs = self.forward(input_ids, attention_mask, label_mask)
             
-            logits = outputs["logits"]
-            probabilities = torch.sigmoid(logits)
-            predictions = (probabilities > threshold).long()
+            predictions_list = []
+            for sample_output in outputs["outputs_list"]:
+                sample_logits = sample_output["logits"]
+                if len(sample_logits) > 0:
+                    probabilities = torch.sigmoid(sample_logits)
+                    predictions = (probabilities > threshold).long()
+                else:
+                    probabilities = torch.zeros((0,), device=input_ids.device)
+                    predictions = torch.zeros((0,), device=input_ids.device, dtype=torch.long)
+                
+                predictions_list.append({
+                    "predictions": predictions,
+                    "probabilities": probabilities,
+                    "logits": sample_logits,
+                })
             
-            return {
-                "predictions": predictions,
-                "probabilities": probabilities,
-                "logits": logits,
-                "text_representations": outputs["text_representations"],
-                "label_representations": outputs["label_representations"],
-            }
+            return predictions_list
 
 
 # Example usage and testing
