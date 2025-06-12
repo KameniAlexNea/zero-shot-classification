@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class FZeroNet(nn.Module):
+class GliZNet(nn.Module):
     """
     Zero-shot classification model inspired by GLiNER.
     
@@ -30,7 +30,7 @@ class FZeroNet(nn.Module):
         temperature: float = 1.0,
     ):
         """
-        Initialize FZeroNet model.
+        Initialize GliZNet model.
         
         Args:
             model_name: HuggingFace model name for the base encoder
@@ -50,29 +50,14 @@ class FZeroNet(nn.Module):
         self.similarity_metric = similarity_metric
         self.temperature = temperature
         
-        # Projection layers for text and label representations
-        self.text_projection = nn.Sequential(
-            nn.Linear(self.config.hidden_size, self.hidden_size),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(self.hidden_size, self.hidden_size)
-        )
-        
-        self.label_projection = nn.Sequential(
-            nn.Linear(self.config.hidden_size, self.hidden_size),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(), 
-            nn.Linear(self.hidden_size, self.hidden_size)
-        )
-        
-        # For bilinear similarity
+        # For bilinear similarity (uses raw hidden_size dims)
         if similarity_metric == "bilinear":
-            self.bilinear = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
+            self.bilinear = nn.Bilinear(self.config.hidden_size, self.config.hidden_size, 1)
         
         # Loss function
         self.loss_fn = nn.BCEWithLogitsLoss()
         
-        logger.info(f"Initialized FZeroNet with {model_name}")
+        logger.info(f"Initialized GliZNet with {model_name}")
         logger.info(f"Hidden size: {self.hidden_size}")
         logger.info(f"Similarity metric: {similarity_metric}")
     
@@ -170,7 +155,7 @@ class FZeroNet(nn.Module):
         labels: Optional[List[torch.Tensor]] = None,
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass of FZeroNet.
+        Forward pass of GliZNet.
         
         Args:
             input_ids: Token IDs of shape (batch_size, seq_len)
@@ -206,9 +191,9 @@ class FZeroNet(nn.Module):
             hidden_states[i, pos] for i, pos in enumerate(cls_positions)
         ])  # (batch_size, hidden_size)
         
-        # Project text representation
-        text_repr = self.text_projection(cls_repr)  # (batch_size, hidden_size)
-        
+        # Use raw CLS embeddings as text representation
+        text_repr = cls_repr  # (batch_size, hidden_size)
+
         # Extract label representations (first token of each label)
         label_positions = self.get_label_positions(label_mask)
         
@@ -229,8 +214,8 @@ class FZeroNet(nn.Module):
                     hidden_states[batch_idx, pos] for pos in positions
                 ])  # (num_labels, hidden_size)
                 
-                # Project label representations
-                label_repr_proj = self.label_projection(label_repr)  # (num_labels, hidden_size)
+                # Use raw label embeddings
+                label_repr_proj = label_repr  # (num_labels, hidden_size)
                 
                 # Compute similarity scores for this sample
                 text_repr_sample = text_repr[batch_idx:batch_idx+1]  # (1, hidden_size)
@@ -304,11 +289,12 @@ class FZeroNet(nn.Module):
 
 # Example usage and testing
 if __name__ == "__main__":
-    from tokenizer import ZeroShotClassificationTokenizer
+    from tokenizer import GliZNETTokenizer
     
     # Initialize model and tokenizer
-    model = FZeroNet(model_name="bert-base-uncased", hidden_size=256)
-    tokenizer = ZeroShotClassificationTokenizer()
+    model_name="bert-base-uncased"
+    model = GliZNet(model_name=model_name, hidden_size=256)
+    tokenizer = GliZNETTokenizer(model_name)
     
     # Example data
     text = "A fascinating study published in the latest edition of Science Daily reveals that ancient humans used complex mathematical calculations for navigation and resource management."
