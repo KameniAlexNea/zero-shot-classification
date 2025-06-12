@@ -2,289 +2,104 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel
-from typing import Dict, List, Optional
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class GliZNet(nn.Module):
-    """
-    Zero-shot classification model inspired by GLiNER.
-    
-    Architecture:
-    1. BERT encoder to get contextualized embeddings
-    2. Extract CLS token as text representation
-    3. Extract first token of each label as label representation
-    4. Compute similarity between text and label representations
-    5. Apply sigmoid for multi-label classification
-    """
-    
     def __init__(
         self,
         model_name: str = "bert-base-uncased",
-        hidden_size: Optional[int] = None,
+        hidden_size: int = None,
         dropout_rate: float = 0.1,
-        similarity_metric: str = "cosine",  # "cosine", "dot", "bilinear"
+        similarity_metric: str = "cosine",
         temperature: float = 1.0,
     ):
-        """
-        Initialize GliZNet model.
-        
-        Args:
-            model_name: HuggingFace model name for the base encoder
-            hidden_size: Hidden size for projections (default: same as encoder)
-            dropout_rate: Dropout rate for regularization
-            similarity_metric: Method to compute similarity ("cosine", "dot", "bilinear")
-            temperature: Temperature scaling for logits
-        """
         super().__init__()
-        
-        # Load pre-trained BERT model
         self.encoder = AutoModel.from_pretrained(model_name)
         self.config = self.encoder.config
-        
-        # Set hidden size
+
         self.hidden_size = hidden_size or self.config.hidden_size
         self.similarity_metric = similarity_metric
         self.temperature = temperature
-        
-        # For bilinear similarity (uses raw hidden_size dims)
-        if similarity_metric == "bilinear":
-            self.bilinear = nn.Bilinear(self.config.hidden_size, self.config.hidden_size, 1)
-        
-        # Loss function
-        self.loss_fn = nn.BCEWithLogitsLoss()
-        
-        logger.info(f"Initialized GliZNet with {model_name}")
-        logger.info(f"Hidden size: {self.hidden_size}")
-        logger.info(f"Similarity metric: {similarity_metric}")
-    
-    def get_label_positions(self, label_mask: torch.Tensor) -> List[List[int]]:
-        """
-        Extract the first token position for each label from the label mask.
-        
-        Args:
-            label_mask: Boolean tensor of shape (batch_size, seq_len) indicating label positions
-            
-        Returns:
-            List of lists containing first token positions for each label in each sample
-        """
-        batch_size, seq_len = label_mask.shape
-        label_positions = []
-        
-        for batch_idx in range(batch_size):
-            positions = []
-            mask = label_mask[batch_idx]
-            
-            # Find contiguous label regions
-            in_label = False
-            for pos in range(seq_len):
-                if mask[pos] and not in_label:
-                    # Start of a new label
-                    positions.append(pos)
-                    in_label = True
-                elif not mask[pos] and in_label:
-                    # End of current label
-                    in_label = False
-            
-            label_positions.append(positions)
-        
-        return label_positions
-    
-    def compute_similarity(
-        self, 
-        text_repr: torch.Tensor, 
-        label_repr: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Compute similarity between text and label representations.
-        
-        Args:
-            text_repr: Text representations of shape (batch_size, hidden_size)
-            label_repr: Label representations of shape (batch_size, num_labels, hidden_size)
-            
-        Returns:
-            Similarity scores of shape (batch_size, num_labels)
-        """
-        if self.similarity_metric == "cosine":
-            # Normalize vectors
-            text_norm = F.normalize(text_repr, p=2, dim=-1)  # (batch_size, hidden_size)
-            label_norm = F.normalize(label_repr, p=2, dim=-1)  # (batch_size, num_labels, hidden_size)
-            
-            # Compute cosine similarity
-            # text_norm: (batch_size, 1, hidden_size)
-            # label_norm: (batch_size, num_labels, hidden_size)
-            similarity = torch.bmm(
-                text_norm.unsqueeze(1), 
-                label_norm.transpose(-1, -2)
-            ).squeeze(1)  # (batch_size, num_labels)
-            
-        elif self.similarity_metric == "dot":
-            # Simple dot product
-            similarity = torch.bmm(
-                text_repr.unsqueeze(1),
-                label_repr.transpose(-1, -2)
-            ).squeeze(1)
-            
-        elif self.similarity_metric == "bilinear":
-            # Bilinear similarity
-            batch_size, num_labels, hidden_size = label_repr.shape
-            
-            # Expand text_repr to match label_repr
-            text_expanded = text_repr.unsqueeze(1).expand(-1, num_labels, -1)
-            text_flat = text_expanded.reshape(-1, hidden_size)
-            label_flat = label_repr.reshape(-1, hidden_size)
-            
-            # Apply bilinear layer
-            similarity_flat = self.bilinear(text_flat, label_flat).squeeze(-1)
-            similarity = similarity_flat.reshape(batch_size, num_labels)
-            
-        else:
-            raise ValueError(f"Unknown similarity metric: {self.similarity_metric}")
-        
-        # Apply temperature scaling
-        return similarity / self.temperature
-    
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        label_mask: torch.Tensor,
-        labels: Optional[List[torch.Tensor]] = None,
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass of GliZNet.
-        
-        Args:
-            input_ids: Token IDs of shape (batch_size, seq_len)
-            attention_mask: Attention mask of shape (batch_size, seq_len)
-            label_mask: Boolean mask indicating label positions (batch_size, seq_len)
-            labels: List of ground truth label tensors (variable size per sample)
-            
-        Returns:
-            Dictionary containing logits, loss (if labels provided), and representations
-        """
-        batch_size = input_ids.shape[0]
-        
-        # Get encoder outputs
-        encoder_outputs = self.encoder(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            return_dict=True
-        )
-        
-        # Extract hidden states
-        hidden_states = encoder_outputs.last_hidden_state  # (batch_size, seq_len, hidden_size)
-        
-        # Extract CLS token representation (first token after padding)
-        # Find the first non-padding token (should be CLS)
-        cls_positions = []
-        for batch_idx in range(batch_size):
-            mask = attention_mask[batch_idx]
-            first_token_pos = torch.nonzero(mask, as_tuple=True)[0][0].item()
-            cls_positions.append(first_token_pos)
-        
-        # Extract CLS representations
-        cls_repr = torch.stack([
-            hidden_states[i, pos] for i, pos in enumerate(cls_positions)
-        ])  # (batch_size, hidden_size)
-        
-        # Use raw CLS embeddings as text representation
-        text_repr = cls_repr  # (batch_size, hidden_size)
+        self.dropout = nn.Dropout(dropout_rate)
 
-        # Extract label representations (first token of each label)
-        label_positions = self.get_label_positions(label_mask)
-        
-        # For zero-shot, we process each sample individually with its own labels
+        # Optional projection
+        if self.hidden_size != self.config.hidden_size:
+            self.proj = nn.Linear(self.config.hidden_size, self.hidden_size)
+        else:
+            self.proj = nn.Identity()
+
+        if similarity_metric == "bilinear":
+            self.bilinear = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
+
+        self.loss_fn = nn.BCEWithLogitsLoss()
+
+    def compute_similarity(self, text_repr, label_repr):
+        if self.similarity_metric == "cosine":
+            text_norm = F.normalize(text_repr, dim=-1)
+            label_norm = F.normalize(label_repr, dim=-1)
+            sim = torch.bmm(text_norm.unsqueeze(1), label_norm.transpose(1, 2)).squeeze(1)
+        elif self.similarity_metric == "dot":
+            sim = torch.bmm(text_repr.unsqueeze(1), label_repr.transpose(1, 2)).squeeze(1)
+        elif self.similarity_metric == "bilinear":
+            batch_size, num_labels, _ = label_repr.size()
+            text_exp = text_repr.unsqueeze(1).expand(-1, num_labels, -1)
+            sim = self.bilinear(text_exp.reshape(-1, self.hidden_size), label_repr.reshape(-1, self.hidden_size)).squeeze(-1)
+            sim = sim.view(batch_size, num_labels)
+        else:
+            raise ValueError(f"Unsupported similarity metric: {self.similarity_metric}")
+        return sim / self.temperature
+
+    def forward(self, input_ids, attention_mask, label_mask, labels=None):
+        device = input_ids.device
+        encoder_out = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True)
+        hidden = self.dropout(encoder_out.last_hidden_state)
+        hidden_proj = self.proj(hidden)
+
+        # CLS-based text representation
+        text_repr = hidden_proj[:, 0]  # (batch, hidden_size)
+
+        batch_size = input_ids.size(0)
         outputs_list = []
-        total_loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
-        
-        for batch_idx in range(batch_size):
-            positions = label_positions[batch_idx]
-            num_labels = len(positions)
-            
-            if num_labels == 0:
-                # No labels for this sample
-                sample_logits = torch.zeros((0,), device=input_ids.device)
+        total_loss = torch.tensor(0.0, device=device)
+
+        for i in range(batch_size):
+            label_indices = torch.nonzero(label_mask[i], as_tuple=True)[0]
+            if len(label_indices) == 0:
+                logits = torch.zeros((0,), device=device)
             else:
-                # Extract label representations for this sample
-                label_repr = torch.stack([
-                    hidden_states[batch_idx, pos] for pos in positions
-                ])  # (num_labels, hidden_size)
-                
-                # Use raw label embeddings
-                label_repr_proj = label_repr  # (num_labels, hidden_size)
-                
-                # Compute similarity scores for this sample
-                text_repr_sample = text_repr[batch_idx:batch_idx+1]  # (1, hidden_size)
-                label_repr_sample = label_repr_proj.unsqueeze(0)  # (1, num_labels, hidden_size)
-                
-                sample_logits = self.compute_similarity(text_repr_sample, label_repr_sample).squeeze(0)  # (num_labels,)
-            
-            outputs_list.append({
-                "logits": sample_logits,
-                "num_labels": num_labels
-            })
-            
-            # Compute loss for this sample if labels provided
-            if labels is not None and batch_idx < len(labels):
-                sample_labels = labels[batch_idx]
-                if len(sample_labels) == len(sample_logits) and len(sample_logits) > 0:
-                    sample_loss = self.loss_fn(sample_logits, sample_labels.float())
-                    total_loss = total_loss + sample_loss
-        
-        # Return structured outputs for variable-size labels
-        outputs = {
-            "outputs_list": outputs_list,  # List of per-sample outputs
-            "text_representations": text_repr,
-        }
-        
+                label_repr = hidden_proj[i][label_indices]  # (num_labels, hidden_size)
+                logits = self.compute_similarity(text_repr[i].unsqueeze(0), label_repr.unsqueeze(0)).squeeze(0)
+
+            outputs_list.append({"logits": logits, "num_labels": len(label_indices)})
+
+            if labels is not None and i < len(labels):
+                label_targets = labels[i]
+                if len(label_targets) == len(logits) and len(logits) > 0:
+                    loss = self.loss_fn(logits, label_targets.to(device))
+                    total_loss += loss
+
+        output = {"outputs_list": outputs_list, "text_representations": text_repr}
         if labels is not None:
-            outputs["loss"] = total_loss / batch_size
-        return outputs
-    
-    def predict(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        label_mask: torch.Tensor,
-        threshold: float = 0.5,
-    ) -> List[Dict[str, torch.Tensor]]:
-        """
-        Make predictions with the model.
-        
-        Args:
-            input_ids: Token IDs of shape (batch_size, seq_len)
-            attention_mask: Attention mask of shape (batch_size, seq_len)
-            label_mask: Boolean mask indicating label positions (batch_size, seq_len)
-            threshold: Threshold for binary classification
-            
-        Returns:
-            List of dictionaries containing per-sample predictions
-        """
+            output["loss"] = total_loss / batch_size
+        return output
+
+    def predict(self, input_ids, attention_mask, label_mask, threshold=0.5):
         self.eval()
         with torch.no_grad():
             outputs = self.forward(input_ids, attention_mask, label_mask)
-            
-            predictions_list = []
-            for sample_output in outputs["outputs_list"]:
-                sample_logits = sample_output["logits"]
-                if len(sample_logits) > 0:
-                    probabilities = torch.sigmoid(sample_logits)
-                    predictions = (probabilities > threshold).long()
-                else:
-                    probabilities = torch.zeros((0,), device=input_ids.device)
-                    predictions = torch.zeros((0,), device=input_ids.device, dtype=torch.long)
-                
-                predictions_list.append({
-                    "predictions": predictions,
-                    "probabilities": probabilities,
-                    "logits": sample_logits,
+            results = []
+
+            for sample in outputs["outputs_list"]:
+                logits = sample["logits"]
+                probs = torch.sigmoid(logits)
+                preds = (probs > threshold).long()
+                results.append({
+                    "predictions": preds,
+                    "probabilities": probs,
+                    "logits": logits
                 })
-            
-            return predictions_list
+        return results
+
 
 
 # Example usage and testing

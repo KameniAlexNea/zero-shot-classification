@@ -1,10 +1,6 @@
 import torch
 from transformers import AutoTokenizer, BertTokenizerFast
 from typing import List, Dict, Any, Optional, Union
-import logging
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class GliZNETTokenizer:
@@ -22,8 +18,6 @@ class GliZNETTokenizer:
         self.cls_token = self.tokenizer.cls_token
         self.sep_token = self.tokenizer.sep_token
         self.pad_token_id = self.tokenizer.pad_token_id
-
-        logger.info(f"Initialized tokenizer with vocab size: {len(self.tokenizer)}")
 
     @classmethod
     def from_pretrained(
