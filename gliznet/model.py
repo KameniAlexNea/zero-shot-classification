@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from transformers import AutoModel
 
 
-class GliZNet(nn.Module):
+class GliZNetModel(nn.Module):
     def __init__(
         self,
         model_name: str = "bert-base-uncased",
@@ -33,54 +33,84 @@ class GliZNet(nn.Module):
 
         self.loss_fn = nn.BCEWithLogitsLoss()
 
-    def compute_similarity(self, text_repr, label_repr):
+    def compute_similarity(self, text_repr: torch.Tensor, label_repr: torch.Tensor):
         if self.similarity_metric == "cosine":
-            text_norm = F.normalize(text_repr, dim=-1)
-            label_norm = F.normalize(label_repr, dim=-1)
-            sim = torch.bmm(text_norm.unsqueeze(1), label_norm.transpose(1, 2)).squeeze(1)
+            sim = torch.nn.functional.cosine_similarity(text_repr, label_repr)
         elif self.similarity_metric == "dot":
-            sim = torch.bmm(text_repr.unsqueeze(1), label_repr.transpose(1, 2)).squeeze(1)
+            sim = torch.mm(text_repr, label_repr.T)
         elif self.similarity_metric == "bilinear":
-            batch_size, num_labels, _ = label_repr.size()
-            text_exp = text_repr.unsqueeze(1).expand(-1, num_labels, -1)
-            sim = self.bilinear(text_exp.reshape(-1, self.hidden_size), label_repr.reshape(-1, self.hidden_size)).squeeze(-1)
-            sim = sim.view(batch_size, num_labels)
+            sim = self.bilinear(
+                text_repr,
+                label_repr,
+            )
         else:
             raise ValueError(f"Unsupported similarity metric: {self.similarity_metric}")
         return sim / self.temperature
 
-    def forward(self, input_ids, attention_mask, label_mask, labels=None):
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        label_mask: torch.Tensor,
+        labels: torch.Tensor = None,
+    ):
         device = input_ids.device
-        encoder_out = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True)
-        hidden = self.dropout(encoder_out.last_hidden_state)
-        hidden_proj = self.proj(hidden)
+        batch_size, seq_len = input_ids.shape
 
-        # CLS-based text representation
-        text_repr = hidden_proj[:, 0]  # (batch, hidden_size)
+        # Encode input
+        encoder_outputs = self.encoder(
+            input_ids, attention_mask=attention_mask, return_dict=True
+        )
+        hidden = self.dropout(encoder_outputs.last_hidden_state)
+        hidden_proj = self.proj(hidden)  # (batch_size, seq_len, hidden_size)
 
-        batch_size = input_ids.size(0)
+        # Determine where label tokens are present
+        pos = torch.nonzero(label_mask)[
+            :, 0
+        ]  # (total_valid_samples,) indices of batch items
+        labels_emb = hidden_proj[label_mask]  # (total_label_tokens, hidden_size)
+        text_emb = hidden_proj[
+            pos, 0
+        ]  # (total_label_tokens, hidden_size), CLS embedding per valid sample
+
+        # Compute similarities: (total_label_tokens,)
+        logits = self.compute_similarity(text_emb, labels_emb)
+
+        # Group logits by batch
+        from collections import defaultdict
+
+        grouped_logits = defaultdict(list)
+        for i, logit in zip(pos.tolist(), logits):
+            grouped_logits[i].append(logit)
+
         outputs_list = []
-        total_loss = torch.tensor(0.0, device=device)
-
+        total_loss = 0.0
         for i in range(batch_size):
-            label_indices = torch.nonzero(label_mask[i], as_tuple=True)[0]
-            if len(label_indices) == 0:
-                logits = torch.zeros((0,), device=device)
-            else:
-                label_repr = hidden_proj[i][label_indices]  # (num_labels, hidden_size)
-                logits = self.compute_similarity(text_repr[i].unsqueeze(0), label_repr.unsqueeze(0)).squeeze(0)
+            sample_logits = (
+                torch.stack(grouped_logits[i])
+                if i in grouped_logits
+                else torch.zeros((0,), device=device)
+            )
+            outputs_list.append(
+                {"logits": sample_logits, "num_labels": sample_logits.size(0)}
+            )
 
-            outputs_list.append({"logits": logits, "num_labels": len(label_indices)})
-
-            if labels is not None and i < len(labels):
-                label_targets = labels[i]
-                if len(label_targets) == len(logits) and len(logits) > 0:
-                    loss = self.loss_fn(logits, label_targets.to(device))
+            if labels is not None:
+                sample_labels = labels[i]
+                if (
+                    sample_labels.size(0) == sample_logits.size(0)
+                    and sample_logits.numel() > 0
+                ):
+                    loss = self.loss_fn(sample_logits, sample_labels.to(device))
                     total_loss += loss
 
-        output = {"outputs_list": outputs_list, "text_representations": text_repr}
+        output = {
+            "outputs_list": outputs_list,
+            "text_representations": hidden_proj[:, 0],
+        }
         if labels is not None:
             output["loss"] = total_loss / batch_size
+
         return output
 
     def predict(self, input_ids, attention_mask, label_mask, threshold=0.5):
@@ -91,71 +121,82 @@ class GliZNet(nn.Module):
 
             for sample in outputs["outputs_list"]:
                 logits = sample["logits"]
-                probs = torch.sigmoid(logits)
+                probs = (
+                    torch.sigmoid(logits)
+                    if self.similarity_metric != "cosine"
+                    else logits
+                )
                 preds = (probs > threshold).long()
-                results.append({
-                    "predictions": preds,
-                    "probabilities": probs,
-                    "logits": logits
-                })
+                results.append(
+                    {"predictions": preds, "probabilities": probs, "logits": logits}
+                )
         return results
-
 
 
 # Example usage and testing
 if __name__ == "__main__":
     from tokenizer import GliZNETTokenizer
-    
+
     # Initialize model and tokenizer
-    model_name="bert-base-uncased"
-    model = GliZNet(model_name=model_name, hidden_size=256)
+    model_name = "bert-base-uncased"
+    model = GliZNetModel(model_name=model_name, hidden_size=256)
     tokenizer = GliZNETTokenizer(model_name)
-    
+
     # Example data
     text = "A fascinating study published in the latest edition of Science Daily reveals that ancient humans used complex mathematical calculations for navigation and resource management."
-    positive_labels = ["archaeological_findings", "scientific_discovery", "academic_publication"]
-    negative_labels = ["historical_research", "science_fiction_story", "mathematics_education"]
+    positive_labels = [
+        "archaeological_findings",
+        "scientific_discovery",
+        "academic_publication",
+    ]
+    negative_labels = [
+        "historical_research",
+        "science_fiction_story",
+        "mathematics_education",
+    ]
     all_labels = positive_labels + negative_labels
-    
+
     # Create ground truth (first 3 are positive, last 3 are negative)
-    ground_truth = torch.tensor([[1, 1, 1, 0, 0, 0]], dtype=torch.float32)
-    
+    ground_truth = [torch.tensor([1, 1, 1, 0, 0, 0], dtype=torch.float32)]
+
     # Tokenize
-    inputs = tokenizer.tokenize_example(text, all_labels, return_tensors="pt")
-    
+    inputs = tokenizer.tokenize_batch([text], [all_labels], return_tensors="pt")
+
     # Add batch dimension if needed
     for key in ["input_ids", "attention_mask", "label_mask"]:
         if inputs[key].dim() == 1:
             inputs[key] = inputs[key].unsqueeze(0)
-    
+
     print("Input shapes:")
     print(f"Input IDs: {inputs['input_ids'].shape}")
     print(f"Attention mask: {inputs['attention_mask'].shape}")
     print(f"Label mask: {inputs['label_mask'].shape}")
-    print(f"Ground truth: {ground_truth.shape}")
-    
+    print(f"Ground truth: {ground_truth[0].shape}")
+
     # Forward pass
     outputs = model(
         input_ids=inputs["input_ids"],
         attention_mask=inputs["attention_mask"],
         label_mask=inputs["label_mask"],
-        labels=ground_truth
+        labels=ground_truth,
     )
-    
+
     print("\nModel outputs:")
-    print(f"Logits shape: {outputs['logits'].shape}")
-    print(f"Logits: {outputs['logits']}")
-    print(f"Loss: {outputs['loss']}")
-    
+    outputs.pop("text_representations")  # Remove text representations for clarity
+    print(f"Output shape: {outputs['outputs_list']}")
+    print(f"Loss: {outputs.get('loss', 'No loss computed')}")
+
     # Make predictions
     predictions = model.predict(
         input_ids=inputs["input_ids"],
         attention_mask=inputs["attention_mask"],
         label_mask=inputs["label_mask"],
-        threshold=0.5
+        threshold=0.5,
     )
-    
+
     print("\nPredictions:")
-    print(f"Probabilities: {predictions['probabilities']}")
-    print(f"Binary predictions: {predictions['predictions']}")
-    print(f"Ground truth: {ground_truth}")
+    for i, pred in enumerate(predictions):
+        print(f"Sample {i}:")
+        print(f"  Predictions: {pred['predictions']}")
+        print(f"  Probabilities: {pred['probabilities']}")
+        print(f"  Logits: {pred['logits']}")

@@ -77,10 +77,8 @@ class GliZNETTokenizer:
 
         idx = start
         for tokens in label_tokens:
-            for _ in tokens:
-                if idx < len(sequence):
-                    mask[idx] = True
-                idx += 1
+            mask[idx] = True
+            idx += len(tokens)
             if idx < len(sequence) and sequence[idx] == self.sep_token:
                 idx += 1
         return mask
