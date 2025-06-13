@@ -1,4 +1,5 @@
 import torch
+import datasets
 from transformers import AutoTokenizer, BertTokenizerFast
 from typing import List, Dict, Any, Optional, Union
 
@@ -189,7 +190,7 @@ class GliZNETTokenizer:
         self,
         texts: Union[List[str], str],
         labels: List[Union[List[str], str]],
-        return_tensors: Optional[str] = None,
+        return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ):
         if isinstance(texts, str):
@@ -207,3 +208,41 @@ class GliZNETTokenizer:
 
     def get_vocab_size(self) -> int:
         return len(self.tokenizer)
+
+
+def load_dataset(
+    path: str = "alexneakameni/ZSHOT-HARDSET",
+    name: str = "triplet",
+    split: str = "train",
+    text_column: str = "sentence",
+    positive_column: str = "labels",
+    negative_column: str = "not_labels",
+):
+    ds = datasets.load_dataset(path, name)[split]
+    ds = ds.map(
+        lambda x: {
+            "text": x[text_column],
+            "labels_text": x[positive_column] + x[negative_column],
+            "labels_int": [1] * len(x[positive_column]) + [0] * len(x[negative_column]),
+        },
+    )
+    return ds.select_columns(["text", "labels_text", "labels_int"])
+
+
+def add_tokenizer(
+    dataset: datasets.Dataset,
+    tokenizer: GliZNETTokenizer,
+    text_column: str = "text",
+    labels_text_column: str = "labels_text",
+    labels_int_column: str = "labels_int",
+):
+    def tokenize_example(example: dict):
+        results = tokenizer(example[text_column], example[labels_text_column])
+        results["labels"] = (
+            [torch.tensor(lab, dtype=torch.float32) for lab in example[labels_int_column]]
+            if isinstance(example[labels_int_column], list)
+            else torch.tensor(example[labels_int_column], dtype=torch.float32)
+        )
+        return results
+
+    return dataset.with_transform(tokenize_example)

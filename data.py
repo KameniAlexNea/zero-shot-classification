@@ -1,4 +1,5 @@
 import datasets
+import torch
 from gliznet.tokenizer import GliZNETTokenizer
 
 
@@ -30,10 +31,9 @@ def add_tokenizer(
 ):
     def tokenize_example(example):
         results = tokenizer(example[text_column], example[labels_text_column])
-        results["labels"] = example[labels_int_column]
+        results["labels"] = torch.tensor(example[labels_int_column])
         return results
 
-    tokenized_ds = dataset.with_transform(
-        lambda x: tokenizer()
+    return dataset.with_transform(
+        tokenize_example
     )
-    return tokenized_ds

@@ -141,55 +141,25 @@ class GliZNetModel(nn.Module):
 
 # Example usage
 if __name__ == "__main__":
-    from tokenizer import GliZNETTokenizer
+    from tokenizer import GliZNETTokenizer, load_dataset, add_tokenizer
 
     model_name = "bert-base-uncased"
     model = GliZNetModel(model_name=model_name, hidden_size=256)
     tokenizer = GliZNETTokenizer(model_name)
 
-    text = [
-        "A fascinating study published in the latest edition of Science Daily reveals that ancient humans used complex mathematical calculations for navigation and resource management.",
-        "Recent archaeological findings in the Sahara Desert have uncovered evidence of early human settlements",
-    ]
-    positive_labels = [
-        "archaeological_findings",
-        "scientific_discovery",
-        "academic_publication",
-    ]
-    negative_labels = [
-        "historical_research",
-        "science_fiction_story",
-        # "mathematics_education",
-    ]
-    all_labels = [positive_labels, negative_labels]
-    ground_truth = [
-        torch.tensor(
-            [
-                1,
-                1,
-                1,
-            ],
-            dtype=torch.float32,
-        ),
-        torch.tensor([0, 0], dtype=torch.float32),
-    ]
+    data = load_dataset()
+    data = add_tokenizer(data, tokenizer)
 
-    inputs = tokenizer.tokenize_batch(text, all_labels, return_tensors="pt")
-    for key in ["input_ids", "attention_mask", "label_mask"]:
-        if inputs[key].dim() == 1:
-            inputs[key] = inputs[key].unsqueeze(0)
+    inputs = data[:2]
 
     print("Input shapes:")
     print(f"Input IDs: {inputs['input_ids'].shape}")
     print(f"Attention mask: {inputs['attention_mask'].shape}")
     print(f"Label mask: {inputs['label_mask'].shape}")
-    print(f"Ground truth: {ground_truth[0].shape}")
+    print(f"Ground truth: {inputs['labels']}")
 
     outputs = model(
-        input_ids=inputs["input_ids"],
-        attention_mask=inputs["attention_mask"],
-        label_mask=inputs["label_mask"],
-        labels=ground_truth,
+        **inputs
     )
 
     print("\nModel outputs:")
