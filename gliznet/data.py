@@ -9,7 +9,7 @@ from typing import List, Dict, Optional, Tuple
 import torch
 from torch.utils.data import Dataset, DataLoader
 import datasets
-from tokenizer import GliZNETTokenizer
+from gliznet.tokenizer import GliZNETTokenizer
 
 
 class GliZNetDataset(Dataset):

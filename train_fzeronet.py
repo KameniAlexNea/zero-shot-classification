@@ -92,15 +92,13 @@ def main():
     parser.add_argument("--model_name", default="bert-base-uncased")
     parser.add_argument("--hidden_size", type=int, default=256)
     parser.add_argument(
-        "--similarity_metric", default="cosine", choices=["cosine", "dot", "bilinear"]
+        "--similarity_metric", default="bilinear", choices=["cosine", "dot", "bilinear"]
     )
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--num_epochs", type=int, default=5)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--save_path", default="fzeronet_model.pt")
-    parser.add_argument("--data_path")
-    parser.add_argument("--text_column", default="text")
+    parser.add_argument("--save_path", default="models/fzeronet_model.pt")
     parser.add_argument("--shuffle_labels", action="store_true", default=True)
 
     args = parser.parse_args()
@@ -110,7 +108,7 @@ def main():
     )
     logger.info(f"Using device: {device}")
 
-    dataset = load_dataset(max_labels=50)
+    dataset = load_dataset(max_labels=50, shuffle_labels=True)
 
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
