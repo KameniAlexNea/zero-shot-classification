@@ -6,7 +6,7 @@ def load_dataset(
     path: str = "alexneakameni/ZSHOT-HARDSET",
     name: str = "triplet",
     split: str = "train",
-    text_column: str = "text",
+    text_column: str = "sentence",
     positive_column: str = "labels",
     negative_column: str = "not_labels",
 ):

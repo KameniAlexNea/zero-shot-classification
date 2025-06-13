@@ -15,8 +15,8 @@ class GliZNETTokenizer:
         )
 
         self.max_length = self.tokenizer.model_max_length
-        self.cls_token = self.tokenizer.cls_token
-        self.sep_token = self.tokenizer.sep_token
+        self.cls_token_id = self.tokenizer.cls_token_id
+        self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
 
     @classmethod
@@ -30,11 +30,11 @@ class GliZNETTokenizer:
     def _build_sequence(
         self, text_tokens: List[str], label_tokens: List[List[str]]
     ) -> List[str]:
-        sequence = [self.cls_token] + text_tokens + [self.sep_token]
+        sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
         for i, tokens in enumerate(label_tokens):
             sequence += tokens
             if i < len(label_tokens) - 1:
-                sequence.append(self.sep_token)
+                sequence.append(self.sep_token_id)
         return sequence
 
     def _truncate_text_tokens(
@@ -72,7 +72,7 @@ class GliZNETTokenizer:
         mask = [False] * len(sequence)
         if not label_tokens:
             return mask
-        start = sequence.index(self.sep_token) + 1
+        start = sequence.index(self.sep_token_id) + 1
         idx = start
         for tokens in label_tokens:
             mask[idx] = True  # Mark the first token of the label
@@ -108,15 +108,14 @@ class GliZNETTokenizer:
         self,
         text: str,
         all_labels: List[str],
-        return_tensors: Optional[str] = None,
+        return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
-        sequence = self._build_sequence(text_tokens, label_tokens)
+        token_ids = self._build_sequence(text_tokens, label_tokens)
 
-        token_ids = self.tokenizer.convert_tokens_to_ids(sequence)
-        label_mask = self._create_label_mask(sequence, label_tokens)
+        label_mask = self._create_label_mask(token_ids, label_tokens)
 
         if pad:
             result = self._pad_and_mask(token_ids, label_mask)
@@ -143,7 +142,7 @@ class GliZNETTokenizer:
         self,
         texts: List[str],
         all_labels: List[List[str]],
-        return_tensors: Optional[str] = None,
+        return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ) -> Dict[str, Any]:
         if return_tensors == "pt" and not pad:
@@ -151,16 +150,13 @@ class GliZNETTokenizer:
                 "return_tensors='pt' requires pad=True for batch tokenization."
             )
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
-        sequences = [
+        token_ids = [
             self._build_sequence(text, labels)
             for text, labels in zip(text_tokens, label_tokens)
         ]
-        token_ids = [
-            self.tokenizer.convert_tokens_to_ids(sequence) for sequence in sequences
-        ]
         label_masks = [
             self._create_label_mask(sequence, labels)
-            for sequence, labels in zip(sequences, label_tokens)
+            for sequence, labels in zip(token_ids, label_tokens)
         ]
         if pad:
             padded_results = [
@@ -187,6 +183,7 @@ class GliZNETTokenizer:
                 if k in {"input_ids", "attention_mask", "label_mask"}
             }
             result.update(result_pad)
+        return result
 
     def __call__(
         self,
