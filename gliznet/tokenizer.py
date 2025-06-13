@@ -70,18 +70,39 @@ class GliZNETTokenizer:
         self, sequence: List[str], label_tokens: List[List[str]]
     ) -> List[bool]:
         mask = [False] * len(sequence)
-        try:
-            start = sequence.index(self.sep_token) + 1
-        except ValueError:
+        if not label_tokens:
             return mask
-
+        start = sequence.index(self.sep_token) + 1
         idx = start
         for tokens in label_tokens:
-            mask[idx] = True
-            idx += len(tokens)
-            if idx < len(sequence) and sequence[idx] == self.sep_token:
-                idx += 1
+            mask[idx] = True  # Mark the first token of the label
+            idx += len(tokens) + 1  # +1 for the SEP token
         return mask
+
+    def _batch_tokenize(
+        self,
+        texts: Union[str, List[str]],
+        all_labels: Union[List[str], List[List[str]]],
+    ):
+        if isinstance(texts, str):
+            return (
+                self.tokenizer(
+                    texts, return_attention_mask=False, return_token_type_ids=False
+                )["input_ids"],
+                self.tokenizer(
+                    all_labels,
+                    return_attention_mask=False,
+                    return_token_type_ids=False,
+                )["input_ids"],
+            )
+        return self.tokenizer(
+            texts, return_attention_mask=False, return_token_type_ids=False
+        )["input_ids"], [
+            self.tokenizer(
+                labels, return_attention_mask=False, return_token_type_ids=False
+            )["input_ids"]
+            for labels in all_labels
+        ]
 
     def tokenize_example(
         self,
@@ -90,8 +111,7 @@ class GliZNETTokenizer:
         return_tensors: Optional[str] = None,
         pad: bool = True,
     ) -> Dict[str, Any]:
-        text_tokens = self.tokenizer.tokenize(text)
-        label_tokens = [self.tokenizer.tokenize(label) for label in all_labels]
+        text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
         sequence = self._build_sequence(text_tokens, label_tokens)
 
@@ -99,92 +119,74 @@ class GliZNETTokenizer:
         label_mask = self._create_label_mask(sequence, label_tokens)
 
         if pad:
-            padded = self._pad_and_mask(token_ids, label_mask)
-            result = {
-                **padded,
-                "text": text,
-                "labels": all_labels,
-                "sequence_length": min(len(token_ids), self.max_length),
-            }
+            result = self._pad_and_mask(token_ids, label_mask)
         else:
             attention_mask = [1] * len(token_ids)
             result = {
                 "input_ids": token_ids,
                 "attention_mask": attention_mask,
                 "label_mask": label_mask,
-                "text": text,
-                "labels": all_labels,
-                "sequence_length": len(token_ids),
             }
 
         if return_tensors == "pt":
-            # reuse same tensor logic for padded or unpadded
-            if not pad:
-                # single-example unpadded tensors
-                result = {
-                    k: torch.tensor(
-                        v, dtype=torch.long if k != "label_mask" else torch.bool
-                    )
-                    for k, v in result.items()
-                    if k in {"input_ids", "attention_mask", "label_mask"}
-                } | {
-                    k: v
-                    for k, v in result.items()
-                    if k not in {"input_ids", "attention_mask", "label_mask"}
-                }
-            else:
-                # existing padded tensor conversion
-                result = {
-                    k: torch.tensor(
-                        v, dtype=torch.long if k != "label_mask" else torch.bool
-                    )
-                    for k, v in result.items()
-                    if k in {"input_ids", "attention_mask", "label_mask"}
-                } | {
-                    k: v
-                    for k, v in result.items()
-                    if k not in {"input_ids", "attention_mask", "label_mask"}
-                }
+            result_pad = {
+                k: torch.tensor(
+                    v, dtype=torch.long if k != "label_mask" else torch.bool
+                )
+                for k, v in result.items()
+                if k in {"input_ids", "attention_mask", "label_mask"}
+            }
+            result.update(result_pad)
         return result
 
     def tokenize_batch(
         self,
         texts: List[str],
-        all_labels_list: List[List[str]],
+        all_labels: List[List[str]],
         return_tensors: Optional[str] = None,
         pad: bool = True,
     ) -> Dict[str, Any]:
-        batch = []
-        for text, labels in zip(texts, all_labels_list):
-            ex = self.tokenize_example(text, labels, return_tensors=None, pad=pad)
-            batch.append(ex)
-
-        input_ids = [ex["input_ids"] for ex in batch]
-        attention_mask = [ex["attention_mask"] for ex in batch]
-        label_mask = [ex["label_mask"] for ex in batch]
-        texts_out = [ex["text"] for ex in batch]
-        labels_out = [ex["labels"] for ex in batch]
-        lengths = [ex["sequence_length"] for ex in batch]
-
-        result = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "label_mask": label_mask,
-            "texts": texts_out,
-            "labels": labels_out,
-            "sequence_lengths": lengths,
-        }
-
+        if return_tensors == "pt" and not pad:
+            raise ValueError(
+                "return_tensors='pt' requires pad=True for batch tokenization."
+            )
+        text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
+        sequences = [
+            self._build_sequence(text, labels)
+            for text, labels in zip(text_tokens, label_tokens)
+        ]
+        token_ids = [
+            self.tokenizer.convert_tokens_to_ids(sequence) for sequence in sequences
+        ]
+        label_masks = [
+            self._create_label_mask(sequence, labels)
+            for sequence, labels in zip(sequences, label_tokens)
+        ]
+        if pad:
+            padded_results = [
+                self._pad_and_mask(ids, mask)
+                for ids, mask in zip(token_ids, label_masks)
+            ]
+            result = {
+                "input_ids": [r["input_ids"] for r in padded_results],
+                "attention_mask": [r["attention_mask"] for r in padded_results],
+                "label_mask": [r["label_mask"] for r in padded_results],
+            }
+        else:
+            result = {
+                "input_ids": token_ids,
+                "attention_mask": [[1] * len(ids) for ids in token_ids],
+                "label_mask": label_masks,
+            }
         if return_tensors == "pt":
-            if not pad:
-                raise ValueError(
-                    "return_tensors='pt' requires pad=True for batch tokenization."
+            result_pad = {
+                k: torch.tensor(
+                    v, dtype=torch.long if k != "label_mask" else torch.bool
                 )
-            result["input_ids"] = torch.tensor(input_ids, dtype=torch.long)
-            result["attention_mask"] = torch.tensor(attention_mask, dtype=torch.long)
-            result["label_mask"] = torch.tensor(label_mask, dtype=torch.bool)
-
-        return result
+                for k, v in result.items()
+                if k in {"input_ids", "attention_mask", "label_mask"}
+            }
+            result.update(result_pad)
 
     def __call__(
         self,
