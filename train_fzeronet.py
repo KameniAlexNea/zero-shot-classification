@@ -5,18 +5,17 @@ from typing import Dict, Optional
 
 import torch
 import torch.optim as optim
-from datasets import Dataset as HFDataset
 from loguru import logger
 
-from gliznet.tokenizer import GliZNETTokenizer, load_dataset, add_tokenizer
+from gliznet.tokenizer import GliZNETTokenizer, load_dataset
 from gliznet.model import GliZNetModel
+from gliznet.data import prepare_data_loaders
 
 
 def train_model(
     model: GliZNetModel,
-    batch_size: int,
-    train_loader: HFDataset,
-    val_loader: Optional[HFDataset],
+    train_loader,
+    val_loader,
     optimizer: optim.Optimizer,
     num_epochs: int,
     device: torch.device,
@@ -30,7 +29,7 @@ def train_model(
         model.train()
         running_loss = 0.0
 
-        for batch_idx, batch in enumerate(train_loader.iter(batch_size=batch_size)):
+        for batch_idx, batch in enumerate(train_loader):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             label_mask = batch["label_mask"].to(device)
@@ -123,8 +122,15 @@ def main():
 
     tokenizer = GliZNETTokenizer(model_name=args.model_name)
 
-    train_dataset = add_tokenizer(train_data, tokenizer)
-    val_dataset = add_tokenizer(train_data, tokenizer)
+    # Create DataLoaders using the new efficient approach
+    train_loader, val_loader = prepare_data_loaders(
+        train_dataset=train_data,
+        val_dataset=val_data,
+        tokenizer=tokenizer,
+        batch_size=args.batch_size,
+        num_workers=4,
+        pin_memory=True,
+    )
 
     model = GliZNetModel(
         model_name=args.model_name,
@@ -136,9 +142,8 @@ def main():
 
     _ = train_model(
         model,
-        args.batch_size,
-        train_dataset,
-        val_dataset,
+        train_loader,
+        val_loader,
         optimizer,
         args.num_epochs,
         device,
