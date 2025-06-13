@@ -1,82 +1,22 @@
 #!/usr/bin/env python3
 
-import random
 import argparse
-from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 
 import torch
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from datasets import Dataset as HFDataset, load_dataset
+from datasets import Dataset as HFDataset
 from loguru import logger
 
-from gliznet.tokenizer import GliZNETTokenizer
+from gliznet.tokenizer import GliZNETTokenizer, load_dataset, add_tokenizer
 from gliznet.model import GliZNetModel
-
-
-class ZeroShotDataset(Dataset):
-    def __init__(
-        self,
-        dataset: HFDataset,
-        tokenizer: GliZNETTokenizer,
-        text_column: str = "text",
-        positive_labels_column: str = "positive_labels",
-        negative_labels_column: str = "negative_labels",
-        shuffle_labels: bool = True,
-    ):
-        self.dataset = dataset
-        self.tokenizer = tokenizer
-        self.text_column = text_column
-        self.positive_labels_column = positive_labels_column
-        self.negative_labels_column = negative_labels_column
-        self.shuffle_labels = shuffle_labels
-        logger.info(f"Dataset initialized with {len(dataset)} samples")
-
-    def __len__(self):
-        return len(self.dataset)
-
-    def __getitem__(self, idx) -> Dict:
-        item = self.dataset[idx]
-        text = item[self.text_column]
-        pos_labels = item[self.positive_labels_column]
-        neg_labels = item[self.negative_labels_column]
-
-        all_labels = pos_labels + neg_labels
-        targets = [1.0] * len(pos_labels) + [0.0] * len(neg_labels)
-
-        if self.shuffle_labels:
-            combined = list(zip(all_labels, targets))
-            random.shuffle(combined)
-            all_labels, targets = zip(*combined)
-
-        tokenized = self.tokenizer.tokenize_example(text, all_labels, return_tensors="pt")
-
-        return {
-            "input_ids": tokenized["input_ids"].squeeze(0),
-            "attention_mask": tokenized["attention_mask"].squeeze(0),
-            "label_mask": tokenized["label_mask"].squeeze(0),
-            "labels": torch.tensor(targets, dtype=torch.float32),
-            "text": text,
-            "all_labels": list(all_labels),
-        }
-
-
-def collate_fn(batch: List[Dict]):
-    return {
-        "input_ids": torch.stack([item["input_ids"] for item in batch]),
-        "attention_mask": torch.stack([item["attention_mask"] for item in batch]),
-        "label_mask": torch.stack([item["label_mask"] for item in batch]),
-        "labels": [item["labels"] for item in batch],
-        "texts": [item["text"] for item in batch],
-        "all_labels": [item["all_labels"] for item in batch],
-    }
 
 
 def train_model(
     model: GliZNetModel,
-    train_loader: DataLoader,
-    val_loader: Optional[DataLoader],
+    batch_size: int,
+    train_loader: HFDataset,
+    val_loader: Optional[HFDataset],
     optimizer: optim.Optimizer,
     num_epochs: int,
     device: torch.device,
@@ -90,7 +30,7 @@ def train_model(
         model.train()
         running_loss = 0.0
 
-        for batch_idx, batch in enumerate(train_loader):
+        for batch_idx, batch in enumerate(train_loader.iter(batch_size=batch_size)):
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             label_mask = batch["label_mask"].to(device)
@@ -156,8 +96,6 @@ def main():
     parser.add_argument("--save_path", default="fzeronet_model.pt")
     parser.add_argument("--data_path")
     parser.add_argument("--text_column", default="text")
-    parser.add_argument("--positive_labels_column", default="positive_labels")
-    parser.add_argument("--negative_labels_column", default="negative_labels")
     parser.add_argument("--shuffle_labels", action="store_true", default=True)
 
     args = parser.parse_args()
@@ -165,59 +103,31 @@ def main():
     device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else args.device)
     logger.info(f"Using device: {device}")
 
-    if args.data_path:
-        data_path = Path(args.data_path)
-        dataset = load_dataset("json", data_files=str(data_path))["train"] if data_path.exists() else load_dataset(args.data_path)["train"]
-    else:
-        dataset = HFDataset.from_list([
-            {
-                "text": "Scientists discovered a new protein structure using AI.",
-                "positive_labels": ["science", "research", "artificial_intelligence"],
-                "negative_labels": ["sports", "cooking", "travel"],
-            },
-            {
-                "text": "The basketball team won the championship.",
-                "positive_labels": ["sports", "basketball", "competition"],
-                "negative_labels": ["science", "cooking", "technology"],
-            },
-        ])
+    
+    dataset = load_dataset(max_labels=50)
 
-    splits = dataset.train_test_split(test_size=0.2, seed=42)
+    splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
+
+    
 
     logger.info(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
 
     tokenizer = GliZNETTokenizer(model_name=args.model_name)
+
+    train_dataset = add_tokenizer(train_data, tokenizer)
+    val_dataset = add_tokenizer(train_data, tokenizer)
+
     model = GliZNetModel(
         model_name=args.model_name,
         hidden_size=args.hidden_size,
         similarity_metric=args.similarity_metric,
     )
 
-    train_dataset = ZeroShotDataset(
-        train_data,
-        tokenizer,
-        args.text_column,
-        args.positive_labels_column,
-        args.negative_labels_column,
-        shuffle_labels=args.shuffle_labels,
-    )
-    val_dataset = ZeroShotDataset(
-        val_data,
-        tokenizer,
-        args.text_column,
-        args.positive_labels_column,
-        args.negative_labels_column,
-        shuffle_labels=False,
-    )
-
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
-
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
 
-    _ = train_model(model, train_loader, val_loader, optimizer, args.num_epochs, device, args.save_path)
+    _ = train_model(model, args.batch_size, train_dataset, val_dataset, optimizer, args.num_epochs, device, args.save_path)
     logger.info("Training complete")
 
 

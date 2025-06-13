@@ -1,3 +1,4 @@
+import random
 import torch
 import datasets
 from transformers import AutoTokenizer, BertTokenizerFast
@@ -218,14 +219,27 @@ def load_dataset(
     text_column: str = "sentence",
     positive_column: str = "labels",
     negative_column: str = "not_labels",
+    shuffle_labels: bool = True,
+    max_labels: Optional[int] = None,
 ):
+    def mapper(x):
+        labels = x[positive_column] + x[negative_column]
+        labels_int = [1] * len(x[positive_column]) + [0] * len(x[negative_column])
+        if shuffle_labels:
+            combined = list(zip(labels, labels_int))
+            random.shuffle(combined)
+            labels, labels_int = zip(*combined)
+        if max_labels is not None:
+            labels = labels[:max_labels]
+            labels_int = labels_int[:max_labels]
+        return {
+            "text": x[text_column],
+            "labels_text": labels,
+            "labels_int": labels_int,
+        }
     ds = datasets.load_dataset(path, name)[split]
     ds = ds.map(
-        lambda x: {
-            "text": x[text_column],
-            "labels_text": x[positive_column] + x[negative_column],
-            "labels_int": [1] * len(x[positive_column]) + [0] * len(x[negative_column]),
-        },
+        mapper,
     )
     return ds.select_columns(["text", "labels_text", "labels_int"])
 
