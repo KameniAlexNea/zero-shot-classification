@@ -45,7 +45,9 @@ def train_model(
             running_loss += loss.item()
 
             if batch_idx % 10 == 0:
-                logger.info(f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.4f}")
+                logger.info(
+                    f"Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.4f}"
+                )
 
         avg_train_loss = running_loss / len(train_loader)
         train_losses.append(avg_train_loss)
@@ -85,10 +87,14 @@ def train_model(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train GliZNetModel for zero-shot classification")
+    parser = argparse.ArgumentParser(
+        description="Train GliZNetModel for zero-shot classification"
+    )
     parser.add_argument("--model_name", default="bert-base-uncased")
     parser.add_argument("--hidden_size", type=int, default=256)
-    parser.add_argument("--similarity_metric", default="cosine", choices=["cosine", "dot", "bilinear"])
+    parser.add_argument(
+        "--similarity_metric", default="cosine", choices=["cosine", "dot", "bilinear"]
+    )
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--learning_rate", type=float, default=1e-5)
@@ -100,19 +106,20 @@ def main():
 
     args = parser.parse_args()
 
-    device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else args.device)
+    device = torch.device(
+        "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
+    )
     logger.info(f"Using device: {device}")
 
-    
     dataset = load_dataset(max_labels=50)
 
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
 
-    
-
-    logger.info(f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}")
+    logger.info(
+        f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}"
+    )
 
     tokenizer = GliZNETTokenizer(model_name=args.model_name)
 
@@ -127,7 +134,16 @@ def main():
 
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
 
-    _ = train_model(model, args.batch_size, train_dataset, val_dataset, optimizer, args.num_epochs, device, args.save_path)
+    _ = train_model(
+        model,
+        args.batch_size,
+        train_dataset,
+        val_dataset,
+        optimizer,
+        args.num_epochs,
+        device,
+        args.save_path,
+    )
     logger.info("Training complete")
 
 
