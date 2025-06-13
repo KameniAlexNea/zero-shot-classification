@@ -150,7 +150,12 @@ if __name__ == "__main__":
     data = load_dataset()
     data = add_tokenizer(data, tokenizer)
 
-    inputs = data[:2]
+    inputs = data[0]
+    if len(inputs["input_ids"]) == 512:
+        inputs['input_ids'] = inputs['input_ids'].unsqueeze(0)
+        inputs['attention_mask'] = inputs['attention_mask'].unsqueeze(0)
+        inputs['label_mask'] = inputs['label_mask'].unsqueeze(0)
+        inputs['labels'] = [inputs['labels']]
 
     print("Input shapes:")
     print(f"Input IDs: {inputs['input_ids'].shape}")

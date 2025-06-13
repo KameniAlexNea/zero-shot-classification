@@ -129,6 +129,7 @@ class GliZNETTokenizer:
             }
 
         if return_tensors == "pt":
+            # Convert to PyTorch tensors: unsqueeze to add batch dimension
             result_pad = {
                 k: torch.tensor(
                     v, dtype=torch.long if k != "label_mask" else torch.bool
@@ -245,4 +246,5 @@ def add_tokenizer(
         )
         return results
 
-    return dataset.with_transform(tokenize_example)
+    dataset.set_transform(tokenize_example)
+    return dataset
