@@ -11,7 +11,7 @@ class GliZNetModel(nn.Module):
         model_name: str = "bert-base-uncased",
         hidden_size: int = None,
         dropout_rate: float = 0.1,
-        similarity_metric: str = "cosine",
+        similarity_metric: str = "bilinear",
         temperature: float = 1.0,
     ):
         super().__init__()
@@ -23,19 +23,26 @@ class GliZNetModel(nn.Module):
         self.temperature = temperature
         self.dropout = nn.Dropout(dropout_rate)
 
-        if self.hidden_size != self.config.hidden_size:
-            self.proj = nn.Linear(self.config.hidden_size, self.hidden_size)
-        else:
-            self.proj = nn.Identity()
+        self.proj = (
+            nn.Linear(self.config.hidden_size, self.hidden_size)
+            if self.hidden_size != self.config.hidden_size
+            else nn.Identity()
+        )
 
         if similarity_metric == "bilinear":
             self.bilinear = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
 
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.loss_fn = (
+            nn.BCEWithLogitsLoss if self.similarity_metric != "cosine" else nn.MSELoss
+        )()
 
     def compute_similarity(self, text_repr: torch.Tensor, label_repr: torch.Tensor):
         if self.similarity_metric == "cosine":
-            sim = F.cosine_similarity(text_repr, label_repr)
+            sim = (
+                F.cosine_similarity(text_repr, label_repr) + 1.0
+            ) / 2  # Shift to [0, 1] range
+            eps = 1e-7
+            sim = sim.clamp(eps, 1 - eps)
         elif self.similarity_metric == "dot":
             sim = torch.mm(text_repr, label_repr.T)
         elif self.similarity_metric == "bilinear":
@@ -49,7 +56,7 @@ class GliZNetModel(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         label_mask: torch.Tensor,
-        labels: torch.Tensor = None,
+        labels: list[torch.Tensor] = None,
     ):
         device = input_ids.device
         batch_size = input_ids.size(0)
@@ -58,47 +65,53 @@ class GliZNetModel(nn.Module):
             input_ids, attention_mask=attention_mask, return_dict=True
         )
         hidden = self.dropout(encoder_outputs.last_hidden_state)
-        hidden_proj = self.proj(hidden)
+        hidden_proj = self.proj(hidden)  # (batch_size, seq_len, hidden_size)
 
-        pos = torch.nonzero(label_mask)[:, 0]  # (num_valid_samples,)
-        labels_emb = hidden_proj[label_mask]  # (num_valid_samples, hidden_size)
-        text_emb = hidden_proj[pos, 0]  # CLS embedding at index 0
+        # Get positions of label tokens
+        pos = torch.nonzero(label_mask)[:, 0]  # (total_valid_samples,)
+        labels_emb = hidden_proj[label_mask]  # (total_label_tokens, hidden_size)
+        text_emb = hidden_proj[pos, 0]  # (total_label_tokens, hidden_size)
 
+        # Compute similarities
         logits = self.compute_similarity(text_emb, labels_emb)
 
+        # Group logits by batch
         grouped_logits = defaultdict(list)
         for i, logit in zip(pos.tolist(), logits):
             grouped_logits[i].append(logit)
 
         outputs_list = []
-        total_loss = 0.0
+        all_logits = []
+        all_targets = []
 
         for i in range(batch_size):
-            sample_logits = (
-                torch.stack(grouped_logits[i])
-                if i in grouped_logits
-                else torch.zeros((0,), device=device)
-            )
+            if i in grouped_logits:
+                sample_logits = torch.stack(grouped_logits[i])
+            else:
+                sample_logits = torch.zeros((0,), device=device)
+
             outputs_list.append(
-                {"logits": sample_logits, "num_labels": sample_logits.size(0)}
+                {
+                    "logits": sample_logits,
+                    "num_labels": sample_logits.size(0),
+                }
             )
 
-            if labels is not None:
+            if labels is not None and sample_logits.numel() > 0:
                 sample_labels = labels[i]
-                if (
-                    sample_labels.size(0) == sample_logits.size(0)
-                    and sample_logits.numel() > 0
-                ):
-                    loss = self.loss_fn(sample_logits, sample_labels.to(device))
-                    total_loss += loss
+                if sample_labels.size(0) == sample_logits.size(0):
+                    all_logits.append(sample_logits)
+                    all_targets.append(sample_labels.to(device))
 
         output = {
             "outputs_list": outputs_list,
             "text_representations": hidden_proj[:, 0],
         }
 
-        if labels is not None:
-            output["loss"] = total_loss / batch_size
+        if all_logits:
+            total_logits = torch.cat(all_logits)
+            total_labels = torch.cat(all_targets)
+            output["loss"] = self.loss_fn(total_logits, total_labels.view(-1, 1))
 
         return output
 
@@ -117,13 +130,16 @@ class GliZNetModel(nn.Module):
                 )
                 preds = (probs > threshold).long()
                 results.append(
-                    {"predictions": preds, "probabilities": probs, "logits": logits}
+                    {
+                        "predictions": preds,
+                        "probabilities": probs,
+                        "logits": logits,
+                    }
                 )
-
         return results
 
 
-# Example usage and testing
+# Example usage
 if __name__ == "__main__":
     from tokenizer import GliZNETTokenizer
 
@@ -131,12 +147,10 @@ if __name__ == "__main__":
     model = GliZNetModel(model_name=model_name, hidden_size=256)
     tokenizer = GliZNETTokenizer(model_name)
 
-    text = (
-        "A fascinating study published in the latest edition of Science Daily "
-        "reveals that ancient humans used complex mathematical calculations "
-        "for navigation and resource management."
-    )
-
+    text = [
+        "A fascinating study published in the latest edition of Science Daily reveals that ancient humans used complex mathematical calculations for navigation and resource management.",
+        "Recent archaeological findings in the Sahara Desert have uncovered evidence of early human settlements",
+    ]
     positive_labels = [
         "archaeological_findings",
         "scientific_discovery",
@@ -145,22 +159,31 @@ if __name__ == "__main__":
     negative_labels = [
         "historical_research",
         "science_fiction_story",
-        "mathematics_education",
+        # "mathematics_education",
     ]
-    all_labels = positive_labels + negative_labels
-    ground_truth = [torch.tensor([1, 1, 1, 0, 0, 0], dtype=torch.float32)]
+    all_labels = [positive_labels, negative_labels]
+    ground_truth = [
+        torch.tensor(
+            [
+                1,
+                1,
+                1,
+            ],
+            dtype=torch.float32,
+        ),
+        torch.tensor([0, 0], dtype=torch.float32),
+    ]
 
-    inputs = tokenizer.tokenize_batch([text], [all_labels], return_tensors="pt")
-
+    inputs = tokenizer.tokenize_batch(text, all_labels, return_tensors="pt")
     for key in ["input_ids", "attention_mask", "label_mask"]:
         if inputs[key].dim() == 1:
             inputs[key] = inputs[key].unsqueeze(0)
 
     print("Input shapes:")
-    print(f"  Input IDs: {inputs['input_ids'].shape}")
-    print(f"  Attention mask: {inputs['attention_mask'].shape}")
-    print(f"  Label mask: {inputs['label_mask'].shape}")
-    print(f"  Ground truth: {ground_truth[0].shape}")
+    print(f"Input IDs: {inputs['input_ids'].shape}")
+    print(f"Attention mask: {inputs['attention_mask'].shape}")
+    print(f"Label mask: {inputs['label_mask'].shape}")
+    print(f"Ground truth: {ground_truth[0].shape}")
 
     outputs = model(
         input_ids=inputs["input_ids"],
@@ -171,8 +194,10 @@ if __name__ == "__main__":
 
     print("\nModel outputs:")
     outputs.pop("text_representations")
-    print(f"  Outputs list: {outputs['outputs_list']}")
-    print(f"  Loss: {outputs.get('loss', 'No loss computed')}")
+    print(
+        f"Output logits per sample: {[out['num_labels'] for out in outputs['outputs_list']]}"
+    )
+    print(f"Loss: {outputs.get('loss', 'No loss computed')}")
 
     predictions = model.predict(
         input_ids=inputs["input_ids"],
