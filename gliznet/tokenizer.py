@@ -38,17 +38,17 @@ class GliZNETTokenizer:
             sequence += tokens
             labels_mask += [1] + [0] * (len(tokens) - 1)
             if i < len(label_tokens) - 1:
-                sequence.append(self.sep_token_id)
+                sequence.append(self.sep_token_id) # Adding SEP between labels
                 labels_mask.append(0)
         return sequence, labels_mask
 
     def _truncate_text_tokens(
         self, text_tokens: List[str], label_tokens: List[List[str]]
     ) -> List[str]:
-        # Account for: CLS + SEP + sum(label tokens) + SEP between labels
-        label_flat = [tok for sub in label_tokens for tok in sub]
-        sep_count = len(label_tokens) - 1
-        reserve = 2 + len(label_flat) + sep_count  # CLS + SEP + labels
+        label_flat_count = sum([len(sub) for sub in label_tokens])
+        # Ensure sep_count is not negative if label_tokens is empty
+        sep_count = max(0, len(label_tokens) - 1)
+        reserve = 2 + label_flat_count + sep_count  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
         allowed = self.max_length - reserve
         return text_tokens[: max(0, allowed)]
 
