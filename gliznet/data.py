@@ -24,14 +24,12 @@ class GliZNetDataset(Dataset):
         text_column: str = "text",
         labels_text_column: str = "labels_text",
         labels_int_column: str = "labels_int",
-        shuffle_on_epoch: bool = True,
     ):
         self.hf_dataset = hf_dataset
         self.tokenizer = tokenizer
         self.text_column = text_column
         self.labels_text_column = labels_text_column
         self.labels_int_column = labels_int_column
-        self.shuffle_on_epoch = shuffle_on_epoch
 
         # Cache the dataset length
         self._length = len(hf_dataset)
@@ -45,11 +43,9 @@ class GliZNetDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """Get a single item from the dataset."""
-        # Use shuffled index if shuffling is enabled
-        actual_idx = self.indices[idx] if self.shuffle_on_epoch else idx
 
         # Get the raw example
-        example = self.hf_dataset[actual_idx]
+        example = self.hf_dataset[idx]
 
         # Tokenize the example
         tokenized = self.tokenizer(
@@ -68,9 +64,7 @@ class GliZNetDataset(Dataset):
 
         # Remove batch dimension from tokenized outputs (DataLoader will add it back)
         result = {
-            "input_ids": tokenized["input_ids"].squeeze(0),
-            "attention_mask": tokenized["attention_mask"].squeeze(0),
-            "label_mask": tokenized["label_mask"].squeeze(0),
+            **tokenized,
             "labels": labels,
         }
 
