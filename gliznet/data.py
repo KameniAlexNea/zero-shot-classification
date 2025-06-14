@@ -64,8 +64,10 @@ class GliZNetDataset(Dataset):
 
         # Remove batch dimension from tokenized outputs (DataLoader will add it back)
         result = {
-            **tokenized,
-            "labels": labels,
+            "input_ids": tokenized["input_ids"].unsqueeze(0),
+            "attention_mask": tokenized["attention_mask"].unsqueeze(0),
+            "label_mask": tokenized["label_mask"].unsqueeze(0),
+            "labels": labels.unsqueeze(0),
         }
 
         return result
@@ -73,12 +75,12 @@ class GliZNetDataset(Dataset):
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     # Stack regular tensors
-    input_ids = torch.stack([item["input_ids"] for item in batch])
-    attention_mask = torch.stack([item["attention_mask"] for item in batch])
-    label_mask = torch.stack([item["label_mask"] for item in batch])
+    input_ids = torch.cat([item["input_ids"] for item in batch])
+    attention_mask = torch.cat([item["attention_mask"] for item in batch])
+    label_mask = torch.cat([item["label_mask"] for item in batch])
 
     # Handle labels which can have different lengths per sample
-    labels = [item["labels"] for item in batch]
+    labels = [item["labels"].squeeze(0) for item in batch]
 
     return {
         "input_ids": input_ids,
