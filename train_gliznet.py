@@ -74,7 +74,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset
-    dataset = load_dataset(max_labels=None, shuffle_labels=True)
+    dataset = load_dataset(max_labels=None, shuffle_labels=args.shuffle_labels)
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
