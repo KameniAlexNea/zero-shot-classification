@@ -10,12 +10,14 @@ class GliZNETTokenizer:
     def __init__(
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
+        min_text_token: int = 5,
         *args,
         **kwargs,
     ):
         self.tokenizer: BertTokenizerFast = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
+        self.min_text_token = min_text_token
 
         self.max_length = self.tokenizer.model_max_length
         self.cls_token_id = self.tokenizer.cls_token_id
@@ -24,10 +26,17 @@ class GliZNETTokenizer:
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: str = "bert-base-uncased", *args, **kwargs
+        cls,
+        pretrained_model_name_or_path: str = "bert-base-uncased",
+        min_text_token=5,
+        *args,
+        **kwargs,
     ) -> "GliZNETTokenizer":
         return cls(
-            pretrained_model_name_or_path=pretrained_model_name_or_path, *args, **kwargs
+            pretrained_model_name_or_path=pretrained_model_name_or_path,
+            min_text_token=min_text_token,
+            *args,
+            **kwargs,
         )
 
     def _build_sequence(
@@ -53,7 +62,7 @@ class GliZNETTokenizer:
             2 + label_flat_count + sep_count
         )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
         allowed = self.max_length - reserve
-        return text_tokens[: max(0, allowed)]
+        return text_tokens[: max(self.min_text_token, allowed)]
 
     def _pad_and_mask(
         self, token_ids: List[int], label_mask: List[bool]
@@ -74,9 +83,9 @@ class GliZNETTokenizer:
                 + self.decode_sequence(input_ids)
             )
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "label_mask": label_mask,
+            "input_ids": input_ids[: self.max_length],
+            "attention_mask": attention_mask[: self.max_length],
+            "label_mask": label_mask[: self.max_length],
         }
 
     def _create_label_mask(
