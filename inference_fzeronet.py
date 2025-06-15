@@ -11,8 +11,8 @@ from typing import Dict, List
 import torch
 from loguru import logger
 
-from gliznet.model import FZeroNet
-from gliznet.tokenizer import ZeroShotClassificationTokenizer
+from gliznet.model import GliZNetModel
+from gliznet.tokenizer import GliZNETTokenizer
 
 
 class FZeroNetInference:
@@ -46,10 +46,10 @@ class FZeroNetInference:
         checkpoint = torch.load(model_path, map_location=self.device)
 
         # Initialize tokenizer
-        self.tokenizer = ZeroShotClassificationTokenizer(model_name=model_name)
+        self.tokenizer = GliZNETTokenizer(model_name=model_name)
 
         # Initialize model
-        self.model = FZeroNet(model_name=model_name)
+        self.model = GliZNetModel(model_name=model_name)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(self.device)
         self.model.eval()
@@ -78,60 +78,51 @@ class FZeroNetInference:
             Classification results
         """
         all_labels = positive_labels + negative_labels
+        # Tokenize and move to device
+        tok = self.tokenizer(text, all_labels, return_tensors="pt", pad=True)
+        input_ids = tok["input_ids"].to(self.device)
+        attention_mask = tok["attention_mask"].to(self.device)
+        label_mask = tok["label_mask"].to(self.device)
 
-        # Tokenize
-        inputs = self.tokenizer.tokenize_example(text, all_labels, return_tensors="pt")
+        # Delegate to model.predict
+        pred = self.model.predict(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            label_mask=label_mask,
+            threshold=threshold,
+        )[0]
+        probs = pred["probabilities"].cpu().numpy().flatten()
+        preds = pred["predictions"].cpu().numpy().flatten()
+        logits = pred["logits"].cpu().numpy().flatten()
 
-        # Move to device and add batch dimension if needed
-        for key in ["input_ids", "attention_mask", "label_mask"]:
-            if inputs[key].dim() == 1:
-                inputs[key] = inputs[key].unsqueeze(0)
-            inputs[key] = inputs[key].to(self.device)
+        pos_count = len(positive_labels)
+        pos_probs, neg_probs = probs[:pos_count], probs[pos_count:]
+        pos_preds, neg_preds = preds[:pos_count], preds[pos_count:]
 
-        # Get predictions
-        with torch.no_grad():
-            outputs = self.model(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                label_mask=inputs["label_mask"],
-            )
-
-            logits = outputs["logits"]
-            probabilities = torch.sigmoid(logits).cpu().numpy()[0]
-            predictions = (probabilities > threshold).astype(int)
-
-        # Split results
-        num_positive = len(positive_labels)
-        positive_probs = probabilities[:num_positive]
-        negative_probs = probabilities[num_positive:]
-        positive_preds = predictions[:num_positive]
-        negative_preds = predictions[num_positive:]
-
-        # Build results
         results = {
             "text": text,
             "predicted_positive_labels": [
-                positive_labels[i] for i, pred in enumerate(positive_preds) if pred == 1
+                positive_labels[i] for i, p in enumerate(pos_preds) if p == 1
             ],
             "predicted_negative_labels": [
-                negative_labels[i] for i, pred in enumerate(negative_preds) if pred == 1
+                negative_labels[i] for i, p in enumerate(neg_preds) if p == 1
             ],
             "positive_scores": {
                 label: float(score)
-                for label, score in zip(positive_labels, positive_probs)
+                for label, score in zip(positive_labels, pos_probs)
             },
             "negative_scores": {
                 label: float(score)
-                for label, score in zip(negative_labels, negative_probs)
+                for label, score in zip(negative_labels, neg_probs)
             },
             "threshold": threshold,
         }
 
         if return_all_scores:
             results["all_scores"] = {
-                label: float(score) for label, score in zip(all_labels, probabilities)
+                label: float(score) for label, score in zip(all_labels, probs)
             }
-            results["raw_logits"] = logits.cpu().numpy().tolist()
+            results["raw_logits"] = logits.tolist()
 
         return results
 
@@ -157,15 +148,45 @@ class FZeroNetInference:
             List of classification results
         """
         results = []
-
+        all_labels = positive_labels + negative_labels
+        # Process in batches
         for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i : i + batch_size]
+            batch = texts[i : i + batch_size]
+            tok = self.tokenizer(batch, [all_labels] * len(batch), return_tensors="pt", pad=True)
+            input_ids = tok["input_ids"].to(self.device)
+            attention_mask = tok["attention_mask"].to(self.device)
+            label_mask = tok["label_mask"].to(self.device)
 
-            for text in batch_texts:
-                result = self.classify(
-                    text, positive_labels, negative_labels, threshold
-                )
-                results.append(result)
+            batch_preds = self.model.predict(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                label_mask=label_mask,
+                threshold=threshold,
+            )
+            for j, pred in enumerate(batch_preds):
+                probs = pred["probabilities"].cpu().numpy().flatten()
+                preds = pred["predictions"].cpu().numpy().flatten()
+                pos_count = len(positive_labels)
+                pos_probs, neg_probs = probs[:pos_count], probs[pos_count:]
+                pos_preds, neg_preds = preds[:pos_count], preds[pos_count:]
+                results.append({
+                    "text": batch[j],
+                    "predicted_positive_labels": [
+                        positive_labels[k] for k, p in enumerate(pos_preds) if p == 1
+                    ],
+                    "predicted_negative_labels": [
+                        negative_labels[k] for k, p in enumerate(neg_preds) if p == 1
+                    ],
+                    "positive_scores": {
+                        label: float(score)
+                        for label, score in zip(positive_labels, pos_probs)
+                    },
+                    "negative_scores": {
+                        label: float(score)
+                        for label, score in zip(negative_labels, neg_probs)
+                    },
+                    "threshold": threshold,
+                })
 
         return results
 
