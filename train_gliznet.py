@@ -56,7 +56,7 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--save_path", default="models/fzeronet_model.pt")
     parser.add_argument("--output_dir", default="./results")
-    parser.add_argument("--shuffle_labels", action="store_true", default=True)
+    parser.add_argument("--shuffle_labels", action="store_false", default=True, help="Disable shuffling of labels (enabled by default).")
     parser.add_argument("--eval_steps", type=int, default=500)
     parser.add_argument("--save_steps", type=int, default=1000)
     parser.add_argument("--logging_steps", type=int, default=100)
