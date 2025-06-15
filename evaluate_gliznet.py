@@ -1,180 +1,245 @@
 import json
 from pathlib import Path
+from typing import Dict, List, Tuple, Any
+from dataclasses import dataclass
 
 import torch
+import numpy as np
 from loguru import logger
 from safetensors.torch import load_file
 from tqdm import tqdm
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
 
 from gliznet.model import GliZNetModel
 from gliznet.tokenizer import GliZNETTokenizer, load_dataset
 
 
-def load_models(
-    model_path: str,
-    model_name: str = "bert-base-uncased",
-    device: str = "auto",
-):
-    """
-    Initialize inference model.
-
-    Args:
-        model_path: Path to saved model checkpoint
-        model_name: HuggingFace model name used for training
-        device: Device to use for inference
-    """
-    # Set device
-    if device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    else:
-        device = torch.device(device)
-
-    logger.info(f"Loading model from {model_path} on {device}")
-
-    # Load checkpoint
-    state_dict = load_file(model_path, device=str(device))
-
-    # Initialize tokenizer
-    tokenizer = GliZNETTokenizer(model_name=model_name)
-
-    # Initialize model
-    model = GliZNetModel(model_name=model_name, hidden_size=256)
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
-
-    logger.info("Model loaded successfully")
-    return model, tokenizer
+@dataclass
+class EvaluationConfig:
+    """Configuration for evaluation."""
+    model_path: str = "results/checkpoint-1614/model.safetensors"
+    model_name: str = "bert-base-uncased"
+    device: str = "auto"
+    batch_size: int = 64
+    max_labels: int = 20
+    threshold: float = 0.5
+    results_dir: str = "results/evaluation"
 
 
-data = load_dataset(split="test")
-model, tokenizer = load_models(
-    model_path="results/checkpoint-1614/model.safetensors",
-    model_name="bert-base-uncased",
-    device="auto",
-)
-
-max_labels = 20
-all_predictions = []
-for batch in tqdm(data.iter(batch_size=64)):
-    sentences = batch["text"]
-    labels = batch["labels_text"]
-    masks = batch["labels_int"]
-    inputs_texts = []
-    labels_texts = []
-    labels_logits = []
-
-    for sentence, label, mask in zip(sentences, labels, masks):
-        for i in range(0, len(label), max_labels):
-            inputs_texts.append(sentence)
-            labels_texts.append(label[i : i + max_labels])
-            labels_logits.append(mask[i : i + max_labels])
-
-    inputs = tokenizer(
-        inputs_texts,
-        labels=labels_texts,
-        pad=True,
-        return_tensors="pt",
-    )
-    model_predictions = model.predict(**{k: v.to("cuda") for k, v in inputs.items()})
-
-    all_predictions.append(
-        {
-            "sentences": inputs_texts,
-            "labels": labels_texts,
-            "masks": labels_logits,
-            "predictions": model_predictions,
-        }
-    )
-
-# Process predictions to calculate metrics
-true_positives = 0
-false_positives = 0
-true_negatives = 0
-false_negatives = 0
-all_results = []
-
-for batch_predictions in all_predictions:
-    for sentence, labels, masks, preds in zip(
-        batch_predictions["sentences"],
-        batch_predictions["labels"],
-        batch_predictions["masks"],
-        batch_predictions["predictions"],
-    ):
-        # Convert predictions to binary values (assuming model outputs probabilities)
-        binary_preds = [1 if p >= 0.5 else 0 for p in preds]
-
-        # Calculate TP, FP, TN, FN for each prediction
-        for j in range(len(binary_preds)):
-            if j < len(masks):  # Ensure we're within bounds
-                if masks[j] == 1 and binary_preds[j] == 1:
-                    true_positives += 1
-                elif masks[j] == 0 and binary_preds[j] == 1:
-                    false_positives += 1
-                elif masks[j] == 0 and binary_preds[j] == 0:
-                    true_negatives += 1
-                elif masks[j] == 1 and binary_preds[j] == 0:
-                    false_negatives += 1
-
-        # Store individual result
-        all_results.append(
-            {
-                "sentence": sentence,
-                "true_labels": [
-                    {"label": label, "is_positive": mask == 1}
-                    for label, mask in zip(labels, masks)
-                ],
-                "predictions": [
-                    {"label": label, "score": float(pred), "predicted": pred >= 0.5}
-                    for label, pred in zip(labels, preds)
-                ],
-            }
+class ModelEvaluator:
+    """Handles model evaluation with comprehensive metrics."""
+    
+    def __init__(self, config: EvaluationConfig):
+        self.config = config
+        self.device = self._get_device()
+        self.model, self.tokenizer = self._load_models()
+        
+    def _get_device(self) -> torch.device:
+        """Get the appropriate device for inference."""
+        if self.config.device == "auto":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(self.config.device)
+    
+    def _load_models(self) -> Tuple[GliZNetModel, GliZNETTokenizer]:
+        """Load model and tokenizer from checkpoint."""
+        logger.info(f"Loading model from {self.config.model_path} on {self.device}")
+        
+        try:
+            state_dict = load_file(self.config.model_path, device=str(self.device))
+            tokenizer = GliZNETTokenizer(model_name=self.config.model_name)
+            
+            model = GliZNetModel(model_name=self.config.model_name, hidden_size=256)
+            model.load_state_dict(state_dict)
+            model.to(self.device)
+            model.eval()
+            
+            logger.info("Model loaded successfully")
+            return model, tokenizer
+            
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            raise
+    
+    def _prepare_batch_inputs(self, sentences: List[str], labels: List[List[str]], 
+                            masks: List[List[int]]) -> Tuple[List[str], List[List[str]], List[List[int]]]:
+        """Prepare batch inputs by chunking labels if needed."""
+        inputs_texts = []
+        labels_texts = []
+        labels_logits = []
+        
+        for sentence, label, mask in zip(sentences, labels, masks):
+            for i in range(0, len(label), self.config.max_labels):
+                inputs_texts.append(sentence)
+                labels_texts.append(label[i:i + self.config.max_labels])
+                labels_logits.append(mask[i:i + self.config.max_labels])
+                
+        return inputs_texts, labels_texts, labels_logits
+    
+    def predict_batch(self, inputs_texts: List[str], labels_texts: List[List[str]]) -> List[float]:
+        """Make predictions for a batch of inputs."""
+        inputs = self.tokenizer(
+            inputs_texts,
+            labels=labels_texts,
+            pad=True,
+            return_tensors="pt",
         )
+        
+        with torch.no_grad():
+            inputs_gpu = {k: v.to(self.device) for k, v in inputs.items()}
+            predictions = self.model.predict(**inputs_gpu)
+            
+        return predictions
+    
+    def evaluate_dataset(self, dataset) -> Dict[str, Any]:
+        """Evaluate the model on the given dataset."""
+        logger.info("Starting evaluation...")
+        
+        all_predictions = []
+        all_true_labels = []
+        all_pred_scores = []
+        detailed_results = []
+        
+        for batch in tqdm(dataset.iter(batch_size=self.config.batch_size), desc="Evaluating"):
+            try:
+                sentences = batch["text"]
+                labels = batch["labels_text"]
+                masks = batch["labels_int"]
+                
+                inputs_texts, labels_texts, labels_logits = self._prepare_batch_inputs(
+                    sentences, labels, masks
+                )
+                
+                predictions = self.predict_batch(inputs_texts, labels_texts)
+                
+                # Store results for metrics calculation
+                for sentence, label_list, mask_list, pred_list in zip(
+                    inputs_texts, labels_texts, labels_logits, predictions
+                ):
+                    binary_preds = [1 if p >= self.config.threshold else 0 for p in pred_list]
+                    
+                    all_predictions.extend(binary_preds[:len(mask_list)])
+                    all_true_labels.extend(mask_list)
+                    all_pred_scores.extend(pred_list[:len(mask_list)])
+                    
+                    detailed_results.append({
+                        "sentence": sentence,
+                        "labels": label_list,
+                        "true_labels": mask_list,
+                        "predicted_scores": pred_list[:len(mask_list)],
+                        "predicted_binary": binary_preds[:len(mask_list)]
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Error processing batch: {e}")
+                continue
+        
+        # Calculate comprehensive metrics
+        metrics = self._calculate_metrics(all_true_labels, all_predictions, all_pred_scores)
+        
+        return {
+            "metrics": metrics,
+            "detailed_results": detailed_results,
+            "summary": {
+                "total_samples": len(all_true_labels),
+                "positive_samples": sum(all_true_labels),
+                "threshold": self.config.threshold
+            }
+        }
+    
+    def _calculate_metrics(self, y_true: List[int], y_pred: List[int], 
+                          y_scores: List[float]) -> Dict[str, float]:
+        """Calculate comprehensive evaluation metrics."""
+        y_true = np.array(y_true)
+        y_pred = np.array(y_pred)
+        y_scores = np.array(y_scores)
+        
+        # Basic metrics
+        tp = np.sum((y_true == 1) & (y_pred == 1))
+        fp = np.sum((y_true == 0) & (y_pred == 1))
+        tn = np.sum((y_true == 0) & (y_pred == 0))
+        fn = np.sum((y_true == 1) & (y_pred == 0))
+        
+        # Calculate metrics with zero division handling
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        accuracy = (tp + tn) / len(y_true) if len(y_true) > 0 else 0.0
+        
+        # Balanced accuracy
+        balanced_accuracy = (recall + specificity) / 2
+        
+        # AUC-ROC (if we have positive and negative samples)
+        try:
+            auc_roc = roc_auc_score(y_true, y_scores) if len(np.unique(y_true)) > 1 else 0.0
+        except Exception:
+            auc_roc = 0.0
+        
+        # Matthews Correlation Coefficient
+        mcc_denom = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+        mcc = (tp * tn - fp * fn) / mcc_denom if mcc_denom > 0 else 0.0
+        
+        return {
+            "accuracy": float(accuracy),
+            "precision": float(precision),
+            "recall": float(recall),
+            "specificity": float(specificity),
+            "f1_score": float(f1),
+            "balanced_accuracy": float(balanced_accuracy),
+            "auc_roc": float(auc_roc),
+            "mcc": float(mcc),
+            "true_positives": int(tp),
+            "false_positives": int(fp),
+            "true_negatives": int(tn),
+            "false_negatives": int(fn)
+        }
+    
+    def save_results(self, results: Dict[str, Any]) -> None:
+        """Save evaluation results to files."""
+        results_dir = Path(self.config.results_dir)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save main results
+        results_path = results_dir / "evaluation_results.json"
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+        
+        # Save metrics summary
+        metrics_path = results_dir / "metrics_summary.json"
+        with open(metrics_path, "w") as f:
+            json.dump({
+                "metrics": results["metrics"],
+                "summary": results["summary"]
+            }, f, indent=2, default=str)
+        
+        logger.info(f"Results saved to {results_dir}")
+        
+        # Print metrics summary
+        logger.info("=== Evaluation Results ===")
+        for metric, value in results["metrics"].items():
+            if isinstance(value, float):
+                logger.info(f"{metric.upper()}: {value:.4f}")
+            else:
+                logger.info(f"{metric.upper()}: {value}")
 
-# Calculate metrics
-precision = (
-    true_positives / (true_positives + false_positives)
-    if (true_positives + false_positives) > 0
-    else 0
-)
-recall = (
-    true_positives / (true_positives + false_negatives)
-    if (true_positives + false_negatives) > 0
-    else 0
-)
-f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-accuracy = (true_positives + true_negatives) / (
-    true_positives + true_negatives + false_positives + false_negatives
-)
 
-# Print metrics
-logger.info("Evaluation metrics:")
-logger.info(f"Precision: {precision:.4f}")
-logger.info(f"Recall: {recall:.4f}")
-logger.info(f"F1 Score: {f1:.4f}")
-logger.info(f"Accuracy: {accuracy:.4f}")
+def main():
+    """Main evaluation function."""
+    config = EvaluationConfig()
+    
+    # Load test dataset
+    logger.info("Loading test dataset...")
+    data = load_dataset(split="test")
+    
+    # Initialize evaluator
+    evaluator = ModelEvaluator(config)
+    
+    # Run evaluation
+    results = evaluator.evaluate_dataset(data)
+    
+    # Save results
+    evaluator.save_results(results)
 
-# Save results to JSON
-results_dir = Path("results/evaluation")
-results_dir.mkdir(parents=True, exist_ok=True)
-results_path = results_dir / "predictions.json"
 
-with open(results_path, "w") as f:
-    json.dump(
-        {
-            "metrics": {
-                "precision": precision,
-                "recall": recall,
-                "f1": f1,
-                "accuracy": accuracy,
-            },
-            "predictions": all_results,
-        },
-        f,
-        indent=2,
-    )
-
-logger.info(f"Results saved to {results_path}")
-
-with open(results_dir / "all_predictions.json", "w") as f:
-    json.dump(all_predictions, f, indent=2, ensure_ascii=False)
+if __name__ == "__main__":
+    main()
