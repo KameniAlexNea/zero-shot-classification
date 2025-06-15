@@ -99,9 +99,9 @@ class GliZNetModel(nn.Module):
 
             if labels is not None and sample_logits.numel() > 0:
                 sample_labels = labels[i]
-                if sample_labels.size(0) == sample_logits.size(0):
+                if sample_labels.numel() == sample_logits.numel():
                     all_logits.append(sample_logits)
-                    all_targets.append(sample_labels.to(device))
+                    all_targets.append(sample_labels.view(-1, 1))
 
         output = {
             "outputs_list": outputs_list,
@@ -111,7 +111,7 @@ class GliZNetModel(nn.Module):
         if all_logits:
             total_logits = torch.cat(all_logits)
             total_labels = torch.cat(all_targets)
-            output["loss"] = self.loss_fn(total_logits, total_labels.view(-1, 1))
+            output["loss"] = self.loss_fn(total_logits, total_labels)
 
         return output
 

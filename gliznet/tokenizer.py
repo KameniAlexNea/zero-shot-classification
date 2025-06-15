@@ -33,7 +33,7 @@ class GliZNETTokenizer:
         self, text_tokens: List[str], label_tokens: List[List[str]]
     ) -> tuple[List[str], List[int]]:
         sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
-        labels_mask = [0] * len(text_tokens)
+        labels_mask = [0] * len(sequence)
         for i, tokens in enumerate(label_tokens):
             sequence += tokens
             labels_mask += [1] + [0] * (len(tokens) - 1)

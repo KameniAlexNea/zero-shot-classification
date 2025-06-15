@@ -80,7 +80,7 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     label_mask = torch.cat([item["label_mask"] for item in batch])
 
     # Handle labels which can have different lengths per sample
-    labels = [item["labels"].squeeze(0) for item in batch]
+    labels = [item["labels"] for item in batch]
 
     return {
         "input_ids": input_ids,
