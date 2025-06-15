@@ -68,6 +68,11 @@ class GliZNETTokenizer:
             input_ids = token_ids + [self.pad_token_id] * pad_len
             attention_mask = [1] * len(token_ids) + [0] * pad_len
             label_mask = label_mask + [False] * pad_len
+        if len(label_mask) > self.max_length:
+            raise ValueError(
+                f"Label mask length {len(label_mask)} exceeds max length {self.max_length}. Please check your input."
+                + self.decode_sequence(input_ids)
+            )
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,

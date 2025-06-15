@@ -108,12 +108,10 @@ class FZeroNetInference:
                 negative_labels[i] for i, p in enumerate(neg_preds) if p == 1
             ],
             "positive_scores": {
-                label: float(score)
-                for label, score in zip(positive_labels, pos_probs)
+                label: float(score) for label, score in zip(positive_labels, pos_probs)
             },
             "negative_scores": {
-                label: float(score)
-                for label, score in zip(negative_labels, neg_probs)
+                label: float(score) for label, score in zip(negative_labels, neg_probs)
             },
             "threshold": threshold,
         }
@@ -152,7 +150,9 @@ class FZeroNetInference:
         # Process in batches
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            tok = self.tokenizer(batch, [all_labels] * len(batch), return_tensors="pt", pad=True)
+            tok = self.tokenizer(
+                batch, [all_labels] * len(batch), return_tensors="pt", pad=True
+            )
             input_ids = tok["input_ids"].to(self.device)
             attention_mask = tok["attention_mask"].to(self.device)
             label_mask = tok["label_mask"].to(self.device)
@@ -169,24 +169,30 @@ class FZeroNetInference:
                 pos_count = len(positive_labels)
                 pos_probs, neg_probs = probs[:pos_count], probs[pos_count:]
                 pos_preds, neg_preds = preds[:pos_count], preds[pos_count:]
-                results.append({
-                    "text": batch[j],
-                    "predicted_positive_labels": [
-                        positive_labels[k] for k, p in enumerate(pos_preds) if p == 1
-                    ],
-                    "predicted_negative_labels": [
-                        negative_labels[k] for k, p in enumerate(neg_preds) if p == 1
-                    ],
-                    "positive_scores": {
-                        label: float(score)
-                        for label, score in zip(positive_labels, pos_probs)
-                    },
-                    "negative_scores": {
-                        label: float(score)
-                        for label, score in zip(negative_labels, neg_probs)
-                    },
-                    "threshold": threshold,
-                })
+                results.append(
+                    {
+                        "text": batch[j],
+                        "predicted_positive_labels": [
+                            positive_labels[k]
+                            for k, p in enumerate(pos_preds)
+                            if p == 1
+                        ],
+                        "predicted_negative_labels": [
+                            negative_labels[k]
+                            for k, p in enumerate(neg_preds)
+                            if p == 1
+                        ],
+                        "positive_scores": {
+                            label: float(score)
+                            for label, score in zip(positive_labels, pos_probs)
+                        },
+                        "negative_scores": {
+                            label: float(score)
+                            for label, score in zip(negative_labels, neg_probs)
+                        },
+                        "threshold": threshold,
+                    }
+                )
 
         return results
 

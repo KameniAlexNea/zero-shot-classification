@@ -56,7 +56,12 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--save_path", default="models/fzeronet_model.pt")
     parser.add_argument("--output_dir", default="./results")
-    parser.add_argument("--shuffle_labels", action="store_false", default=True, help="Disable shuffling of labels (enabled by default).")
+    parser.add_argument(
+        "--shuffle_labels",
+        action="store_false",
+        default=True,
+        help="Disable shuffling of labels (enabled by default).",
+    )
     parser.add_argument("--eval_steps", type=int, default=500)
     parser.add_argument("--save_steps", type=int, default=1000)
     parser.add_argument("--logging_steps", type=int, default=100)
@@ -74,7 +79,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset
-    dataset = load_dataset(max_labels=None, shuffle_labels=args.shuffle_labels)
+    dataset = load_dataset(max_labels=50, shuffle_labels=args.shuffle_labels)
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
