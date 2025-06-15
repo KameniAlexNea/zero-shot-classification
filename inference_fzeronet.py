@@ -3,15 +3,16 @@
 Inference script for FZeroNet - Zero-shot Classification Model
 """
 
-import torch
-import json
 import argparse
-from typing import List, Dict
-from loguru import logger
+import json
 from pathlib import Path
+from typing import Dict, List
 
-from gliznet.tokenizer import ZeroShotClassificationTokenizer
+import torch
+from loguru import logger
+
 from gliznet.model import FZeroNet
+from gliznet.tokenizer import ZeroShotClassificationTokenizer
 
 
 class FZeroNetInference:

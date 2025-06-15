@@ -5,11 +5,11 @@ import os
 
 import torch
 from loguru import logger
-
-from gliznet.tokenizer import GliZNETTokenizer, load_dataset
-from gliznet.model import GliZNetModel
-from gliznet.data import GliZNetDataset, collate_fn
 from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
+
+from gliznet.data import GliZNetDataset, collate_fn
+from gliznet.model import GliZNetModel
+from gliznet.tokenizer import GliZNETTokenizer, load_dataset
 
 
 class GliZNetTrainer(Trainer):
@@ -87,13 +87,9 @@ def main():
     tokenizer = GliZNETTokenizer(model_name=args.model_name)
 
     # Create datasets
-    train_dataset = GliZNetDataset(
-        hf_dataset=train_data, tokenizer=tokenizer
-    )
+    train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer)
 
-    val_dataset = GliZNetDataset(
-        hf_dataset=val_data, tokenizer=tokenizer
-    )
+    val_dataset = GliZNetDataset(hf_dataset=val_data, tokenizer=tokenizer)
 
     # Initialize model
     model = GliZNetModel(
