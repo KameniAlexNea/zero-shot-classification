@@ -58,13 +58,14 @@ class TestGliZNetModel(unittest.TestCase):
             label_mask=self.label_mask,
             labels=None,
         )
-        self.assertIn("outputs_list", out)
-        self.assertIn("text_representations", out)
-        self.assertNotIn("loss", out)
+        self.assertIn("logits", out)
+        self.assertIn("hidden_states", out)
+        self.assertIn("loss", out)
+        self.assertIsNone(out["loss"])
         # sample0 has one label => logits tensor of shape (1,)
-        self.assertEqual(out["outputs_list"][0]["logits"].shape, (1, 1))
+        self.assertEqual(out["logits"][0].shape, (1, 1))
         # sample1 no labels => zero-length
-        self.assertEqual(out["outputs_list"][1]["logits"].numel(), 0)
+        self.assertEqual(out["logits"][1].numel(), 0)
 
     def test_forward_with_labels_and_loss(self):
         out = self.model(
