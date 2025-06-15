@@ -1,7 +1,9 @@
 import unittest
+
 import torch
 from datasets import Dataset
 from torch.utils.data import DataLoader
+
 from gliznet.data import GliZNetDataset, collate_fn
 
 
@@ -70,8 +72,8 @@ class TestDataModule(unittest.TestCase):
         self.assertEqual(batch["label_mask"].shape, (2, 4))
         # labels is list of tensors without batch dim
         self.assertIsInstance(batch["labels"], list)
-        self.assertEqual(batch["labels"][0].shape, (1,1))
-        self.assertEqual(batch["labels"][1].shape, (1,2))
+        self.assertEqual(batch["labels"][0].shape, (1, 1))
+        self.assertEqual(batch["labels"][1].shape, (1, 2))
 
     def test_dataloader_with_collate(self):
         loader = DataLoader(self.dataset, batch_size=2, collate_fn=collate_fn)

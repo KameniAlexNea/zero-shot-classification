@@ -1,11 +1,12 @@
-import time
 import random
-from typing import Optional
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Optional
+
 from groq import Groq
-from ollama import Client
 from loguru import logger
+from ollama import Client
 
 
 @dataclass
@@ -27,7 +28,6 @@ class BaseLLMClient(ABC):
     @abstractmethod
     def generate_text(self, prompt: str) -> str:
         """Generate text from prompt."""
-        pass
 
     def _retry_with_backoff(self, func, *args, **kwargs):
         """Retry function with exponential backoff."""

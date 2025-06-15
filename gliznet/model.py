@@ -1,9 +1,11 @@
+from collections import defaultdict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel
-from collections import defaultdict
 from loguru import logger
+from transformers import AutoModel
+
 
 class GliZNetModel(nn.Module):
     def __init__(
@@ -91,7 +93,7 @@ class GliZNetModel(nn.Module):
                 sample_logits = torch.zeros((0,), device=device)
 
             outputs_logits.append(
-                sample_logits.reshape(1, -1) # Reshape to (1, num_labels)
+                sample_logits.reshape(1, -1)  # Reshape to (1, num_labels)
             )
 
             if labels is not None and sample_logits.numel() > 0:

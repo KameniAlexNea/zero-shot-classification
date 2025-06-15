@@ -1,8 +1,9 @@
 import random
-import torch
+from typing import Any, Dict, List, Optional, Union
+
 import datasets
+import torch
 from transformers import AutoTokenizer, BertTokenizerFast
-from typing import List, Dict, Any, Optional, Union
 
 
 class GliZNETTokenizer:
@@ -38,7 +39,7 @@ class GliZNETTokenizer:
             sequence += tokens
             labels_mask += [1] + [0] * (len(tokens) - 1)
             if i < len(label_tokens) - 1:
-                sequence.append(self.sep_token_id) # Adding SEP between labels
+                sequence.append(self.sep_token_id)  # Adding SEP between labels
                 labels_mask.append(0)
         return sequence, labels_mask
 
@@ -48,7 +49,9 @@ class GliZNETTokenizer:
         label_flat_count = sum([len(sub) for sub in label_tokens])
         # Ensure sep_count is not negative if label_tokens is empty
         sep_count = max(0, len(label_tokens) - 1)
-        reserve = 2 + label_flat_count + sep_count  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
+        reserve = (
+            2 + label_flat_count + sep_count
+        )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
         allowed = self.max_length - reserve
         return text_tokens[: max(0, allowed)]
 

@@ -5,10 +5,12 @@ This module provides PyTorch DataLoader-based data loading for improved efficien
 compared to the original HuggingFace datasets approach.
 """
 
-from typing import List, Dict, Optional, Tuple
-import torch
-from torch.utils.data import Dataset, DataLoader
+from typing import Dict, List, Optional, Tuple
+
 import datasets
+import torch
+from torch.utils.data import DataLoader, Dataset
+
 from gliznet.tokenizer import GliZNETTokenizer
 
 
