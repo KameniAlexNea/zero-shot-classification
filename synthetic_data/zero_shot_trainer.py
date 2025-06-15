@@ -1,20 +1,21 @@
 import json
 import os
-from typing import List, Tuple, Set
 from dataclasses import dataclass
+from typing import List, Set, Tuple
+
 import torch
 from datasets import Dataset, load_dataset
+from loguru import logger
 from sentence_transformers import (
     SentenceTransformer,
     SentenceTransformerTrainer,
     losses,
     util,
 )
-from sentence_transformers.evaluation import BinaryClassificationEvaluator, TripletEvaluator
+from sentence_transformers.evaluation import TripletEvaluator
 from tqdm import tqdm
+
 import wandb
-from loguru import logger
-import random
 
 
 @dataclass
@@ -143,26 +144,28 @@ class ZeroShotTrainer:
         logger.info(f"Created {len(dataset_dict['anchor'])} pairs")
         return Dataset.from_dict(dataset_dict)
 
-    def create_triplet_evaluation_data(self, eval_dataset: Dataset) -> Tuple[List[str], List[str], List[str]]:
+    def create_triplet_evaluation_data(
+        self, eval_dataset: Dataset
+    ) -> Tuple[List[str], List[str], List[str]]:
         """Create triplet evaluation data (anchors, positives, negatives) from dataset."""
         anchors = []
         positives = []
         negatives = []
-        
+
         logger.info("Creating triplet evaluation data...")
-        
+
         for item in tqdm(eval_dataset, desc="Creating triplet evaluation data"):
             text = item["sentence"]
             positive_labels = item["labels"]
             negative_labels = item.get("not_labels", [])
-            
+
             # Create all combinations of positive and negative labels for this text
             for pos_label in positive_labels:
                 for neg_label in negative_labels:
                     anchors.append(text)
                     positives.append(pos_label)
                     negatives.append(neg_label)
-        
+
         logger.info(f"Created {len(anchors)} triplets for evaluation")
         return anchors, positives, negatives
 
@@ -216,9 +219,11 @@ class ZeroShotTrainer:
         )
 
         # Create TripletEvaluator using triplet data with hard negatives
-        logger.info("Setting up TripletEvaluator with triplet data and hard negatives...")
+        logger.info(
+            "Setting up TripletEvaluator with triplet data and hard negatives..."
+        )
         anchors, positives, negatives = self.create_triplet_evaluation_data(eval_hf)
-        
+
         evaluator = TripletEvaluator(
             anchors=anchors,
             positives=positives,
@@ -312,7 +317,9 @@ class ZeroShotTrainer:
             self.model, output_path=os.path.join(output_dir, "final_eval_triplet.csv")
         )
 
-        logger.success(f"Final triplet accuracy with hard negatives: {final_score[evaluator.primary_metric]:.4f}")
+        logger.success(
+            f"Final triplet accuracy with hard negatives: {final_score[evaluator.primary_metric]:.4f}"
+        )
 
         wandb.log({"final_triplet_accuracy": final_score[evaluator.primary_metric]})
         wandb.finish()

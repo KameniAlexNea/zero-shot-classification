@@ -1,8 +1,9 @@
 import random
-import torch
+from typing import Any, Dict, List, Optional, Union
+
 import datasets
+import torch
 from transformers import AutoTokenizer, BertTokenizerFast
-from typing import List, Dict, Any, Optional, Union
 
 
 class GliZNETTokenizer:
@@ -31,21 +32,26 @@ class GliZNETTokenizer:
 
     def _build_sequence(
         self, text_tokens: List[str], label_tokens: List[List[str]]
-    ) -> List[str]:
+    ) -> tuple[List[str], List[int]]:
         sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
+        labels_mask = [0] * len(sequence)
         for i, tokens in enumerate(label_tokens):
             sequence += tokens
+            labels_mask += [1] + [0] * (len(tokens) - 1)
             if i < len(label_tokens) - 1:
-                sequence.append(self.sep_token_id)
-        return sequence
+                sequence.append(self.sep_token_id)  # Adding SEP between labels
+                labels_mask.append(0)
+        return sequence, labels_mask
 
     def _truncate_text_tokens(
         self, text_tokens: List[str], label_tokens: List[List[str]]
     ) -> List[str]:
-        # Account for: CLS + SEP + sum(label tokens) + SEP between labels
-        label_flat = [tok for sub in label_tokens for tok in sub]
-        sep_count = len(label_tokens) - 1
-        reserve = 2 + len(label_flat) + sep_count  # CLS + SEP + labels
+        label_flat_count = sum([len(sub) for sub in label_tokens])
+        # Ensure sep_count is not negative if label_tokens is empty
+        sep_count = max(0, len(label_tokens) - 1)
+        reserve = (
+            2 + label_flat_count + sep_count
+        )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
         allowed = self.max_length - reserve
         return text_tokens[: max(0, allowed)]
 
@@ -115,9 +121,7 @@ class GliZNETTokenizer:
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
-        token_ids = self._build_sequence(text_tokens, label_tokens)
-
-        label_mask = self._create_label_mask(token_ids, label_tokens)
+        token_ids, label_mask = self._build_sequence(text_tokens, label_tokens)
 
         if pad:
             result = self._pad_and_mask(token_ids, label_mask)
@@ -153,14 +157,12 @@ class GliZNETTokenizer:
                 "return_tensors='pt' requires pad=True for batch tokenization."
             )
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
-        token_ids = [
-            self._build_sequence(text, labels)
-            for text, labels in zip(text_tokens, label_tokens)
-        ]
-        label_masks = [
-            self._create_label_mask(sequence, labels)
-            for sequence, labels in zip(token_ids, label_tokens)
-        ]
+        token_ids, label_masks = zip(
+            *[
+                self._build_sequence(text, labels)
+                for text, labels in zip(text_tokens, label_tokens)
+            ]
+        )
         if pad:
             padded_results = [
                 self._pad_and_mask(ids, mask)
@@ -237,6 +239,7 @@ def load_dataset(
             "labels_text": labels,
             "labels_int": labels_int,
         }
+
     ds = datasets.load_dataset(path, name)[split]
     ds = ds.map(
         mapper,
@@ -254,7 +257,10 @@ def add_tokenizer(
     def tokenize_example(example: dict):
         results = tokenizer(example[text_column], example[labels_text_column])
         results["labels"] = (
-            [torch.tensor(lab, dtype=torch.float32) for lab in example[labels_int_column]]
+            [
+                torch.tensor(lab, dtype=torch.float32)
+                for lab in example[labels_int_column]
+            ]
             if isinstance(example[labels_int_column], list)
             else torch.tensor(example[labels_int_column], dtype=torch.float32)
         )

@@ -1,6 +1,7 @@
 import json
-from faker import Faker
 import random
+
+from faker import Faker
 
 
 def base_output_example():

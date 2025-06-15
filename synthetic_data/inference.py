@@ -1,8 +1,9 @@
 import json
-from typing import List, Dict, Tuple
-from sentence_transformers import SentenceTransformer, util
-from loguru import logger
 import os
+from typing import Dict, List, Tuple
+
+from loguru import logger
+from sentence_transformers import SentenceTransformer, util
 
 
 class ZeroShotInference:

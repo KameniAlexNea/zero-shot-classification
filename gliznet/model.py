@@ -1,8 +1,10 @@
+from collections import defaultdict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from loguru import logger
 from transformers import AutoModel
-from collections import defaultdict
 
 
 class GliZNetModel(nn.Module):
@@ -80,7 +82,7 @@ class GliZNetModel(nn.Module):
         for i, logit in zip(pos.tolist(), logits):
             grouped_logits[i].append(logit)
 
-        outputs_list = []
+        outputs_logits = []
         all_logits = []
         all_targets = []
 
@@ -90,28 +92,30 @@ class GliZNetModel(nn.Module):
             else:
                 sample_logits = torch.zeros((0,), device=device)
 
-            outputs_list.append(
-                {
-                    "logits": sample_logits,
-                    "num_labels": sample_logits.size(0),
-                }
+            outputs_logits.append(
+                sample_logits.reshape(1, -1)  # Reshape to (1, num_labels)
             )
 
             if labels is not None and sample_logits.numel() > 0:
                 sample_labels = labels[i]
-                if sample_labels.size(0) == sample_logits.size(0):
+                if sample_labels.numel() == sample_logits.numel():
                     all_logits.append(sample_logits)
-                    all_targets.append(sample_labels.to(device))
+                    all_targets.append(sample_labels.view(-1, 1))
 
         output = {
-            "outputs_list": outputs_list,
-            "text_representations": hidden_proj[:, 0],
+            "loss": None,
+            "logits": outputs_logits,
+            "hidden_states": hidden_proj[:, 0],
         }
 
         if all_logits:
             total_logits = torch.cat(all_logits)
             total_labels = torch.cat(all_targets)
-            output["loss"] = self.loss_fn(total_logits, total_labels.view(-1, 1))
+            output["loss"] = self.loss_fn(total_logits, total_labels)
+        elif self.training:
+            logger.warning(
+                "No valid labels found in batch while training. Loss will not be computed."
+            )
 
         return output
 
@@ -121,8 +125,7 @@ class GliZNetModel(nn.Module):
             outputs = self.forward(input_ids, attention_mask, label_mask)
             results = []
 
-            for sample in outputs["outputs_list"]:
-                logits = sample["logits"]
+            for logits in outputs["logits"]:
                 probs = (
                     torch.sigmoid(logits)
                     if self.similarity_metric != "cosine"
@@ -137,53 +140,3 @@ class GliZNetModel(nn.Module):
                     }
                 )
         return results
-
-
-# Example usage
-if __name__ == "__main__":
-    from tokenizer import GliZNETTokenizer, load_dataset, add_tokenizer
-
-    model_name = "bert-base-uncased"
-    model = GliZNetModel(model_name=model_name, hidden_size=256)
-    tokenizer = GliZNETTokenizer(model_name)
-
-    data = load_dataset()
-    data = add_tokenizer(data, tokenizer)
-
-    inputs = data[0]
-    if len(inputs["input_ids"]) == 512:
-        inputs['input_ids'] = inputs['input_ids'].unsqueeze(0)
-        inputs['attention_mask'] = inputs['attention_mask'].unsqueeze(0)
-        inputs['label_mask'] = inputs['label_mask'].unsqueeze(0)
-        inputs['labels'] = [inputs['labels']]
-
-    print("Input shapes:")
-    print(f"Input IDs: {inputs['input_ids'].shape}")
-    print(f"Attention mask: {inputs['attention_mask'].shape}")
-    print(f"Label mask: {inputs['label_mask'].shape}")
-    print(f"Ground truth: {inputs['labels']}")
-
-    outputs = model(
-        **inputs
-    )
-
-    print("\nModel outputs:")
-    outputs.pop("text_representations")
-    print(
-        f"Output logits per sample: {[out['num_labels'] for out in outputs['outputs_list']]}"
-    )
-    print(f"Loss: {outputs.get('loss', 'No loss computed')}")
-
-    predictions = model.predict(
-        input_ids=inputs["input_ids"],
-        attention_mask=inputs["attention_mask"],
-        label_mask=inputs["label_mask"],
-        threshold=0.5,
-    )
-
-    print("\nPredictions:")
-    for i, pred in enumerate(predictions):
-        print(f"Sample {i}:")
-        print(f"  Predictions: {pred['predictions']}")
-        print(f"  Probabilities: {pred['probabilities']}")
-        print(f"  Logits: {pred['logits']}")
