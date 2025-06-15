@@ -3,6 +3,10 @@
 import argparse
 import os
 
+os.environ["WANDB_PROJECT"] = "gliznet"
+os.environ["WANDB_LOG_MODEL"] = "true"
+os.environ["WANDB_WATCH"] = "none"
+
 import torch
 from loguru import logger
 from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
@@ -108,6 +112,7 @@ def main():
 
     # Setup training arguments
     training_args = TrainingArguments(
+        run_name="gliznet_training",
         output_dir=args.output_dir,
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
@@ -118,15 +123,19 @@ def main():
         logging_steps=args.logging_steps,
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
-        eval_strategy="steps",
-        save_strategy="steps",
+        eval_strategy="epoch",
+        save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         dataloader_pin_memory=True,
         dataloader_num_workers=4,
         remove_unused_columns=False,
-        # report_to=None,  # Disable wandb/tensorboard logging
+        do_train=True,
+        do_eval=True,
+        report_to="wandb",
+        lr_scheduler_type="cosine",
+        data_seed=42,
     )
 
     # Initialize trainer
