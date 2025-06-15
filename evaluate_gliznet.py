@@ -47,7 +47,7 @@ class ModelEvaluator:
 
         try:
             state_dict = load_file(self.config.model_path, device=str(self.device))
-            tokenizer = GliZNETTokenizer(model_name=self.config.model_name)
+            tokenizer = GliZNETTokenizer(self.config.model_name)
 
             model = GliZNetModel(model_name=self.config.model_name, hidden_size=256)
             model.load_state_dict(state_dict)

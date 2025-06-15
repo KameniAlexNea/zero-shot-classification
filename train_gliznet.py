@@ -69,6 +69,7 @@ def main():
     parser.add_argument("--save_steps", type=int, default=1000)
     parser.add_argument("--logging_steps", type=int, default=100)
     parser.add_argument("--warmup_steps", type=int, default=100)
+    parser.add_argument("--max_labels", type=int, default=20)
     parser.add_argument("--weight_decay", type=float, default=0.01)
 
     args = parser.parse_args()
@@ -82,7 +83,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset
-    dataset = load_dataset(max_labels=20, shuffle_labels=args.shuffle_labels)
+    dataset = load_dataset(max_labels=args.max_labels, shuffle_labels=args.shuffle_labels)
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
