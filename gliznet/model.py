@@ -119,7 +119,12 @@ class GliZNetModel(nn.Module):
 
         return output
 
-    def predict(self, input_ids, attention_mask, label_mask, threshold=0.5):
+    def predict(
+        self,
+        input_ids,
+        attention_mask,
+        label_mask,
+    ) -> list[list[float]]:
         self.eval()
         with torch.no_grad():
             outputs = self.forward(input_ids, attention_mask, label_mask)
@@ -131,12 +136,5 @@ class GliZNetModel(nn.Module):
                     if self.similarity_metric != "cosine"
                     else logits
                 )
-                preds = (probs > threshold).long()
-                results.append(
-                    {
-                        "predictions": preds,
-                        "probabilities": probs,
-                        "logits": logits,
-                    }
-                )
+                results.append(probs.cpu().view(-1).numpy().tolist())
         return results

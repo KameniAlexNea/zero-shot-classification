@@ -4,7 +4,6 @@ import argparse
 import os
 
 os.environ["WANDB_PROJECT"] = "gliznet"
-os.environ["WANDB_LOG_MODEL"] = "true"
 os.environ["WANDB_WATCH"] = "none"
 
 import torch
