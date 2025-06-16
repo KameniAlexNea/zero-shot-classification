@@ -126,11 +126,9 @@ class GliZNetModel(BertPreTrainedModel):
 
         # Get positions of label tokens
         pos = torch.nonzero(label_mask)[:, 0]  # (total_valid_samples,)
-        labels_emb = hidden_proj[label_mask]  # (total_label_tokens, hidden_size)
-        text_emb = hidden_proj[pos, 0]  # (total_label_tokens, hidden_size)
 
-        # Compute similarities
-        logits = self.compute_similarity(text_emb, labels_emb)
+        # Compute similarities: (total_label_tokens, hidden_size) x (total_label_tokens, hidden_size)
+        logits = self.compute_similarity(hidden_proj[pos, 0], hidden_proj[label_mask])
 
         # Group logits by batch
         grouped_logits = defaultdict(list)

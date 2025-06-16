@@ -22,6 +22,18 @@ from gliznet.model import GliZNetModel
 from gliznet.tokenizer import GliZNETTokenizer
 
 
+def seed_everything(seed: int = 42):
+    """Set random seed for reproducibility."""
+    import random
+
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def main():
     @dataclass
     class ModelArgs:
@@ -55,10 +67,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset
-    dataset = load_dataset(
-        max_labels=model_args.max_labels,
-        shuffle_labels=model_args.shuffle_labels,
-    )
+    dataset = load_dataset()
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
@@ -73,7 +82,9 @@ def main():
     # Create datasets
     train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer)
 
-    val_dataset = GliZNetDataset(hf_dataset=val_data, tokenizer=tokenizer)
+    val_dataset = GliZNetDataset(
+        hf_dataset=val_data, tokenizer=tokenizer, shuffle_labels=False
+    )
 
     # Initialize model
     model = GliZNetModel.from_pretrained(
