@@ -34,7 +34,7 @@ class TestGliZNetModel(unittest.TestCase):
             similarity_metric="dot",
         )
         # replace encoder and align config + bypass proj
-        self.model.backbone = DummyEncoder(self.hidden_size)
+        self.model.bert = DummyEncoder(self.hidden_size)
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
         self.model.proj = nn.Identity()

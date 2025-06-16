@@ -33,7 +33,7 @@ class GliZNetModel(BertPreTrainedModel):
     def __init__(
         self,
         config,
-        hidden_size: int = None,
+        projected_dim: int = None,
         dropout_rate: float = 0.1,
         similarity_metric: str = "bilinear",
         temperature: float = 1.0,
@@ -47,14 +47,14 @@ class GliZNetModel(BertPreTrainedModel):
         )  # Default to binary classification
 
         # Initialize the encoder
-        self.backbone = AutoModel.from_pretrained(
+        self.bert = AutoModel.from_pretrained(
             config._name_or_path
             if hasattr(config, "_name_or_path")
             else config.name_or_path
         )
 
         # Model parameters
-        self.hidden_size = hidden_size or self.config.hidden_size
+        self.hidden_size = projected_dim or self.config.hidden_size
         self.similarity_metric = similarity_metric
         self.temperature = temperature
         self.dropout = nn.Dropout(dropout_rate)
@@ -126,7 +126,7 @@ class GliZNetModel(BertPreTrainedModel):
         batch_size = input_ids.size(0)
 
         # Get encoder outputs
-        encoder_outputs = self.backbone(
+        encoder_outputs = self.bert(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,

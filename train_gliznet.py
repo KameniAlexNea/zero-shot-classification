@@ -19,13 +19,14 @@ from sklearn.metrics import roc_auc_score
 
 def compute_metrics(eval_pred):
     """
+    Not working with the Trainer API, but can be used for custom evaluation.
     Compute classification metrics on the flattened, unmasked positions.
     """
     logits, label_ids = eval_pred.predictions, eval_pred.label_ids
     # if predictions/labels come as list of arrays with variable lengths, concatenate
     if isinstance(logits, list):
-        logits = np.concatenate([l.flatten() for l in logits], axis=0)
-        label_ids = np.concatenate([l.flatten() for l in label_ids], axis=0)
+        logits = np.concatenate([lab.flatten() for lab in logits], axis=0)
+        label_ids = np.concatenate([lab.flatten() for lab in label_ids], axis=0)
     # sigmoid for scores and threshold at 0.5
     probs = 1 / (1 + np.exp(-logits))
     preds = (probs >= 0.5).astype(int)
@@ -77,9 +78,9 @@ def main():
     @dataclass
     class ModelArgs:
         model_name: str = field(default="bert-base-uncased", metadata={"help": "Pretrained model name or path"})
-        hidden_size: int = field(default=256, metadata={"help": "Hidden size for projection layer"})
+        projected_dim: int = field(default=256, metadata={"help": "Hidden size for projection layer"})
         similarity_metric: str = field(default="bilinear", metadata={"help": "Similarity metric"})
-        max_labels: Optional[int] = field(default=None, metadata={"help": "Maximum number of labels"})
+        max_labels: Optional[int] = field(default=50, metadata={"help": "Maximum number of labels"}) # 50 to avoid overflow
         shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
         save_path: str = field(default="models/fzeronet_model.pt", metadata={"help": "Legacy model save path"})
 
@@ -112,9 +113,9 @@ def main():
     val_dataset = GliZNetDataset(hf_dataset=val_data, tokenizer=tokenizer)
 
     # Initialize model
-    model = GliZNetModel(
-        model_name=model_args.model_name,
-        hidden_size=model_args.hidden_size,
+    model = GliZNetModel.from_pretrained(
+        model_args.model_name,
+        projected_dim=model_args.projected_dim,
         similarity_metric=model_args.similarity_metric,
     )
 
@@ -130,7 +131,7 @@ def main():
         eval_dataset=val_dataset,
         data_collator=collate_fn,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
-        compute_metrics=compute_metrics,
+        # compute_metrics=compute_metrics,
     )
 
     # evaluate the model before training

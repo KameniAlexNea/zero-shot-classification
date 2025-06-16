@@ -1,0 +1,27 @@
+nohup uv run launch_training.py \
+    --model_name bert-base-uncased \
+    --hidden_size 256 \
+    --similarity_metric bilinear \
+    --batch_size 32 \
+    --num_epochs 50 \
+    --output_dir results \
+    --learning_rate 2e-5 \
+    --logging_steps 50 \
+    --warmup_steps 10 \
+    --weight_decay 0.001 \
+    --run_name "gliznet_training" \
+    --eval_steps 50 \
+    --save_steps 50 \
+    --eval_strategy epoch \
+    --save_strategy epoch \
+    --load_best_model_at_end \
+    --metric_for_best_model eval_loss \
+    --dataloader_pin_memory \
+    --dataloader_num_workers 4 \
+    --remove_unused_columns False \
+    --do_train \
+    --do_eval \
+    --report_to wandb \
+    --lr_scheduler_type cosine \
+    --data_seed 42 \
+    &> nohup.out &
