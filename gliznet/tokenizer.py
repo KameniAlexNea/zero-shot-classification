@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import datasets
 import torch
-from transformers import AutoTokenizer, BertTokenizerFast
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 
 class GliZNETTokenizer:
@@ -14,12 +14,16 @@ class GliZNETTokenizer:
         *args,
         **kwargs,
     ):
-        self.tokenizer: BertTokenizerFast = AutoTokenizer.from_pretrained(
+        self.tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
         self.min_text_token = min_text_token
 
+        # Cache tokenizer properties
         self.max_length = self.tokenizer.model_max_length
+        self.cls_token = self.tokenizer.cls_token
+        self.sep_token = self.tokenizer.sep_token
+        self.pad_token = self.tokenizer.pad_token
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
@@ -39,92 +43,102 @@ class GliZNETTokenizer:
             **kwargs,
         )
 
-    def _build_sequence(
-        self, text_tokens: List[str], label_tokens: List[List[str]]
-    ) -> tuple[List[str], List[int]]:
-        sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
-        labels_mask = [0] * len(sequence)
-        for i, tokens in enumerate(label_tokens):
-            sequence += tokens
-            labels_mask += [1] + [0] * (len(tokens) - 1)
-            if i < len(label_tokens) - 1:
-                sequence.append(self.sep_token_id)  # Adding SEP between labels
-                labels_mask.append(0)
-        return sequence, labels_mask
+    def _prepare_text_with_labels(self, text: str, labels: List[str]) -> str:
+        """Prepare a single text with labels separated by SEP tokens."""
+        if not labels:
+            return text
 
-    def _truncate_text_tokens(
-        self, text_tokens: List[str], label_tokens: List[List[str]]
-    ) -> List[str]:
-        label_flat_count = sum([len(sub) for sub in label_tokens])
-        # Ensure sep_count is not negative if label_tokens is empty
-        sep_count = max(0, len(label_tokens) - 1)
-        reserve = (
-            2 + label_flat_count + sep_count
-        )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
-        allowed = self.max_length - reserve
-        return text_tokens[: max(self.min_text_token, allowed)]
+        # Join text and labels with SEP tokens
+        labels_str = f" {self.sep_token} ".join(labels)
+        combined_text = f"{text} {self.sep_token} {labels_str}"
+        return combined_text
 
-    def _pad_and_mask(
-        self, token_ids: List[int], label_mask: List[bool]
-    ) -> Dict[str, Any]:
-        side = getattr(self.tokenizer, "padding_side", "right")
-        pad_len = self.max_length - len(token_ids)
-        if side == "left":
-            input_ids = [self.pad_token_id] * pad_len + token_ids
-            attention_mask = [0] * pad_len + [1] * len(token_ids)
-            label_mask = [False] * pad_len + label_mask
-        else:
-            input_ids = token_ids + [self.pad_token_id] * pad_len
-            attention_mask = [1] * len(token_ids) + [0] * pad_len
-            label_mask = label_mask + [False] * pad_len
-        if len(label_mask) > self.max_length:
-            raise ValueError(
-                f"Label mask length {len(label_mask)} exceeds max length {self.max_length}. Please check your input."
-                + self.decode_sequence(input_ids)
-            )
-        return {
-            "input_ids": input_ids[: self.max_length],
-            "attention_mask": attention_mask[: self.max_length],
-            "label_mask": label_mask[: self.max_length],
-        }
-
-    def _create_label_mask(
-        self, sequence: List[str], label_tokens: List[List[str]]
+    def _calculate_label_positions(
+        self, text: str, labels: List[str], input_ids: List[int]
     ) -> List[bool]:
-        mask = [False] * len(sequence)
-        if not label_tokens:
-            return mask
-        start = sequence.index(self.sep_token_id) + 1
-        idx = start
-        for tokens in label_tokens:
-            mask[idx] = True  # Mark the first token of the label
-            idx += len(tokens) + 1  # +1 for the SEP token
-        return mask
+        """Calculate positions where label tokens start after tokenization."""
+        if not labels:
+            return [False] * len(input_ids)
 
-    def _batch_tokenize(
-        self,
-        texts: Union[str, List[str]],
-        all_labels: Union[List[str], List[List[str]]],
-    ):
-        if isinstance(texts, str):
-            return (
-                self.tokenizer(
-                    texts, return_attention_mask=False, return_token_type_ids=False
-                )["input_ids"],
-                self.tokenizer(
-                    all_labels,
+        # Tokenize text only to find where labels start
+        text_only = self.tokenizer(
+            text,
+            add_special_tokens=False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+        )["input_ids"]
+
+        # Account for CLS token at the beginning
+        text_length_with_cls = len(text_only) + 1
+
+        # Initialize mask
+        label_mask = [False] * len(input_ids)
+
+        # Find label positions
+        current_pos = text_length_with_cls + 1  # +1 for SEP after text
+
+        for label in labels:
+            if current_pos < len(input_ids):
+                label_mask[current_pos] = True
+
+                # Tokenize label to find its length
+                label_tokens = self.tokenizer(
+                    label,
+                    add_special_tokens=False,
                     return_attention_mask=False,
                     return_token_type_ids=False,
-                )["input_ids"],
-            )
-        return self.tokenizer(
-            texts, return_attention_mask=False, return_token_type_ids=False
-        )["input_ids"], [
+                )["input_ids"]
+
+                # Move to next label position (+1 for SEP between labels)
+                current_pos += len(label_tokens) + 1
+
+        return label_mask
+
+    def _truncate_if_needed(self, text: str, labels: List[str]) -> str:
+        """Truncate text if the combined sequence is too long."""
+        combined = self._prepare_text_with_labels(text, labels)
+
+        # Quick tokenization to check length
+        temp_encoding = self.tokenizer(
+            combined,
+            add_special_tokens=True,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+            truncation=False,
+            padding=False,
+        )
+
+        if len(temp_encoding["input_ids"]) <= self.max_length:
+            return text
+
+        # Calculate how much to truncate
+        labels_text = f" {self.sep_token} ".join(labels) if labels else ""
+        label_tokens_approx = len(
             self.tokenizer(
-                labels, return_attention_mask=False, return_token_type_ids=False
+                labels_text,
+                add_special_tokens=False,
+                return_attention_mask=False,
+                return_token_type_ids=False,
             )["input_ids"]
-            for labels in all_labels
-        ]
+        )
+
+        # Reserve space for: CLS + text + SEP + labels + potential SEPs
+        reserved_space = 2 + label_tokens_approx + len(labels)  # rough estimate
+        max_text_length = max(self.min_text_token, self.max_length - reserved_space)
+
+        # Truncate text
+        text_tokens = self.tokenizer(
+            text,
+            add_special_tokens=False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+        )["input_ids"]
+
+        if len(text_tokens) > max_text_length:
+            truncated_tokens = text_tokens[:max_text_length]
+            text = self.tokenizer.decode(truncated_tokens, skip_special_tokens=True)
+
+        return text
 
     def tokenize_example(
         self,
@@ -133,30 +147,52 @@ class GliZNETTokenizer:
         return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ) -> Dict[str, Any]:
-        text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
-        text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
-        token_ids, label_mask = self._build_sequence(text_tokens, label_tokens)
+        """Tokenize a single example using transformers tokenizer."""
+        # Truncate text if needed
+        truncated_text = self._truncate_if_needed(text, all_labels)
 
-        if pad:
-            result = self._pad_and_mask(token_ids, label_mask)
-        else:
-            attention_mask = [1] * len(token_ids)
-            result = {
-                "input_ids": token_ids,
-                "attention_mask": attention_mask,
-                "label_mask": label_mask,
-            }
+        # Prepare combined text
+        combined_text = self._prepare_text_with_labels(truncated_text, all_labels)
+
+        # Use transformers tokenizer
+        encoding = self.tokenizer(
+            combined_text,
+            add_special_tokens=True,
+            max_length=self.max_length if pad else None,
+            padding="max_length" if pad else False,
+            truncation=True,
+            return_tensors=None,  # We'll handle tensor conversion ourselves
+            return_attention_mask=True,
+            return_token_type_ids=False,
+        )
+
+        # Calculate label mask
+        label_mask = self._calculate_label_positions(
+            truncated_text, all_labels, encoding["input_ids"]
+        )
+
+        # Ensure label_mask has the same length as input_ids
+        if len(label_mask) != len(encoding["input_ids"]):
+            # Pad or truncate label_mask to match
+            if len(label_mask) < len(encoding["input_ids"]):
+                label_mask.extend([False] * (len(encoding["input_ids"]) - len(label_mask)))
+            else:
+                label_mask = label_mask[: len(encoding["input_ids"])]
+
+        result = {
+            "input_ids": encoding["input_ids"],
+            "attention_mask": encoding["attention_mask"],
+            "label_mask": label_mask,
+        }
 
         if return_tensors == "pt":
-            # Convert to PyTorch tensors: unsqueeze to add batch dimension
-            result_pad = {
+            result = {
                 k: torch.tensor(
                     v, dtype=torch.long if k != "label_mask" else torch.bool
                 )
                 for k, v in result.items()
-                if k in {"input_ids", "attention_mask", "label_mask"}
             }
-            result.update(result_pad)
+
         return result
 
     def tokenize_batch(
@@ -166,42 +202,42 @@ class GliZNETTokenizer:
         return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ) -> Dict[str, Any]:
+        """Tokenize a batch of examples."""
         if return_tensors == "pt" and not pad:
             raise ValueError(
                 "return_tensors='pt' requires pad=True for batch tokenization."
             )
-        text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
-        token_ids, label_masks = zip(
-            *[
-                self._build_sequence(text, labels)
-                for text, labels in zip(text_tokens, label_tokens)
-            ]
-        )
+
+        # Process each example
+        batch_results = []
+        for text, labels in zip(texts, all_labels):
+            result = self.tokenize_example(
+                text, labels, return_tensors=None, pad=pad
+            )
+            batch_results.append(result)
+
+        # Combine into batch format
         if pad:
-            padded_results = [
-                self._pad_and_mask(ids, mask)
-                for ids, mask in zip(token_ids, label_masks)
-            ]
             result = {
-                "input_ids": [r["input_ids"] for r in padded_results],
-                "attention_mask": [r["attention_mask"] for r in padded_results],
-                "label_mask": [r["label_mask"] for r in padded_results],
+                "input_ids": [r["input_ids"] for r in batch_results],
+                "attention_mask": [r["attention_mask"] for r in batch_results],
+                "label_mask": [r["label_mask"] for r in batch_results],
             }
         else:
             result = {
-                "input_ids": token_ids,
-                "attention_mask": [[1] * len(ids) for ids in token_ids],
-                "label_mask": label_masks,
+                "input_ids": [r["input_ids"] for r in batch_results],
+                "attention_mask": [r["attention_mask"] for r in batch_results],
+                "label_mask": [r["label_mask"] for r in batch_results],
             }
+
         if return_tensors == "pt":
-            result_pad = {
+            result = {
                 k: torch.tensor(
                     v, dtype=torch.long if k != "label_mask" else torch.bool
                 )
                 for k, v in result.items()
-                if k in {"input_ids", "attention_mask", "label_mask"}
             }
-            result.update(result_pad)
+
         return result
 
     def __call__(
@@ -211,6 +247,7 @@ class GliZNETTokenizer:
         return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ):
+        """Main tokenization method that delegates to appropriate method."""
         if isinstance(texts, str):
             return self.tokenize_example(
                 texts, labels, return_tensors=return_tensors, pad=pad
@@ -220,12 +257,37 @@ class GliZNETTokenizer:
         )
 
     def decode_sequence(self, input_ids: List[int]) -> str:
+        """Decode token IDs back to text."""
         return self.tokenizer.decode(
             [i for i in input_ids if i != self.pad_token_id], skip_special_tokens=True
         )
 
     def get_vocab_size(self) -> int:
+        """Get vocabulary size."""
         return len(self.tokenizer)
+
+    # Additional methods to make it more transformers-compatible
+    def batch_decode(self, sequences: Union[List[int], List[List[int]]], **kwargs):
+        """Batch decode sequences."""
+        return self.tokenizer.batch_decode(sequences, **kwargs)
+
+    def decode(self, token_ids: List[int], **kwargs):
+        """Decode a single sequence."""
+        return self.tokenizer.decode(token_ids, **kwargs)
+
+    @property
+    def vocab_size(self) -> int:
+        """Vocabulary size property."""
+        return len(self.tokenizer)
+
+    @property
+    def model_max_length(self) -> int:
+        """Model max length property."""
+        return self.tokenizer.model_max_length
+
+    def save_pretrained(self, save_directory: str, **kwargs):
+        """Save the tokenizer to a directory."""
+        return self.tokenizer.save_pretrained(save_directory, **kwargs)
 
 
 def load_dataset(

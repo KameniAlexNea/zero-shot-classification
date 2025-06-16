@@ -23,6 +23,7 @@ class GliZNetOutput(ModelOutput):
         hidden_states (`torch.FloatTensor` of shape `(batch_size, hidden_size)`):
             Hidden states of the model at the output of the encoder (CLS token representations).
     """
+
     loss: Optional[torch.FloatTensor] = None
     logits: List[torch.FloatTensor] = None
     hidden_states: Optional[torch.FloatTensor] = None
@@ -38,14 +39,16 @@ class GliZNetModel(BertPreTrainedModel):
         temperature: float = 1.0,
     ):
         super().__init__(config)
-        
+
         # Store config for transformers compatibility
         self.config = config
-        self.num_labels = getattr(config, 'num_labels', 2)  # Default to binary classification
-        
+        self.num_labels = getattr(
+            config, "num_labels", 2
+        )  # Default to binary classification
+
         # Initialize the encoder
-        self.bert = AutoModel.from_pretrained(config._name_or_path if hasattr(config, '_name_or_path') else config.name_or_path)
-        
+        self.backbone = AutoModel.from_pretrained(config._name_or_path if hasattr(config, '_name_or_path') else config.name_or_path)
+
         # Model parameters
         self.hidden_size = hidden_size or self.config.hidden_size
         self.similarity_metric = similarity_metric
@@ -65,7 +68,9 @@ class GliZNetModel(BertPreTrainedModel):
 
         # Loss function
         self.loss_fn = (
-            nn.BCEWithLogitsLoss() if self.similarity_metric != "cosine" else nn.MSELoss()
+            nn.BCEWithLogitsLoss()
+            if self.similarity_metric != "cosine"
+            else nn.MSELoss()
         )
 
         # Initialize weights and apply final processing
@@ -106,8 +111,10 @@ class GliZNetModel(BertPreTrainedModel):
         label_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
             Mask to identify label token positions.
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-        
+        return_dict = (
+            return_dict if return_dict is not None else self.config.use_return_dict
+        )
+
         if label_mask is None:
             raise ValueError("label_mask is required for GliZNetModel")
 
@@ -115,7 +122,7 @@ class GliZNetModel(BertPreTrainedModel):
         batch_size = input_ids.size(0)
 
         # Get encoder outputs
-        encoder_outputs = self.bert(
+        encoder_outputs = self.backbone(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -126,7 +133,7 @@ class GliZNetModel(BertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=True,
         )
-        
+
         hidden = self.dropout(encoder_outputs.last_hidden_state)
         hidden_proj = self.proj(hidden)  # (batch_size, seq_len, hidden_size)
 
@@ -198,10 +205,12 @@ class GliZNetModel(BertPreTrainedModel):
         """
         self.eval()
         with torch.no_grad():
-            outputs = self.forward(input_ids, attention_mask, label_mask)
+            outputs = self.forward(input_ids=input_ids, attention_mask=attention_mask, label_mask=label_mask)
             results = []
 
-            logits_list = outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
+            logits_list = (
+                outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
+            )
             for logits in logits_list:
                 probs = (
                     torch.sigmoid(logits)

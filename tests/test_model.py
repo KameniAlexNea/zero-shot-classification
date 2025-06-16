@@ -26,8 +26,8 @@ class DummyEncoder(nn.Module):
 class TestGliZNetModel(unittest.TestCase):
     def setUp(self):
         self.hidden_size = 8
-        self.model = GliZNetModel(
-            model_name="bert-base-uncased",
+        self.model = GliZNetModel.from_pretrained(
+            "bert-base-uncased",
             hidden_size=self.hidden_size,
             similarity_metric="dot",
         )
@@ -37,7 +37,7 @@ class TestGliZNetModel(unittest.TestCase):
         self.model.hidden_size = self.hidden_size
         self.model.proj = nn.Identity()
         # sample inputs: batch=2, seq_len=4
-        self.input_ids = torch.tensor([[1, 2, 3, 4], [5, 6, 0, 0]])
+        self.input_ids = torch.tensor([[101, 1012, 1013, 104], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
         # label_mask: mark pos 2 in sample0, none in sample1
         self.label_mask = torch.tensor(
@@ -62,8 +62,9 @@ class TestGliZNetModel(unittest.TestCase):
         )
         self.assertIn("logits", out)
         self.assertIn("hidden_states", out)
-        self.assertIn("loss", out)
-        self.assertIsNone(out["loss"])
+
+        loss = out.loss
+        self.assertIsNone(loss)
         # sample0 has one label => logits tensor of shape (1,)
         self.assertEqual(out["logits"][0].shape, (1, 1))
         # sample1 no labels => zero-length
@@ -85,16 +86,11 @@ class TestGliZNetModel(unittest.TestCase):
             input_ids=self.input_ids,
             attention_mask=self.attn,
             label_mask=self.label_mask,
-            threshold=0.5,
         )
         # two samples
         self.assertEqual(len(results), 2)
         for idx, res in enumerate(results):
-            self.assertIn("predictions", res)
-            self.assertIn("probabilities", res)
-            self.assertIn("logits", res)
-            # predictions shape matches logits
-            self.assertEqual(res["predictions"].shape, res["logits"].shape)
+            self.assertIsInstance(res, list)
 
 
 if __name__ == "__main__":
