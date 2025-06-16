@@ -88,19 +88,6 @@ class GliZNETTokenizer:
             "label_mask": label_mask[: self.max_length],
         }
 
-    def _create_label_mask(
-        self, sequence: List[str], label_tokens: List[List[str]]
-    ) -> List[bool]:
-        mask = [False] * len(sequence)
-        if not label_tokens:
-            return mask
-        start = sequence.index(self.sep_token_id) + 1
-        idx = start
-        for tokens in label_tokens:
-            mask[idx] = True  # Mark the first token of the label
-            idx += len(tokens) + 1  # +1 for the SEP token
-        return mask
-
     def _batch_tokenize(
         self,
         texts: Union[str, List[str]],
@@ -148,15 +135,7 @@ class GliZNETTokenizer:
             }
 
         if return_tensors == "pt":
-            # Convert to PyTorch tensors: unsqueeze to add batch dimension
-            result_pad = {
-                k: torch.tensor(
-                    v, dtype=torch.long if k != "label_mask" else torch.bool
-                )
-                for k, v in result.items()
-                if k in {"input_ids", "attention_mask", "label_mask"}
-            }
-            result.update(result_pad)
+            result.update(self._to_tensors(result))
         return result
 
     def tokenize_batch(
@@ -166,10 +145,6 @@ class GliZNETTokenizer:
         return_tensors: Optional[str] = "pt",
         pad: bool = True,
     ) -> Dict[str, Any]:
-        if return_tensors == "pt" and not pad:
-            raise ValueError(
-                "return_tensors='pt' requires pad=True for batch tokenization."
-            )
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
         token_ids, label_masks = zip(
             *[
@@ -194,14 +169,7 @@ class GliZNETTokenizer:
                 "label_mask": label_masks,
             }
         if return_tensors == "pt":
-            result_pad = {
-                k: torch.tensor(
-                    v, dtype=torch.long if k != "label_mask" else torch.bool
-                )
-                for k, v in result.items()
-                if k in {"input_ids", "attention_mask", "label_mask"}
-            }
-            result.update(result_pad)
+            result.update(self._to_tensors(result))
         return result
 
     def __call__(
@@ -226,6 +194,19 @@ class GliZNETTokenizer:
 
     def get_vocab_size(self) -> int:
         return len(self.tokenizer)
+
+    def _to_tensors(self, results: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """
+        Convert the lists in results to torch tensors:
+        input_ids, attention_mask -> long; label_mask -> bool.
+        """
+        return {
+            k: torch.tensor(
+                results[k],
+                dtype=torch.bool if k == "label_mask" else torch.long,
+            )
+            for k in ("input_ids", "attention_mask", "label_mask")
+        }
 
 
 def load_dataset(
