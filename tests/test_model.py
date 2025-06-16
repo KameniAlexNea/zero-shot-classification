@@ -12,7 +12,9 @@ class DummyEncoder(nn.Module):
         super().__init__()
         self.config = namedtuple("cfg", ("hidden_size",))(hidden_size)
 
-    def forward(self, input_ids, attention_mask=None, return_dict=True, *args, **kwargs):
+    def forward(
+        self, input_ids, attention_mask=None, return_dict=True, *args, **kwargs
+    ):
         batch, seq_len = input_ids.shape
         # last_hidden_state[b,s,:] = input_ids[b,s] repeated
         last_hidden_state = (

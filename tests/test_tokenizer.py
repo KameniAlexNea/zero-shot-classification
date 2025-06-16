@@ -17,8 +17,7 @@ class TestGliZNETTokenizer(unittest.TestCase):
 
     def setUp(self):
         self.tokenizer = GliZNETTokenizer(
-            pretrained_model_name_or_path=self.pretrained_model_name,
-            min_text_token=1
+            pretrained_model_name_or_path=self.pretrained_model_name, min_text_token=1
         )
         self.tokenizer.max_length = 20
 
@@ -98,7 +97,7 @@ class TestGliZNETTokenizer(unittest.TestCase):
         truncated_zero_allowed = self.tokenizer._truncate_text_tokens(
             text_tokens_long, label_tokens
         )
-        self.assertEqual(len(truncated_zero_allowed), 1) # One forced token
+        self.assertEqual(len(truncated_zero_allowed), 1)  # One forced token
 
     def test_build_sequence(self):
         text_tokens = [2001, 2002]  # "text"

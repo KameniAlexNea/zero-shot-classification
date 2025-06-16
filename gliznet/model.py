@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, List, Union, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -47,7 +47,11 @@ class GliZNetModel(BertPreTrainedModel):
         )  # Default to binary classification
 
         # Initialize the encoder
-        self.backbone = AutoModel.from_pretrained(config._name_or_path if hasattr(config, '_name_or_path') else config.name_or_path)
+        self.backbone = AutoModel.from_pretrained(
+            config._name_or_path
+            if hasattr(config, "_name_or_path")
+            else config.name_or_path
+        )
 
         # Model parameters
         self.hidden_size = hidden_size or self.config.hidden_size
@@ -205,7 +209,11 @@ class GliZNetModel(BertPreTrainedModel):
         """
         self.eval()
         with torch.no_grad():
-            outputs = self.forward(input_ids=input_ids, attention_mask=attention_mask, label_mask=label_mask)
+            outputs = self.forward(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                label_mask=label_mask,
+            )
             results = []
 
             logits_list = (
