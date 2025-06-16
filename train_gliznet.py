@@ -17,9 +17,9 @@ from transformers import (
     TrainingArguments,
 )
 
-from gliznet.data import GliZNetDataset, collate_fn
+from gliznet.data import GliZNetDataset, collate_fn, load_dataset
 from gliznet.model import GliZNetModel
-from gliznet.tokenizer import GliZNETTokenizer, load_dataset
+from gliznet.tokenizer import GliZNETTokenizer
 
 
 def main():

@@ -9,8 +9,9 @@ from loguru import logger
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 
+from gliznet.data import load_dataset
 from gliznet.model import GliZNetModel
-from gliznet.tokenizer import GliZNETTokenizer, load_dataset
+from gliznet.tokenizer import GliZNETTokenizer
 
 
 @dataclass

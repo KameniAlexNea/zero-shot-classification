@@ -1,7 +1,5 @@
-import random
 from typing import Any, Dict, List, Optional, Union
 
-import datasets
 import torch
 from transformers import AutoTokenizer, BertTokenizerFast
 
@@ -207,59 +205,3 @@ class GliZNETTokenizer:
             )
             for k in ("input_ids", "attention_mask", "label_mask")
         }
-
-
-def load_dataset(
-    path: str = "alexneakameni/ZSHOT-HARDSET",
-    name: str = "triplet",
-    split: str = "train",
-    text_column: str = "sentence",
-    positive_column: str = "labels",
-    negative_column: str = "not_labels",
-    shuffle_labels: bool = True,
-    max_labels: Optional[int] = None,
-):
-    def mapper(x):
-        labels = x[positive_column] + x[negative_column]
-        labels_int = [1] * len(x[positive_column]) + [0] * len(x[negative_column])
-        if shuffle_labels:
-            combined = list(zip(labels, labels_int))
-            random.shuffle(combined)
-            labels, labels_int = zip(*combined)
-        if max_labels is not None:
-            labels = labels[:max_labels]
-            labels_int = labels_int[:max_labels]
-        return {
-            "text": x[text_column],
-            "labels_text": labels,
-            "labels_int": labels_int,
-        }
-
-    ds = datasets.load_dataset(path, name)[split]
-    ds = ds.map(
-        mapper,
-    )
-    return ds.select_columns(["text", "labels_text", "labels_int"])
-
-
-def add_tokenizer(
-    dataset: datasets.Dataset,
-    tokenizer: GliZNETTokenizer,
-    text_column: str = "text",
-    labels_text_column: str = "labels_text",
-    labels_int_column: str = "labels_int",
-):
-    def tokenize_example(example: dict):
-        results = tokenizer(example[text_column], example[labels_text_column])
-        results["labels"] = (
-            [
-                torch.tensor(lab, dtype=torch.float32)
-                for lab in example[labels_int_column]
-            ]
-            if isinstance(example[labels_int_column], list)
-            else torch.tensor(example[labels_int_column], dtype=torch.float32)
-        )
-        return results
-
-    dataset.set_transform(tokenize_example)
-    return dataset
