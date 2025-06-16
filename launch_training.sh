@@ -1,9 +1,10 @@
-nohup uv run launch_training.py \
+nohup uv run train_gliznet.py \
     --model_name bert-base-uncased \
-    --hidden_size 256 \
+    --projected_dim 256 \
     --similarity_metric bilinear \
-    --batch_size 32 \
-    --num_epochs 50 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 64 \
+    --num_train_epochs 50 \
     --output_dir results \
     --learning_rate 2e-5 \
     --logging_steps 50 \
