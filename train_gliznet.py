@@ -14,36 +14,64 @@ from gliznet.tokenizer import GliZNETTokenizer, load_dataset
 
 from dataclasses import dataclass, field
 from typing import Optional
+import numpy as np
+from sklearn.metrics import roc_auc_score
 
+def compute_metrics(eval_pred):
+    """
+    Compute classification metrics on the flattened, unmasked positions.
+    """
+    logits, label_ids = eval_pred.predictions, eval_pred.label_ids
+    # if predictions/labels come as list of arrays with variable lengths, concatenate
+    if isinstance(logits, list):
+        logits = np.concatenate([l.flatten() for l in logits], axis=0)
+        label_ids = np.concatenate([l.flatten() for l in label_ids], axis=0)
+    # sigmoid for scores and threshold at 0.5
+    probs = 1 / (1 + np.exp(-logits))
+    preds = (probs >= 0.5).astype(int)
 
-class GliZNetTrainer(Trainer):
-    """Custom Trainer for GliZNetModel that handles the specific data format."""
+    # now flatten (they are 1D already after concat)
+    y_true = label_ids
+    y_pred = preds
+    y_scores = probs
+    # ignore padding / unlabeled positions marked as -100
+    mask = y_true != -100
+    y_true, y_pred, y_scores = y_true[mask], y_pred[mask], y_scores[mask]
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    # confusion
+    tp = int(((y_true == 1) & (y_pred == 1)).sum())
+    fp = int(((y_true == 0) & (y_pred == 1)).sum())
+    tn = int(((y_true == 0) & (y_pred == 0)).sum())
+    fn = int(((y_true == 1) & (y_pred == 0)).sum())
 
-    def compute_loss(self, model, inputs, return_outputs=False, *args, **kwargs):
-        """Compute loss for GliZNetModel."""
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
-        label_mask = inputs["label_mask"]
-        labels = inputs["labels"]
+    # core metrics
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    accuracy = (tp + tn) / len(y_true) if len(y_true) > 0 else 0.0
+    balanced_accuracy = (recall + specificity) / 2
 
-        # Forward pass
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            label_mask=label_mask,
-            labels=labels,
-        )
+    # AUC-ROC
+    try:
+        auc_roc = roc_auc_score(y_true, y_scores) if len(np.unique(y_true)) > 1 else 0.0
+    except Exception:
+        auc_roc = 0.0
 
-        loss = outputs.get("loss")
-        if loss is None:
-            # If no loss computed (no valid labels), return zero loss
-            loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
+    # MCC
+    denom = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    mcc = float((tp * tn - fp * fn) / denom) if denom > 0 else 0.0
 
-        return (loss, outputs) if return_outputs else loss
-
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "specificity": specificity,
+        "f1": f1,
+        "balanced_accuracy": balanced_accuracy,
+        "auc_roc": auc_roc,
+        "mcc": mcc,
+    }
 
 def main():
     @dataclass
@@ -102,7 +130,13 @@ def main():
         eval_dataset=val_dataset,
         data_collator=collate_fn,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+        compute_metrics=compute_metrics,
     )
+
+    # evaluate the model before training
+    logger.info("Evaluating model before training...")
+    eval_results = trainer.evaluate()
+    logger.info(f"Initial evaluation results: {eval_results}")
 
     # Start training
     logger.info("Starting training with Transformers Trainer...")
