@@ -1,42 +1,75 @@
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import Optional, List, Union, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger
-from transformers import AutoModel
+from transformers import AutoModel, BertPreTrainedModel
+from transformers.modeling_outputs import ModelOutput
 
 
-class GliZNetModel(nn.Module):
+@dataclass
+class GliZNetOutput(ModelOutput):
+    """
+    Output type of [`GliZNetModel`].
+
+    Args:
+        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+            Classification loss.
+        logits (`list[torch.FloatTensor]`):
+            Classification scores for each sample in the batch.
+        hidden_states (`torch.FloatTensor` of shape `(batch_size, hidden_size)`):
+            Hidden states of the model at the output of the encoder (CLS token representations).
+    """
+    loss: Optional[torch.FloatTensor] = None
+    logits: List[torch.FloatTensor] = None
+    hidden_states: Optional[torch.FloatTensor] = None
+
+
+class GliZNetModel(BertPreTrainedModel):
     def __init__(
         self,
-        model_name: str = "bert-base-uncased",
+        config,
         hidden_size: int = None,
         dropout_rate: float = 0.1,
         similarity_metric: str = "bilinear",
         temperature: float = 1.0,
     ):
-        super().__init__()
-        self.encoder = AutoModel.from_pretrained(model_name)
-        self.config = self.encoder.config
-
+        super().__init__(config)
+        
+        # Store config for transformers compatibility
+        self.config = config
+        self.num_labels = getattr(config, 'num_labels', 2)  # Default to binary classification
+        
+        # Initialize the encoder
+        self.bert = AutoModel.from_pretrained(config._name_or_path if hasattr(config, '_name_or_path') else config.name_or_path)
+        
+        # Model parameters
         self.hidden_size = hidden_size or self.config.hidden_size
         self.similarity_metric = similarity_metric
         self.temperature = temperature
         self.dropout = nn.Dropout(dropout_rate)
 
+        # Projection layer
         self.proj = (
             nn.Linear(self.config.hidden_size, self.hidden_size)
             if self.hidden_size != self.config.hidden_size
             else nn.Identity()
         )
 
+        # Similarity computation layers
         if similarity_metric == "bilinear":
             self.bilinear = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
 
+        # Loss function
         self.loss_fn = (
-            nn.BCEWithLogitsLoss if self.similarity_metric != "cosine" else nn.MSELoss
-        )()
+            nn.BCEWithLogitsLoss() if self.similarity_metric != "cosine" else nn.MSELoss()
+        )
+
+        # Initialize weights and apply final processing
+        self.post_init()
 
     def compute_similarity(self, text_repr: torch.Tensor, label_repr: torch.Tensor):
         if self.similarity_metric == "cosine":
@@ -55,17 +88,45 @@ class GliZNetModel(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        label_mask: torch.Tensor,
-        labels: list[torch.Tensor] = None,
-    ):
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        label_mask: Optional[torch.Tensor] = None,
+        labels: Optional[List[torch.Tensor]] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple[torch.Tensor], GliZNetOutput]:
+        r"""
+        labels (`list[torch.Tensor]`, *optional*):
+            Labels for computing the classification loss. Each tensor in the list corresponds to labels for one sample.
+        label_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Mask to identify label token positions.
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        
+        if label_mask is None:
+            raise ValueError("label_mask is required for GliZNetModel")
+
         device = input_ids.device
         batch_size = input_ids.size(0)
 
-        encoder_outputs = self.encoder(
-            input_ids, attention_mask=attention_mask, return_dict=True
+        # Get encoder outputs
+        encoder_outputs = self.bert(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=True,
         )
+        
         hidden = self.dropout(encoder_outputs.last_hidden_state)
         hidden_proj = self.proj(hidden)  # (batch_size, seq_len, hidden_size)
 
@@ -102,35 +163,46 @@ class GliZNetModel(nn.Module):
                     all_logits.append(sample_logits)
                     all_targets.append(sample_labels.view(-1, 1))
 
-        output = {
-            "loss": None,
-            "logits": outputs_logits,
-            "hidden_states": hidden_proj[:, 0],
-        }
-
+        # Compute loss
+        loss = None
         if all_logits:
             total_logits = torch.cat(all_logits)
             total_labels = torch.cat(all_targets)
-            output["loss"] = self.loss_fn(total_logits, total_labels)
+            loss = self.loss_fn(total_logits, total_labels)
         elif self.training:
             logger.warning(
                 "No valid labels found in batch while training. Loss will not be computed."
             )
 
-        return output
+        # Get CLS token representations for hidden states
+        cls_hidden_states = hidden_proj[:, 0]  # (batch_size, hidden_size)
+
+        if not return_dict:
+            output = (outputs_logits, cls_hidden_states)
+            return ((loss,) + output) if loss is not None else output
+
+        return GliZNetOutput(
+            loss=loss,
+            logits=outputs_logits,
+            hidden_states=cls_hidden_states,
+        )
 
     def predict(
         self,
         input_ids,
         attention_mask,
         label_mask,
-    ) -> list[list[float]]:
+    ) -> List[List[float]]:
+        """
+        Prediction method for inference.
+        """
         self.eval()
         with torch.no_grad():
             outputs = self.forward(input_ids, attention_mask, label_mask)
             results = []
 
-            for logits in outputs["logits"]:
+            logits_list = outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
+            for logits in logits_list:
                 probs = (
                     torch.sigmoid(logits)
                     if self.similarity_metric != "cosine"
