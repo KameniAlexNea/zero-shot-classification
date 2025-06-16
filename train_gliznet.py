@@ -3,6 +3,9 @@
 import argparse
 import os
 
+os.environ["WANDB_PROJECT"] = "gliznet"
+os.environ["WANDB_WATCH"] = "none"
+
 import torch
 from loguru import logger
 from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
@@ -56,11 +59,17 @@ def main():
     parser.add_argument("--device", default="auto")
     parser.add_argument("--save_path", default="models/fzeronet_model.pt")
     parser.add_argument("--output_dir", default="./results")
-    parser.add_argument("--shuffle_labels", action="store_false", default=True, help="Disable shuffling of labels (enabled by default).")
+    parser.add_argument(
+        "--shuffle_labels",
+        action="store_false",
+        default=True,
+        help="Disable shuffling of labels (enabled by default).",
+    )
     parser.add_argument("--eval_steps", type=int, default=500)
     parser.add_argument("--save_steps", type=int, default=1000)
     parser.add_argument("--logging_steps", type=int, default=100)
     parser.add_argument("--warmup_steps", type=int, default=100)
+    parser.add_argument("--max_labels", type=int, default=20)
     parser.add_argument("--weight_decay", type=float, default=0.01)
 
     args = parser.parse_args()
@@ -74,7 +83,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset
-    dataset = load_dataset(max_labels=None, shuffle_labels=args.shuffle_labels)
+    dataset = load_dataset(max_labels=args.max_labels, shuffle_labels=args.shuffle_labels)
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
@@ -103,6 +112,7 @@ def main():
 
     # Setup training arguments
     training_args = TrainingArguments(
+        run_name="gliznet_training",
         output_dir=args.output_dir,
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
@@ -113,15 +123,19 @@ def main():
         logging_steps=args.logging_steps,
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
-        eval_strategy="steps",
-        save_strategy="steps",
+        eval_strategy="epoch",
+        save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         dataloader_pin_memory=True,
         dataloader_num_workers=4,
         remove_unused_columns=False,
-        # report_to=None,  # Disable wandb/tensorboard logging
+        do_train=True,
+        do_eval=True,
+        report_to="wandb",
+        lr_scheduler_type="cosine",
+        data_seed=42,
     )
 
     # Initialize trainer

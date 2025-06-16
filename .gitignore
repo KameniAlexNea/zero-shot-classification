@@ -166,3 +166,4 @@ data
 models
 wandb
 .vscode
+results
