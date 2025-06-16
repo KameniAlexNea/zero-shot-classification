@@ -8,10 +8,8 @@ os.environ["WANDB_WATCH"] = "none"
 from dataclasses import dataclass, field
 from typing import Optional
 
-import numpy as np
 import torch
 from loguru import logger
-from sklearn.metrics import roc_auc_score
 from transformers import (
     EarlyStoppingCallback,
     HfArgumentParser,
@@ -22,68 +20,6 @@ from transformers import (
 from gliznet.data import GliZNetDataset, collate_fn
 from gliznet.model import GliZNetModel
 from gliznet.tokenizer import GliZNETTokenizer, load_dataset
-
-
-def compute_metrics(eval_pred):
-    """
-    Not working with the Trainer API, but can be used for custom evaluation.
-    Compute classification metrics on the flattened, unmasked positions.
-    """
-    logits, label_ids = eval_pred.predictions, eval_pred.label_ids
-    # if predictions/labels come as list of arrays with variable lengths, concatenate
-    if isinstance(logits, list):
-        logits = np.concatenate([lab.flatten() for lab in logits], axis=0)
-        label_ids = np.concatenate([lab.flatten() for lab in label_ids], axis=0)
-    # sigmoid for scores and threshold at 0.5
-    probs = 1 / (1 + np.exp(-logits))
-    preds = (probs >= 0.5).astype(int)
-
-    # now flatten (they are 1D already after concat)
-    y_true = label_ids
-    y_pred = preds
-    y_scores = probs
-    # ignore padding / unlabeled positions marked as -100
-    mask = y_true != -100
-    y_true, y_pred, y_scores = y_true[mask], y_pred[mask], y_scores[mask]
-
-    # confusion
-    tp = int(((y_true == 1) & (y_pred == 1)).sum())
-    fp = int(((y_true == 0) & (y_pred == 1)).sum())
-    tn = int(((y_true == 0) & (y_pred == 0)).sum())
-    fn = int(((y_true == 1) & (y_pred == 0)).sum())
-
-    # core metrics
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    f1 = (
-        (2 * precision * recall / (precision + recall))
-        if (precision + recall) > 0
-        else 0.0
-    )
-    accuracy = (tp + tn) / len(y_true) if len(y_true) > 0 else 0.0
-    balanced_accuracy = (recall + specificity) / 2
-
-    # AUC-ROC
-    try:
-        auc_roc = roc_auc_score(y_true, y_scores) if len(np.unique(y_true)) > 1 else 0.0
-    except Exception:
-        auc_roc = 0.0
-
-    # MCC
-    denom = np.sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    mcc = float((tp * tn - fp * fn) / denom) if denom > 0 else 0.0
-
-    return {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "specificity": specificity,
-        "f1": f1,
-        "balanced_accuracy": balanced_accuracy,
-        "auc_roc": auc_roc,
-        "mcc": mcc,
-    }
 
 
 def main():
@@ -97,7 +33,7 @@ def main():
             default=256, metadata={"help": "Hidden size for projection layer"}
         )
         similarity_metric: str = field(
-            default="cosine",
+            default="dot",
             metadata={"help": "Similarity metric: cosine, bilinear, dot"},
         )
         max_labels: Optional[int] = field(

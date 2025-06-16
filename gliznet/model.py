@@ -4,7 +4,6 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from loguru import logger
 from transformers import BertConfig, BertModel, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
@@ -35,7 +34,7 @@ class GliZNetModel(BertPreTrainedModel):
         config: BertConfig,
         projected_dim: int = None,
         dropout_rate: float = 0.1,
-        similarity_metric: str = "bilinear",
+        similarity_metric: str = "dot",
         temperature: float = 1.0,
     ):
         super().__init__(config)
@@ -46,12 +45,6 @@ class GliZNetModel(BertPreTrainedModel):
             config, "num_labels", 1
         )  # Default to binary classification
 
-        # Initialize the encoder
-        # self.bert = AutoModel.from_pretrained(
-        #     config._name_or_path
-        #     if hasattr(config, "_name_or_path")
-        #     else config.name_or_path
-        # )
         self.bert = BertModel(config)
 
         # Model parameters
@@ -71,30 +64,19 @@ class GliZNetModel(BertPreTrainedModel):
         if similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
 
-        # Loss function
-        self.loss_fn = (
-            nn.BCEWithLogitsLoss()
-            if self.similarity_metric != "cosine"
-            else nn.MSELoss()
-        )
+        self.loss_fn = nn.BCEWithLogitsLoss()
 
         # Initialize weights and apply final processing
         self.post_init()
 
     def compute_similarity(self, text_repr: torch.Tensor, label_repr: torch.Tensor):
-        if self.similarity_metric == "cosine":
-            sim = (
-                F.cosine_similarity(text_repr, label_repr) + 1.0
-            ) / 2  # Shift to [0, 1] range
-            eps = 1e-7
-            sim = sim.clamp(eps, 1 - eps)
-        elif self.similarity_metric == "dot":
-            sim = torch.mm(text_repr, label_repr.T)
+        if self.similarity_metric == "dot":
+            sim = (text_repr * label_repr).sum(dim=1, keepdim=True) / text_repr.shape[1]
         elif self.similarity_metric == "bilinear":
             sim = self.classifier(text_repr, label_repr)
         else:
             raise ValueError(f"Unsupported similarity metric: {self.similarity_metric}")
-        return sim / self.temperature
+        return sim
 
     def forward(
         self,
