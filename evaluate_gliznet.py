@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import torch
 from loguru import logger
-from safetensors.torch import load_file
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 
@@ -18,8 +17,8 @@ from gliznet.tokenizer import GliZNETTokenizer, load_dataset
 class EvaluationConfig:
     """Configuration for evaluation."""
 
-    model_path: str = "results/checkpoint-1614/model.safetensors"
-    model_name: str = "bert-base-uncased"
+    model_path: str = "results/checkpoint-3228"
+    model_name: str = "results/checkpoint-3228"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20
@@ -46,11 +45,13 @@ class ModelEvaluator:
         logger.info(f"Loading model from {self.config.model_path} on {self.device}")
 
         try:
-            state_dict = load_file(self.config.model_path, device=str(self.device))
-            tokenizer = GliZNETTokenizer(self.config.model_name)
+            tokenizer = GliZNETTokenizer.from_pretrained(self.config.model_name)
 
-            model = GliZNetModel(model_name=self.config.model_name, hidden_size=256)
-            model.load_state_dict(state_dict)
+            model = model = GliZNetModel.from_pretrained(
+                self.config.model_name,
+                projected_dim=256,
+                similarity_metric="dot",
+            )
             model.to(self.device)
             model.eval()
 

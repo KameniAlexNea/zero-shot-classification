@@ -6,10 +6,10 @@ nohup uv run train_gliznet.py \
     --per_device_eval_batch_size 64 \
     --num_train_epochs 50 \
     --output_dir results \
-    --learning_rate 2e-5 \
+    --learning_rate 1e-4 \
     --logging_steps 50 \
     --warmup_steps 10 \
-    --weight_decay 0.001 \
+    --weight_decay 1e-4 \
     --run_name "gliznet_training" \
     --eval_steps 50 \
     --save_steps 50 \
