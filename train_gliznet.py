@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 
-import argparse
 import os
-
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 
 import torch
 from loguru import logger
-from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
+from transformers import EarlyStoppingCallback, Trainer, TrainingArguments, HfArgumentParser
 
 from gliznet.data import GliZNetDataset, collate_fn
 from gliznet.model import GliZNetModel
 from gliznet.tokenizer import GliZNETTokenizer, load_dataset
+
+from dataclasses import dataclass, field
+from typing import Optional
 
 
 class GliZNetTrainer(Trainer):
@@ -45,46 +46,26 @@ class GliZNetTrainer(Trainer):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Train GliZNetModel for zero-shot classification"
-    )
-    parser.add_argument("--model_name", default="bert-base-uncased")
-    parser.add_argument("--hidden_size", type=int, default=256)
-    parser.add_argument(
-        "--similarity_metric", default="bilinear", choices=["cosine", "dot", "bilinear"]
-    )
-    parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--num_epochs", type=int, default=1)
-    parser.add_argument("--learning_rate", type=float, default=1e-5)
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--save_path", default="models/fzeronet_model.pt")
-    parser.add_argument("--output_dir", default="./results")
-    parser.add_argument(
-        "--shuffle_labels",
-        action="store_false",
-        default=True,
-        help="Disable shuffling of labels (enabled by default).",
-    )
-    parser.add_argument("--eval_steps", type=int, default=500)
-    parser.add_argument("--save_steps", type=int, default=1000)
-    parser.add_argument("--logging_steps", type=int, default=100)
-    parser.add_argument("--warmup_steps", type=int, default=100)
-    parser.add_argument("--max_labels", type=int, default=20)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
+    @dataclass
+    class ModelArgs:
+        model_name: str = field(default="bert-base-uncased", metadata={"help": "Pretrained model name or path"})
+        hidden_size: int = field(default=256, metadata={"help": "Hidden size for projection layer"})
+        similarity_metric: str = field(default="bilinear", metadata={"help": "Similarity metric"})
+        max_labels: Optional[int] = field(default=None, metadata={"help": "Maximum number of labels"})
+        shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
+        save_path: str = field(default="models/fzeronet_model.pt", metadata={"help": "Legacy model save path"})
 
-    args = parser.parse_args()
+    parser = HfArgumentParser((ModelArgs, TrainingArguments))
+    model_args, training_args = parser.parse_args_into_dataclasses()
 
     # Set device
-    if args.device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device = args.device
-
+    device = "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset
     dataset = load_dataset(
-        max_labels=args.max_labels, shuffle_labels=args.shuffle_labels
+        max_labels=model_args.max_labels,
+        shuffle_labels=model_args.shuffle_labels,
     )
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
@@ -95,7 +76,7 @@ def main():
     )
 
     # Initialize tokenizer
-    tokenizer = GliZNETTokenizer(model_name=args.model_name)
+    tokenizer = GliZNETTokenizer.from_pretrained(model_args.model_name)
 
     # Create datasets
     train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer)
@@ -104,45 +85,18 @@ def main():
 
     # Initialize model
     model = GliZNetModel(
-        model_name=args.model_name,
-        hidden_size=args.hidden_size,
-        similarity_metric=args.similarity_metric,
+        model_name=model_args.model_name,
+        hidden_size=model_args.hidden_size,
+        similarity_metric=model_args.similarity_metric,
     )
 
     # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # Setup training arguments
-    training_args = TrainingArguments(
-        run_name="gliznet_training",
-        output_dir=args.output_dir,
-        num_train_epochs=args.num_epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        logging_steps=args.logging_steps,
-        eval_steps=args.eval_steps,
-        save_steps=args.save_steps,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        dataloader_pin_memory=True,
-        dataloader_num_workers=4,
-        remove_unused_columns=False,
-        do_train=True,
-        do_eval=True,
-        report_to="wandb",
-        lr_scheduler_type="cosine",
-        data_seed=42,
-    )
+    os.makedirs(training_args.output_dir, exist_ok=True)
 
     # Initialize trainer
-    trainer = GliZNetTrainer(
+    trainer = Trainer(
         model=model,
+        processing_class=tokenizer.tokenizer,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
@@ -155,19 +109,19 @@ def main():
     trainer.train()
 
     # Save the final model
-    trainer.save_model(args.output_dir)
+    trainer.save_model(training_args.output_dir)
 
     # Also save in the legacy format for compatibility
-    if args.save_path:
-        os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
+    if model_args.save_path:
+        os.makedirs(os.path.dirname(model_args.save_path), exist_ok=True)
         torch.save(
             {
                 "model_state_dict": model.state_dict(),
                 "training_args": training_args,
             },
-            args.save_path,
+            model_args.save_path,
         )
-        logger.info(f"Legacy model saved at {args.save_path}")
+        logger.info(f"Legacy model saved at {model_args.save_path}")
 
     logger.info("Training complete")
 
