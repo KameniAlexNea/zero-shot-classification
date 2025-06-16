@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger
-from transformers import AutoModel, BertPreTrainedModel
+from transformers import BertConfig, BertModel, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
 
@@ -32,7 +32,7 @@ class GliZNetOutput(ModelOutput):
 class GliZNetModel(BertPreTrainedModel):
     def __init__(
         self,
-        config,
+        config: BertConfig,
         projected_dim: int = None,
         dropout_rate: float = 0.1,
         similarity_metric: str = "bilinear",
@@ -43,15 +43,16 @@ class GliZNetModel(BertPreTrainedModel):
         # Store config for transformers compatibility
         self.config = config
         self.num_labels = getattr(
-            config, "num_labels", 2
+            config, "num_labels", 1
         )  # Default to binary classification
 
         # Initialize the encoder
-        self.bert = AutoModel.from_pretrained(
-            config._name_or_path
-            if hasattr(config, "_name_or_path")
-            else config.name_or_path
-        )
+        # self.bert = AutoModel.from_pretrained(
+        #     config._name_or_path
+        #     if hasattr(config, "_name_or_path")
+        #     else config.name_or_path
+        # )
+        self.bert = BertModel(config)
 
         # Model parameters
         self.hidden_size = projected_dim or self.config.hidden_size
@@ -68,7 +69,7 @@ class GliZNetModel(BertPreTrainedModel):
 
         # Similarity computation layers
         if similarity_metric == "bilinear":
-            self.bilinear = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
+            self.classifier = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
 
         # Loss function
         self.loss_fn = (
@@ -90,7 +91,7 @@ class GliZNetModel(BertPreTrainedModel):
         elif self.similarity_metric == "dot":
             sim = torch.mm(text_repr, label_repr.T)
         elif self.similarity_metric == "bilinear":
-            sim = self.bilinear(text_repr, label_repr)
+            sim = self.classifier(text_repr, label_repr)
         else:
             raise ValueError(f"Unsupported similarity metric: {self.similarity_metric}")
         return sim / self.temperature

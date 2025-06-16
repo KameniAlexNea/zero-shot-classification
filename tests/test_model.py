@@ -30,7 +30,7 @@ class TestGliZNetModel(unittest.TestCase):
         self.hidden_size = 8
         self.model = GliZNetModel.from_pretrained(
             "bert-base-uncased",
-            hidden_size=self.hidden_size,
+            projected_dim=self.hidden_size,
             similarity_metric="dot",
         )
         # replace encoder and align config + bypass proj

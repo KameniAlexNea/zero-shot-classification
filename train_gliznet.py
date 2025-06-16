@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
 
 import os
+
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 
+from dataclasses import dataclass, field
+from typing import Optional
+
+import numpy as np
 import torch
 from loguru import logger
-from transformers import EarlyStoppingCallback, Trainer, TrainingArguments, HfArgumentParser
+from sklearn.metrics import roc_auc_score
+from transformers import (
+    EarlyStoppingCallback,
+    HfArgumentParser,
+    Trainer,
+    TrainingArguments,
+)
 
 from gliznet.data import GliZNetDataset, collate_fn
 from gliznet.model import GliZNetModel
 from gliznet.tokenizer import GliZNETTokenizer, load_dataset
 
-from dataclasses import dataclass, field
-from typing import Optional
-import numpy as np
-from sklearn.metrics import roc_auc_score
 
 def compute_metrics(eval_pred):
     """
@@ -49,7 +56,11 @@ def compute_metrics(eval_pred):
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    f1 = (
+        (2 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
     accuracy = (tp + tn) / len(y_true) if len(y_true) > 0 else 0.0
     balanced_accuracy = (recall + specificity) / 2
 
@@ -74,21 +85,37 @@ def compute_metrics(eval_pred):
         "mcc": mcc,
     }
 
+
 def main():
     @dataclass
     class ModelArgs:
-        model_name: str = field(default="bert-base-uncased", metadata={"help": "Pretrained model name or path"})
-        projected_dim: int = field(default=256, metadata={"help": "Hidden size for projection layer"})
-        similarity_metric: str = field(default="bilinear", metadata={"help": "Similarity metric"})
-        max_labels: Optional[int] = field(default=50, metadata={"help": "Maximum number of labels"}) # 50 to avoid overflow
+        model_name: str = field(
+            default="sentence-transformers/all-MiniLM-L6-v2",
+            metadata={"help": "Pretrained model name or path"},
+        )
+        projected_dim: int = field(
+            default=256, metadata={"help": "Hidden size for projection layer"}
+        )
+        similarity_metric: str = field(
+            default="cosine",
+            metadata={"help": "Similarity metric: cosine, bilinear, dot"},
+        )
+        max_labels: Optional[int] = field(
+            default=50, metadata={"help": "Maximum number of labels"}
+        )  # 50 to avoid overflow
         shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
-        save_path: str = field(default="models/fzeronet_model.pt", metadata={"help": "Legacy model save path"})
+        save_path: str = field(
+            default="models/fzeronet_model.pt",
+            metadata={"help": "Legacy model save path"},
+        )
 
     parser = HfArgumentParser((ModelArgs, TrainingArguments))
     model_args, training_args = parser.parse_args_into_dataclasses()
 
     # Set device
-    device = "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
+    device = (
+        "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
+    )
     logger.info(f"Using device: {device}")
 
     # Load and prepare dataset

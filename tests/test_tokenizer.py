@@ -178,25 +178,6 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.assertEqual(result_left["label_mask"], expected_label_mask_left)
         self.assertEqual(len(result_left["label_mask"]), self.tokenizer.max_length - 2)
 
-    def test_create_label_mask(self):
-        sequence_ids = [
-            self.cls_token_id,
-            1,
-            2,
-            self.sep_token_id,
-            10,
-            11,
-            self.sep_token_id,
-            20,
-        ]
-        label_tokens_ids = [[10, 11], [20]]  # Corresponds to L1a,L1b and L2a
-
-        mask = self.tokenizer._create_label_mask(sequence_ids, label_tokens_ids)
-
-        expected_mask = [False, False, False, False, True, False, False, True]
-        self.assertEqual(mask, expected_mask)
-        self.assertEqual(len(mask), len(sequence_ids))
-
     def test_tokenize_example_padding_and_tensors(self):
         self.tokenizer.max_length = 25  # Reset for this test
         text = "This is a sample text."

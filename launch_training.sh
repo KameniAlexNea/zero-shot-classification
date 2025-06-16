@@ -1,5 +1,5 @@
 nohup uv run train_gliznet.py \
-    --model_name bert-base-uncased \
+    --model_name sentence-transformers/all-MiniLM-L6-v2 \
     --projected_dim 256 \
     --similarity_metric bilinear \
     --per_device_train_batch_size 32 \
