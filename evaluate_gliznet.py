@@ -50,8 +50,6 @@ class ModelEvaluator:
 
             model = model = GliZNetForSequenceClassification.from_pretrained(
                 self.config.model_name,
-                projected_dim=None,
-                similarity_metric="dot",
             )
             model.to(self.device)
             model.eval()

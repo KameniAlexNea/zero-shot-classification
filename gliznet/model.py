@@ -6,11 +6,7 @@ import torch.nn as nn
 from loguru import logger
 from transformers import AutoModel
 
-from .config import (
-    GliZNetConfig,
-    GliZNetOutput,
-    GliZNetPreTrainedModel,
-)
+from .config import GliZNetConfig, GliZNetOutput, GliZNetPreTrainedModel
 
 
 class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
@@ -38,7 +34,10 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         self.dropout = nn.Dropout(self.config.dropout_rate)
 
         # Projection layer
-        if self.projected_dim != self.model.config.hidden_size and self.projected_dim is not None:
+        if (
+            self.projected_dim != self.model.config.hidden_size
+            and self.projected_dim is not None
+        ):
             self.proj = nn.Linear(self.model.config.hidden_size, self.projected_dim)
         else:
             self.proj = nn.Identity()
