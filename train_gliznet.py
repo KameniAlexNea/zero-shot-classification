@@ -5,6 +5,7 @@ import os
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 
+import importlib
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -18,8 +19,13 @@ from transformers import (
 )
 
 from gliznet.data import GliZNetDataset, collate_fn, load_dataset
-from gliznet.model import GliZNetForSequenceClassification
+from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
+
+
+def get_transformers_class(class_name):
+    transformers_module = importlib.import_module("transformers")
+    return getattr(transformers_module, class_name)
 
 
 def seed_everything(seed: int = 42):
@@ -40,6 +46,10 @@ def main():
         model_name: str = field(
             default="sentence-transformers/all-MiniLM-L6-v2",
             metadata={"help": "Pretrained model name or path"},
+        )
+        model_class: str = field(
+            default="BertPreTrainedModel",
+            metadata={"help": "Model class to use"},
         )
         projected_dim: int = field(
             default=256, metadata={"help": "Hidden size for projection layer"}
@@ -93,7 +103,10 @@ def main():
     )
 
     # Initialize model
-    model = GliZNetForSequenceClassification.from_pretrained(
+    pretrained_cls = create_gli_znet_for_sequence_classification(
+        get_transformers_class(model_args.model_class)
+    )
+    model = pretrained_cls.from_pretrained(
         model_args.model_name,
         projected_dim=model_args.projected_dim,
         similarity_metric=model_args.similarity_metric,
