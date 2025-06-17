@@ -10,7 +10,7 @@ class GliZNetConfig(PretrainedConfig):
     dropout_rate: float = 0.1
     similarity_metric: str = "dot"  # 'dot' or 'bilinear'
     temperature: float = 1.0
-    model_type = "gli_z_net"
+    model_type = "gliznet"
 
     def __init__(
         self,

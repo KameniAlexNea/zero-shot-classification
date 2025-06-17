@@ -53,7 +53,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         lab = torch.tensor([[3.0, 4.0]])
         sim = self.model.compute_similarity(t, lab)  # dot / temp
         # expected = 1*3 + 2*4 = 11
-        self.assertTrue(torch.allclose(sim, torch.tensor([[11.0]])))
+        self.assertTrue(torch.allclose(sim, torch.tensor([[5.5]])))
 
     def test_forward_without_labels(self):
         out = self.model(

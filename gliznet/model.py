@@ -8,7 +8,32 @@ from loguru import logger
 from transformers import PreTrainedModel, AutoModel
 from .configuration_gliznet import GliZNetConfig
 from transformers.modeling_outputs import ModelOutput
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+from transformers.models.auto.modeling_auto import MODEL_MAPPING
 
+class GliZNetPreTrainedModel(PreTrainedModel):
+    config_class = GliZNetConfig
+    base_model_prefix = "transformer"
+    supports_gradient_checkpointing = True
+    _supports_sdpa = True
+
+    def _init_weights(self, module):
+        """Initialize the weights"""
+        if isinstance(module, nn.Linear):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        elif hasattr(module, "bias") and module.bias is not None:
+            module.bias.data.zero_()
 
 @dataclass
 class GliZNetOutput(ModelOutput):
@@ -29,7 +54,7 @@ class GliZNetOutput(ModelOutput):
     hidden_states: Optional[torch.FloatTensor] = None
 
 
-class GliZNetForSequenceClassification(PreTrainedModel):
+class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
     # Associate this model with the custom config class
     config_class = GliZNetConfig
     base_model_prefix = "transformer"
@@ -39,8 +64,8 @@ class GliZNetForSequenceClassification(PreTrainedModel):
         config: GliZNetConfig,
     ):
         super().__init__(config)
-        # load any pretrained transformer model
-        self.transformer = AutoModel.from_config(config)
+        # load any pretrained transformer model and alias for backward compatibility
+        self.transformer = AutoModel.from_config(config=config)
         self.config = config
 
         self.num_labels = getattr(
@@ -111,7 +136,7 @@ class GliZNetForSequenceClassification(PreTrainedModel):
         batch_size = input_ids.size(0)
 
         # Get encoder outputs
-        encoder_outputs = self.transformer(
+        encoder_outputs = self.bert(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -210,3 +235,9 @@ class GliZNetForSequenceClassification(PreTrainedModel):
                 )
                 results.append(probs.cpu().view(-1).numpy().tolist())
         return results
+
+# Step 1: Register your config class with a unique model type name
+CONFIG_MAPPING.register("gliznet", GliZNetConfig)
+
+# Step 2: Register your model class
+MODEL_MAPPING.register(GliZNetConfig, GliZNetPreTrainedModel)
