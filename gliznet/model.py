@@ -24,7 +24,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
     ):
         super().__init__(config)
         # load any pretrained transformer model and alias for backward compatibility
-        self.model = AutoModel.from_config(config=config)
+        self.model = AutoModel.from_pretrained(config._name_or_path)
         self.config = config
 
         self.num_labels = getattr(
@@ -38,7 +38,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         self.dropout = nn.Dropout(self.config.dropout_rate)
 
         # Projection layer
-        if self.projected_dim != self.model.config.hidden_size:
+        if self.projected_dim != self.model.config.hidden_size and self.projected_dim is not None:
             self.proj = nn.Linear(self.model.config.hidden_size, self.projected_dim)
         else:
             self.proj = nn.Identity()

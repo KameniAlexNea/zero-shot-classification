@@ -18,13 +18,13 @@ from gliznet.tokenizer import GliZNETTokenizer
 class EvaluationConfig:
     """Configuration for evaluation."""
 
-    model_path: str = "results/checkpoint-3228"
-    model_name: str = "results/checkpoint-3228"
+    model_path: str = "sentence-transformers/all-MiniLM-L6-v2"
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20
     threshold: float = 0.5
-    results_dir: str = "results/evaluation"
+    results_dir: str = "results/evaluation_test"
 
 
 class ModelEvaluator:
@@ -50,7 +50,7 @@ class ModelEvaluator:
 
             model = model = GliZNetForSequenceClassification.from_pretrained(
                 self.config.model_name,
-                projected_dim=256,
+                projected_dim=None,
                 similarity_metric="dot",
             )
             model.to(self.device)
