@@ -6,7 +6,7 @@ import torch.nn as nn
 from loguru import logger
 from transformers import AutoModel
 
-from .configuration_gliznet import (
+from .config import (
     GliZNetConfig,
     GliZNetOutput,
     GliZNetPreTrainedModel,
