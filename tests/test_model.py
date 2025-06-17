@@ -34,7 +34,9 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
             similarity_metric="dot",
         )
         # replace encoder and align config + bypass proj
-        self.model.model = DummyEncoder(self.hidden_size)
+        setattr(
+            self.model, self.model.base_model_prefix, DummyEncoder(self.hidden_size)
+        )
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
         self.model.proj = nn.Identity()

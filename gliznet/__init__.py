@@ -11,12 +11,3 @@ Built the model, which will:
 The focus now is implementing the model, ensuring clear code, while leveraging the tokenizer for zero-shot classification.
 
 """
-from .config import GliZNetConfig
-from .model import GliZNetForSequenceClassification
-
-
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-from transformers.models.auto.modeling_auto import MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING
-
-CONFIG_MAPPING.register("gliznet", GliZNetConfig)
-MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING.register(GliZNetConfig, GliZNetForSequenceClassification)

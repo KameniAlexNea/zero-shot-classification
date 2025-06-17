@@ -1,32 +1,64 @@
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from loguru import logger
-from transformers import AutoModel, PreTrainedModel, AutoConfig
+from transformers import AutoModel, BertConfig, BertPreTrainedModel
+from transformers.modeling_outputs import ModelOutput
 
-from .config import GliZNetConfig, GliZNetOutput
+
+@dataclass
+class GliZNetOutput(ModelOutput):
+    """
+    Output type of [`GliZNetForSequenceClassification`].
+
+    Args:
+        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+            Classification loss.
+        logits (`list[torch.FloatTensor]`):
+            Classification scores for each sample in the batch.
+        hidden_states (`torch.FloatTensor` of shape `(batch_size, hidden_size)`):
+            Hidden states of the model at the output of the encoder (CLS token representations).
+    """
+
+    loss: Optional[torch.FloatTensor] = None
+    logits: List[torch.FloatTensor] = None
+    hidden_states: Optional[torch.FloatTensor] = None
 
 
-class GliZNetForSequenceClassification(PreTrainedModel):
-    # Associate this model with the custom config class
-    config_class = GliZNetConfig
+class GliZNetForSequenceClassification(BertPreTrainedModel):
 
     def __init__(
         self,
-        config: GliZNetConfig,
+        config: BertConfig,
+        projected_dim: Optional[int] = None,
+        similarity_metric: str = "dot",
+        temperature: float = 1.0,
+        dropout_rate: float = 0.1,
     ):
         super().__init__(config)
         # load any pretrained transformer model and alias for backward compatibility
-        self.model = AutoModel.from_pretrained(config.base_model_name)
+        setattr(self, self.base_model_prefix, AutoModel.from_config(config=config))
+
+        if not hasattr(config, "projected_dim"): # for new config
+            config.projected_dim = projected_dim
+            config.similarity_metric = similarity_metric
+            config.temperature = temperature
+            config.dropout_rate = dropout_rate
+        else: # for backward compatibility
+            projected_dim = config.projected_dim
+            similarity_metric = config.similarity_metric
+            temperature = config.temperature
+            dropout_rate = config.dropout_rate
         self.config = config
 
         # Model parameters
-        self.projected_dim = config.projected_dim
-        self.similarity_metric = config.similarity_metric
-        self.temperature = config.temperature
-        self.dropout = nn.Dropout(config.dropout_rate)
+        self.projected_dim = projected_dim
+        self.similarity_metric = similarity_metric
+        self.temperature = temperature
+        self.dropout = nn.Dropout(dropout_rate)
 
         # Projection layer
         if (
@@ -41,7 +73,7 @@ class GliZNetForSequenceClassification(PreTrainedModel):
         if self.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(self.projected_dim, self.projected_dim, 1)
 
-        self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+        self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -54,6 +86,13 @@ class GliZNetForSequenceClassification(PreTrainedModel):
         else:
             raise ValueError(f"Unsupported similarity metric: {self.similarity_metric}")
         return sim
+
+    def backbone_forward(self, *args, **kwargs):
+        """
+        Forward pass through the backbone model.
+        This method is used to ensure compatibility with the HuggingFace interface.
+        """
+        return getattr(self, self.base_model_prefix)(*args, **kwargs)
 
     def forward(
         self,
@@ -88,7 +127,7 @@ class GliZNetForSequenceClassification(PreTrainedModel):
         batch_size = input_ids.size(0)
 
         # Get encoder outputs
-        encoder_outputs = self.model(
+        encoder_outputs = self.backbone_forward(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
@@ -124,9 +163,7 @@ class GliZNetForSequenceClassification(PreTrainedModel):
             else:
                 sample_logits = torch.zeros((0,), device=device)
 
-            outputs_logits.append(
-                sample_logits.reshape(1, -1)
-            )
+            outputs_logits.append(sample_logits.reshape(1, -1))
 
             if labels is not None and sample_logits.numel() > 0:
                 sample_labels = labels[i]
@@ -140,7 +177,9 @@ class GliZNetForSequenceClassification(PreTrainedModel):
             total_logits = torch.cat(all_logits)
             total_labels = torch.cat(all_targets)
             loss_values: torch.Tensor = self.loss_fn(total_logits, total_labels)
-            loss = loss_values.mean(dim=0, keepdim=True)  # Average loss across all valid labels
+            loss = loss_values.mean(
+                dim=0, keepdim=True
+            )  # Average loss across all valid labels
         elif self.training:
             logger.warning(
                 "No valid labels found in batch while training. Loss will not be computed."

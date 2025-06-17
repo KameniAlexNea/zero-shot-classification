@@ -81,10 +81,15 @@ def main():
     tokenizer = GliZNETTokenizer.from_pretrained(model_args.model_name)
 
     # Create datasets
-    train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels)
+    train_dataset = GliZNetDataset(
+        hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels
+    )
 
     val_dataset = GliZNetDataset(
-        hf_dataset=val_data, tokenizer=tokenizer, shuffle_labels=False, max_labels=model_args.max_labels
+        hf_dataset=val_data,
+        tokenizer=tokenizer,
+        shuffle_labels=False,
+        max_labels=model_args.max_labels,
     )
 
     # Initialize model
