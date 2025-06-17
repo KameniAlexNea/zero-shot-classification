@@ -4,15 +4,14 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from loguru import logger
-from transformers import AutoModel
+from transformers import AutoModel, PreTrainedModel, AutoConfig
 
-from .config import GliZNetConfig, GliZNetOutput, GliZNetPreTrainedModel
+from .config import GliZNetConfig, GliZNetOutput
 
 
-class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
+class GliZNetForSequenceClassification(PreTrainedModel):
     # Associate this model with the custom config class
     config_class = GliZNetConfig
-    base_model_prefix = "model"
 
     def __init__(
         self,
@@ -20,30 +19,26 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
     ):
         super().__init__(config)
         # load any pretrained transformer model and alias for backward compatibility
-        self.model = AutoModel.from_pretrained(config._name_or_path)
+        self.model = AutoModel.from_pretrained(config.base_model_name)
         self.config = config
 
-        self.num_labels = getattr(
-            config, "num_labels", 1
-        )  # Default to binary classification
-
         # Model parameters
-        self.projected_dim = self.config.projected_dim
-        self.similarity_metric = self.config.similarity_metric
-        self.temperature = self.config.temperature
-        self.dropout = nn.Dropout(self.config.dropout_rate)
+        self.projected_dim = config.projected_dim
+        self.similarity_metric = config.similarity_metric
+        self.temperature = config.temperature
+        self.dropout = nn.Dropout(config.dropout_rate)
 
         # Projection layer
         if (
-            self.projected_dim != self.model.config.hidden_size
+            self.projected_dim != self.config.hidden_size
             and self.projected_dim is not None
         ):
-            self.proj = nn.Linear(self.model.config.hidden_size, self.projected_dim)
+            self.proj = nn.Linear(self.config.hidden_size, self.projected_dim)
         else:
             self.proj = nn.Identity()
 
         # Similarity computation layers
-        if self.config.similarity_metric == "bilinear":
+        if self.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(self.projected_dim, self.projected_dim, 1)
 
         self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
@@ -130,7 +125,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                 sample_logits = torch.zeros((0,), device=device)
 
             outputs_logits.append(
-                sample_logits.reshape(1, -1)  # Reshape to (1, num_labels)
+                sample_logits.reshape(1, -1)
             )
 
             if labels is not None and sample_logits.numel() > 0:
