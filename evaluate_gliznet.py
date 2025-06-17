@@ -10,7 +10,7 @@ from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 
 from gliznet.data import load_dataset
-from gliznet.model import GliZNetModel
+from gliznet.model import GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 
 
@@ -41,14 +41,14 @@ class ModelEvaluator:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(self.config.device)
 
-    def _load_models(self) -> Tuple[GliZNetModel, GliZNETTokenizer]:
+    def _load_models(self) -> Tuple[GliZNetForSequenceClassification, GliZNETTokenizer]:
         """Load model and tokenizer from checkpoint."""
         logger.info(f"Loading model from {self.config.model_path} on {self.device}")
 
         try:
             tokenizer = GliZNETTokenizer.from_pretrained(self.config.model_name)
 
-            model = model = GliZNetModel.from_pretrained(
+            model = model = GliZNetForSequenceClassification.from_pretrained(
                 self.config.model_name,
                 projected_dim=256,
                 similarity_metric="dot",

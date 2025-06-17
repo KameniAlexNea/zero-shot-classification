@@ -11,7 +11,7 @@ from typing import Dict, List
 import torch
 from loguru import logger
 
-from gliznet.model import GliZNetModel
+from gliznet.model import GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 
 
@@ -49,7 +49,7 @@ class FZeroNetInference:
         self.tokenizer = GliZNETTokenizer(model_name=model_name)
 
         # Initialize model
-        self.model = GliZNetModel(model_name=model_name)
+        self.model = GliZNetForSequenceClassification(model_name=model_name)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(self.device)
         self.model.eval()

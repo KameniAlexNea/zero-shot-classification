@@ -18,7 +18,7 @@ from transformers import (
 )
 
 from gliznet.data import GliZNetDataset, collate_fn, load_dataset
-from gliznet.model import GliZNetModel
+from gliznet.model import GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 
 
@@ -87,7 +87,7 @@ def main():
     )
 
     # Initialize model
-    model = GliZNetModel.from_pretrained(
+    model = GliZNetForSequenceClassification.from_pretrained(
         model_args.model_name,
         projected_dim=model_args.projected_dim,
         similarity_metric=model_args.similarity_metric,

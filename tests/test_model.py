@@ -4,7 +4,7 @@ from collections import namedtuple
 import torch
 import torch.nn as nn
 
-from gliznet.model import GliZNetModel
+from gliznet.model import GliZNetForSequenceClassification
 
 
 class DummyEncoder(nn.Module):
@@ -25,10 +25,10 @@ class DummyEncoder(nn.Module):
         return last_hidden_state
 
 
-class TestGliZNetModel(unittest.TestCase):
+class TestGliZNetForSequenceClassification(unittest.TestCase):
     def setUp(self):
         self.hidden_size = 8
-        self.model = GliZNetModel.from_pretrained(
+        self.model = GliZNetForSequenceClassification.from_pretrained(
             "bert-base-uncased",
             projected_dim=self.hidden_size,
             similarity_metric="dot",

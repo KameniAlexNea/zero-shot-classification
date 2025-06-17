@@ -5,14 +5,15 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from loguru import logger
-from transformers import BertConfig, BertModel, BertPreTrainedModel
+from transformers import PreTrainedModel, AutoModel
+from .configuration_gliznet import GliZNetConfig
 from transformers.modeling_outputs import ModelOutput
 
 
 @dataclass
 class GliZNetOutput(ModelOutput):
     """
-    Output type of [`GliZNetModel`].
+    Output type of [`GliZNetForSequenceClassification`].
 
     Args:
         loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
@@ -28,41 +29,42 @@ class GliZNetOutput(ModelOutput):
     hidden_states: Optional[torch.FloatTensor] = None
 
 
-class GliZNetModel(BertPreTrainedModel):
+class GliZNetForSequenceClassification(PreTrainedModel):
+    # Associate this model with the custom config class
+    config_class = GliZNetConfig
+    base_model_prefix = "transformer"
+
     def __init__(
         self,
-        config: BertConfig,
-        projected_dim: int = None,
-        dropout_rate: float = 0.1,
-        similarity_metric: str = "dot",
-        temperature: float = 1.0,
+        config: GliZNetConfig,
     ):
         super().__init__(config)
-
-        # Store config for transformers compatibility
+        # load any pretrained transformer model
+        self.transformer = AutoModel.from_config(config)
         self.config = config
+
         self.num_labels = getattr(
             config, "num_labels", 1
         )  # Default to binary classification
 
-        self.bert = BertModel(config)
+        # alias for transformer outputs
+        # self.transformer holds the backbone model
 
         # Model parameters
-        self.hidden_size = projected_dim or self.config.hidden_size
-        self.similarity_metric = similarity_metric
-        self.temperature = temperature
-        self.dropout = nn.Dropout(dropout_rate)
+        self.projected_dim = self.config.projected_dim
+        self.similarity_metric = self.config.similarity_metric
+        self.temperature = self.config.temperature
+        self.dropout = nn.Dropout(self.config.dropout_rate)
 
         # Projection layer
-        self.proj = (
-            nn.Linear(self.config.hidden_size, self.hidden_size)
-            if self.hidden_size != self.config.hidden_size
-            else nn.Identity()
-        )
+        if self.projected_dim != self.transformer.config.hidden_size:
+            self.proj = nn.Linear(self.transformer.config.hidden_size, self.projected_dim)
+        else:
+            self.proj = nn.Identity()
 
         # Similarity computation layers
-        if similarity_metric == "bilinear":
-            self.classifier = nn.Bilinear(self.hidden_size, self.hidden_size, 1)
+        if self.config.similarity_metric == "bilinear":
+            self.classifier = nn.Bilinear(self.projected_dim, self.projected_dim, 1)
 
         self.loss_fn = nn.BCEWithLogitsLoss()
 
@@ -103,13 +105,13 @@ class GliZNetModel(BertPreTrainedModel):
         )
 
         if label_mask is None:
-            raise ValueError("label_mask is required for GliZNetModel")
+            raise ValueError("label_mask is required for GliZNetForSequenceClassification")
 
         device = input_ids.device
         batch_size = input_ids.size(0)
 
         # Get encoder outputs
-        encoder_outputs = self.bert(
+        encoder_outputs = self.transformer(
             input_ids=input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
