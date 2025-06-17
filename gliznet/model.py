@@ -5,11 +5,13 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from loguru import logger
-from transformers import PreTrainedModel, AutoModel
-from .configuration_gliznet import GliZNetConfig
+from transformers import AutoModel, PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 from transformers.models.auto.modeling_auto import MODEL_MAPPING
+
+from .configuration_gliznet import GliZNetConfig
+
 
 class GliZNetPreTrainedModel(PreTrainedModel):
     config_class = GliZNetConfig
@@ -34,6 +36,7 @@ class GliZNetPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
         elif hasattr(module, "bias") and module.bias is not None:
             module.bias.data.zero_()
+
 
 @dataclass
 class GliZNetOutput(ModelOutput):
@@ -83,7 +86,9 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
         # Projection layer
         if self.projected_dim != self.transformer.config.hidden_size:
-            self.proj = nn.Linear(self.transformer.config.hidden_size, self.projected_dim)
+            self.proj = nn.Linear(
+                self.transformer.config.hidden_size, self.projected_dim
+            )
         else:
             self.proj = nn.Identity()
 
@@ -130,7 +135,9 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         )
 
         if label_mask is None:
-            raise ValueError("label_mask is required for GliZNetForSequenceClassification")
+            raise ValueError(
+                "label_mask is required for GliZNetForSequenceClassification"
+            )
 
         device = input_ids.device
         batch_size = input_ids.size(0)
@@ -235,6 +242,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                 )
                 results.append(probs.cpu().view(-1).numpy().tolist())
         return results
+
 
 # Step 1: Register your config class with a unique model type name
 CONFIG_MAPPING.register("gliznet", GliZNetConfig)

@@ -77,10 +77,6 @@ class GliZNetDataset(Dataset):
     def __len__(self) -> int:
         return self._length
 
-    def __getitems__(self, indices: List[int]) -> List[Dict[str, torch.Tensor]]:
-        """Get multiple items from the dataset."""
-        return collate_fn([self.__getitem__(idx) for idx in indices])
-
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """Get a single item from the dataset."""
 

@@ -1,5 +1,6 @@
 from transformers import PretrainedConfig
 
+
 class GliZNetConfig(PretrainedConfig):
     """
     Configuration for `GliZNetForSequenceClassification` to support any HuggingFace transformer model.
