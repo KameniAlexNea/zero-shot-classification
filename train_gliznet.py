@@ -53,12 +53,13 @@ def main():
         )  # 50 to avoid overflow
         shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
         save_path: str = field(
-            default="models/fzeronet_model.pt",
+            default=None,
             metadata={"help": "Legacy model save path"},
         )
 
     parser = HfArgumentParser((ModelArgs, TrainingArguments))
-    model_args, training_args = parser.parse_args_into_dataclasses()
+    args: tuple[ModelArgs, TrainingArguments] = parser.parse_args_into_dataclasses()
+    model_args, training_args = args
 
     # Set device
     device = (
@@ -80,10 +81,10 @@ def main():
     tokenizer = GliZNETTokenizer.from_pretrained(model_args.model_name)
 
     # Create datasets
-    train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer)
+    train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels)
 
     val_dataset = GliZNetDataset(
-        hf_dataset=val_data, tokenizer=tokenizer, shuffle_labels=False
+        hf_dataset=val_data, tokenizer=tokenizer, shuffle_labels=False, max_labels=model_args.max_labels
     )
 
     # Initialize model
@@ -118,7 +119,7 @@ def main():
     trainer.train()
 
     # Save the final model
-    trainer.save_model(training_args.output_dir)
+    # trainer.save_model(training_args.output_dir)
 
     # Also save in the legacy format for compatibility
     if model_args.save_path:

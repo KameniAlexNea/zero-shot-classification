@@ -18,8 +18,8 @@ from gliznet.tokenizer import GliZNETTokenizer
 class EvaluationConfig:
     """Configuration for evaluation."""
 
-    model_path: str = "sentence-transformers/all-MiniLM-L6-v2"
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    model_path: str = "results/best_model/model"
+    model_name: str = "results/best_model/model"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20

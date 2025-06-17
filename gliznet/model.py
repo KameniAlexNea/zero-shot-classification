@@ -46,7 +46,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         if self.config.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(self.projected_dim, self.projected_dim, 1)
 
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -136,7 +136,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             if labels is not None and sample_logits.numel() > 0:
                 sample_labels = labels[i]
                 if sample_labels.numel() == sample_logits.numel():
-                    all_logits.append(sample_logits)
+                    all_logits.append(sample_logits.view(-1, 1))
                     all_targets.append(sample_labels.view(-1, 1))
 
         # Compute loss
@@ -144,7 +144,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         if all_logits:
             total_logits = torch.cat(all_logits)
             total_labels = torch.cat(all_targets)
-            loss = self.loss_fn(total_logits, total_labels)
+            loss_values: torch.Tensor = self.loss_fn(total_logits, total_labels)
+            loss = loss_values.mean(dim=0, keepdim=True)  # Average loss across all valid labels
         elif self.training:
             logger.warning(
                 "No valid labels found in batch while training. Loss will not be computed."
