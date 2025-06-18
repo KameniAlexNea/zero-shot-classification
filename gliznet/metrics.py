@@ -13,11 +13,15 @@ from sklearn.metrics import (
 def compute_metrics(eval_pred):
     """Compute metrics for evaluation."""
     logits, labels = eval_pred
-    logits: list[np.ndarray] = [m.reshape(-1) for j in logits for i in j if isinstance(i, list) for m in i]
-    labels: list[np.ndarray] = [m.reshape(-1) for j in labels for i in j if isinstance(i, list) for m in i]
+    logits: list[np.ndarray] = [
+        m.reshape(-1) for j in logits for i in j if isinstance(i, list) for m in i
+    ]
+    labels: list[np.ndarray] = [
+        m.reshape(-1) for j in labels for i in j if isinstance(i, list) for m in i
+    ]
 
     logits = np.concat(logits)
-    labels = np.concat(logits)
+    labels = np.concat(labels)
 
     logits = 1 / (1 + np.exp(-logits))
 

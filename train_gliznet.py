@@ -18,7 +18,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from gliznet.data import collate_fn, load_dataset, add_tokenized_function
+from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer

@@ -10,9 +10,8 @@ from typing import Dict, List
 
 import datasets
 import torch
-from torch.utils.data import Dataset
 
-from gliznet.tokenizer import GliZNETTokenizer
+from .tokenizer import GliZNETTokenizer
 
 
 def load_dataset(
@@ -44,6 +43,17 @@ def load_dataset(
     return ds.select_columns(["text", "labels_text", "labels_int"])
 
 
+def limit_labels(
+    shuffle_labels: bool, labels_text: List[str], labels_int: List[int], max_labels: int
+):
+    combined = list(zip(labels_text, labels_int))
+    if shuffle_labels:
+        random.shuffle(combined)
+    labels_text, labels_int = zip(*combined[:max_labels])
+    labels_int = list(labels_int)  # Convert back to list
+    return labels_text, labels_int
+
+
 def add_tokenized_function(
     hf_dataset: datasets.Dataset,
     tokenizer: GliZNETTokenizer,
@@ -63,12 +73,16 @@ def add_tokenized_function(
         labels_int = examples[labels_int_column]
 
         # randomly shuffle labels if they are more than max_labels
-        if isinstance(labels_text, list) and len(labels_text) > max_labels:
-            combined = list(zip(labels_text, labels_int))
-            if shuffle_labels:
-                random.shuffle(combined)
-            labels_text, labels_int = zip(*combined[:max_labels])
-            labels_int = list(labels_int)  # Convert back to list
+        if labels_text and isinstance(labels_text[0], list):
+            all_labels = [
+                limit_labels(shuffle_labels, ltext, lint, max_labels)
+                for ltext, lint in zip(labels_text, labels_int)
+            ]
+            labels_text, labels_int = zip(*all_labels)
+        else:
+            labels_text, labels_int = limit_labels(
+                shuffle_labels, labels_text, labels_int, max_labels
+            )
 
         # Tokenize the example
         tokenized: dict[str, torch.Tensor] = tokenizer(
@@ -79,8 +93,8 @@ def add_tokenized_function(
         )
 
         # Convert labels to tensor
-        if isinstance(labels_int, list):
-            labels = torch.tensor(labels_int, dtype=torch.float32)
+        if isinstance(labels_int[0], list):
+            labels = [torch.tensor([lint], dtype=torch.float32) for lint in labels_int]
         else:
             labels = torch.tensor([labels_int], dtype=torch.float32)
 
@@ -89,7 +103,7 @@ def add_tokenized_function(
             "input_ids": tokenized["input_ids"].squeeze(0),
             "attention_mask": tokenized["attention_mask"].squeeze(0),
             "label_mask": tokenized["label_mask"].squeeze(0),
-            "labels": labels.reshape(1, -1),  # Ensure labels are 2D
+            "labels": labels,
         }
 
         return result
@@ -97,82 +111,6 @@ def add_tokenized_function(
     return hf_dataset.with_transform(
         tokenize_function,
     )
-
-
-class GliZNetDataset(Dataset):
-    """
-    PyTorch Dataset for GliZNet that handles tokenization and batching efficiently.
-    """
-
-    def __init__(
-        self,
-        hf_dataset: datasets.Dataset,
-        tokenizer: GliZNETTokenizer,
-        text_column: str = "text",
-        labels_text_column: str = "labels_text",
-        labels_int_column: str = "labels_int",
-        max_labels=50,
-        shuffle_labels: bool = True,
-    ):
-        self.hf_dataset = hf_dataset
-        self.tokenizer = tokenizer
-        self.text_column = text_column
-        self.labels_text_column = labels_text_column
-        self.labels_int_column = labels_int_column
-        self.max_labels = max_labels
-        self.shuffle_labels = shuffle_labels
-
-        # Cache the dataset length
-        self._length = len(hf_dataset)
-
-        # Create indices for shuffling
-        self.indices = list(range(self._length))
-        self.current_epoch = 0
-
-    def __len__(self) -> int:
-        return self._length
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Get a single item from the dataset."""
-
-        # Get the raw example
-        example = self.hf_dataset[idx]
-
-        text = example[self.text_column]
-        labels_text = example[self.labels_text_column]
-        labels_int = example[self.labels_int_column]
-
-        # randomly shuffle labels if they are more than max_labels
-        if isinstance(labels_text, list) and len(labels_text) > self.max_labels:
-            combined = list(zip(labels_text, labels_int))
-            if self.shuffle_labels:
-                random.shuffle(combined)
-            labels_text, labels_int = zip(*combined[: self.max_labels])
-            labels_int = list(labels_int)  # Convert back to list
-
-        # Tokenize the example
-        tokenized: dict[str, torch.Tensor] = self.tokenizer(
-            text,
-            labels_text,
-            return_tensors="pt",
-            pad=True,
-        )
-
-        # Convert labels to tensor
-        if isinstance(labels_int, list):
-            labels = torch.tensor(labels_int, dtype=torch.float32)
-        else:
-            labels = torch.tensor([labels_int], dtype=torch.float32)
-
-        # Return without adding batch dimension (DataLoader will handle batching)
-        result = {
-            "input_ids": tokenized["input_ids"].squeeze(0),
-            "attention_mask": tokenized["attention_mask"].squeeze(0),
-            "label_mask": tokenized["label_mask"].squeeze(0),
-            "labels": labels.reshape(1, -1),  # Ensure labels are 2D
-        }
-
-        return result
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
