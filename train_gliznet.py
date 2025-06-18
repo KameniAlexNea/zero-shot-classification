@@ -9,8 +9,18 @@ import importlib
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
 import torch
 from loguru import logger
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    f1_score,
+    matthews_corrcoef,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from transformers import (
     EarlyStoppingCallback,
     HfArgumentParser,
@@ -21,6 +31,46 @@ from transformers import (
 from gliznet.data import GliZNetDataset, collate_fn, load_dataset
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
+
+
+def compute_metrics(eval_pred):
+    """Compute metrics for evaluation."""
+    logits, labels = eval_pred
+    logits: list[np.ndarray] = sum(
+        [i for j in logits for i in j if isinstance(i, list)], start=[]
+    )
+    labels: list[np.ndarray] = sum(
+        [i for j in labels for i in j if isinstance(i, list)], start=[]
+    )
+
+    logits = np.concat([i.reshape(-1) for i in logits])
+    labels = np.concat([i.reshape(-1) for i in labels])
+
+    logits = 1 / (1 + np.exp(-logits))
+
+    # Calculate accuracy, precision, recall and f1-score
+    predictions = (logits > 0.5).astype(int)
+
+    # Basic metrics
+    accuracy = accuracy_score(labels, predictions)
+    precision = precision_score(labels, predictions, zero_division=0)
+    recall = recall_score(labels, predictions, zero_division=0)
+    f1 = f1_score(labels, predictions, zero_division=0)
+
+    # Advanced metrics
+    metrics = {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
+
+    # Only calculate ROC AUC when both classes are present
+    if len(np.unique(labels)) > 1:
+        try:
+            metrics["roc_auc"] = roc_auc_score(labels, logits)
+            metrics["avg_precision"] = average_precision_score(labels, logits)
+            metrics["matthews_corrcoef"] = matthews_corrcoef(labels, predictions)
+        except ValueError:
+            # In case of error, skip these metrics
+            pass
+
+    return metrics
 
 
 def get_transformers_class(class_name):
@@ -65,6 +115,10 @@ def main():
         save_path: str = field(
             default=None,
             metadata={"help": "Legacy model save path"},
+        )
+        early_stopping_patience: int = field(
+            default=3,
+            metadata={"help": "Early stopping patience"},
         )
 
     parser = HfArgumentParser((ModelArgs, TrainingArguments))
@@ -123,8 +177,12 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collate_fn,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
-        # compute_metrics=compute_metrics,
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=model_args.early_stopping_patience
+            )
+        ],
+        compute_metrics=compute_metrics,
     )
 
     # evaluate the model before training

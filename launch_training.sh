@@ -1,5 +1,6 @@
 nohup uv run train_gliznet.py \
     --model_name sentence-transformers/all-MiniLM-L6-v2 \
+    --run_name "gliznet_training" \
     --projected_dim 256 \
     --similarity_metric dot \
     --max_labels 20 \
@@ -11,19 +12,19 @@ nohup uv run train_gliznet.py \
     --logging_steps 50 \
     --warmup_steps 10 \
     --weight_decay 1e-4 \
-    --run_name "gliznet_training" \
     --eval_steps 50 \
     --save_steps 50 \
     --eval_strategy epoch \
     --save_strategy epoch \
+    --save_total_limit 2 \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
     --dataloader_pin_memory \
     --dataloader_num_workers 4 \
     --remove_unused_columns False \
-    --do_train \
-    --do_eval \
     --report_to wandb \
     --lr_scheduler_type cosine \
+    --fp16 \
+    --eval_do_concat_batches False \
     --data_seed 42 \
     &> nohup.out &
