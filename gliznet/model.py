@@ -195,7 +195,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 )
 
             # Get CLS token representations for hidden states
-            cls_hidden_states = hidden_proj[:, 0]  # (batch_size, hidden_size)
+            cls_hidden_states = (
+                None  # hidden_proj[:, 0]  # (batch_size, hidden_size) > removed
+            )
 
             if not return_dict:
                 output = (outputs_logits, cls_hidden_states)
