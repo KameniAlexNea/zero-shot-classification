@@ -62,28 +62,26 @@ class GliZNETTokenizer:
         allowed = self.max_length - reserve
         return text_tokens[: max(self.min_text_token, allowed)]
 
-    def _pad_and_mask(
-        self, token_ids: List[int], label_mask: List[bool]
-    ) -> Dict[str, Any]:
+    def _pad_and_mask(self, token_ids: List[int], lmask: List[bool]) -> Dict[str, Any]:
         side = getattr(self.tokenizer, "padding_side", "right")
         pad_len = self.max_length - len(token_ids)
         if side == "left":
             input_ids = [self.pad_token_id] * pad_len + token_ids
             attention_mask = [0] * pad_len + [1] * len(token_ids)
-            label_mask = [False] * pad_len + label_mask
+            lmask = [False] * pad_len + lmask
         else:
             input_ids = token_ids + [self.pad_token_id] * pad_len
             attention_mask = [1] * len(token_ids) + [0] * pad_len
-            label_mask = label_mask + [False] * pad_len
-        if len(label_mask) > self.max_length:
+            lmask = lmask + [False] * pad_len
+        if len(lmask) > self.max_length:
             raise ValueError(
-                f"Label mask length {len(label_mask)} exceeds max length {self.max_length}. Please check your input."
+                f"Label mask length {len(lmask)} exceeds max length {self.max_length}. Please check your input."
                 + self.decode_sequence(input_ids)
             )
         return {
             "input_ids": input_ids[: self.max_length],
             "attention_mask": attention_mask[: self.max_length],
-            "label_mask": label_mask[: self.max_length],
+            "lmask": lmask[: self.max_length],
         }
 
     def _batch_tokenize(
@@ -120,16 +118,16 @@ class GliZNETTokenizer:
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
-        token_ids, label_mask = self._build_sequence(text_tokens, label_tokens)
+        token_ids, lmask = self._build_sequence(text_tokens, label_tokens)
 
         if pad:
-            result = self._pad_and_mask(token_ids, label_mask)
+            result = self._pad_and_mask(token_ids, lmask)
         else:
             attention_mask = [1] * len(token_ids)
             result = {
                 "input_ids": token_ids,
                 "attention_mask": attention_mask,
-                "label_mask": label_mask,
+                "lmask": lmask,
             }
 
         if return_tensors == "pt":
@@ -158,13 +156,13 @@ class GliZNETTokenizer:
             result = {
                 "input_ids": [r["input_ids"] for r in padded_results],
                 "attention_mask": [r["attention_mask"] for r in padded_results],
-                "label_mask": [r["label_mask"] for r in padded_results],
+                "lmask": [r["lmask"] for r in padded_results],
             }
         else:
             result = {
                 "input_ids": token_ids,
                 "attention_mask": [[1] * len(ids) for ids in token_ids],
-                "label_mask": label_masks,
+                "lmask": label_masks,
             }
         if return_tensors == "pt":
             result.update(self._to_tensors(result))
@@ -196,12 +194,12 @@ class GliZNETTokenizer:
     def _to_tensors(self, results: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """
         Convert the lists in results to torch tensors:
-        input_ids, attention_mask -> long; label_mask -> bool.
+        input_ids, attention_mask -> long; lmask -> bool.
         """
         return {
             k: torch.tensor(
                 results[k],
-                dtype=torch.bool if k == "label_mask" else torch.long,
+                dtype=torch.bool if k == "lmask" else torch.long,
             )
-            for k in ("input_ids", "attention_mask", "label_mask")
+            for k in ("input_ids", "attention_mask", "lmask")
         }

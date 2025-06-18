@@ -43,8 +43,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         # sample inputs: batch=2, seq_len=4
         self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
-        # label_mask: mark pos 2 in sample0, none in sample1
-        self.label_mask = torch.tensor(
+        # lmask: mark pos 2 in sample0, none in sample1
+        self.lmask = torch.tensor(
             [[False, False, True, False], [False, False, False, False]]
         )
         # labels only for sample0: one label target 1.0
@@ -61,7 +61,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         out = self.model(
             input_ids=self.input_ids,
             attention_mask=self.attn,
-            label_mask=self.label_mask,
+            lmask=self.lmask,
             labels=None,
         )
         self.assertIn("logits", out)
@@ -78,7 +78,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         out = self.model(
             input_ids=self.input_ids,
             attention_mask=self.attn,
-            label_mask=self.label_mask,
+            lmask=self.lmask,
             labels=self.labels,
         )
         self.assertIn("loss", out)
@@ -89,7 +89,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         results = self.model.predict(
             input_ids=self.input_ids,
             attention_mask=self.attn,
-            label_mask=self.label_mask,
+            lmask=self.lmask,
         )
         # two samples
         self.assertEqual(len(results), 2)

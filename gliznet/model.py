@@ -106,7 +106,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             position_ids: Optional[torch.Tensor] = None,
             head_mask: Optional[torch.Tensor] = None,
             inputs_embeds: Optional[torch.Tensor] = None,
-            label_mask: Optional[torch.Tensor] = None,
+            lmask: Optional[torch.Tensor] = None,
             labels: Optional[List[torch.Tensor]] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
@@ -115,16 +115,16 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             r"""
             labels (`list[torch.Tensor]`, *optional*):
                 Labels for computing the classification loss. Each tensor in the list corresponds to labels for one sample.
-            label_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+            lmask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Mask to identify label token positions.
             """
             return_dict = (
                 return_dict if return_dict is not None else self.config.use_return_dict
             )
 
-            if label_mask is None:
+            if lmask is None:
                 raise ValueError(
-                    "label_mask is required for GliZNetForSequenceClassification"
+                    "lmask is required for GliZNetForSequenceClassification"
                 )
 
             device = input_ids.device
@@ -147,12 +147,10 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             hidden_proj = self.proj(hidden)  # (batch_size, seq_len, hidden_size)
 
             # Get positions of label tokens
-            pos = torch.nonzero(label_mask)[:, 0]  # (total_valid_samples,)
+            pos = torch.nonzero(lmask)[:, 0]  # (total_valid_samples,)
 
             # Compute similarities: (total_label_tokens, hidden_size) x (total_label_tokens, hidden_size)
-            logits = self.compute_similarity(
-                hidden_proj[pos, 0], hidden_proj[label_mask]
-            )
+            logits = self.compute_similarity(hidden_proj[pos, 0], hidden_proj[lmask])
 
             # Group logits by batch
             grouped_logits = defaultdict(list)
@@ -213,7 +211,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             self,
             input_ids,
             attention_mask,
-            label_mask,
+            lmask,
         ) -> List[List[float]]:
             """
             Prediction method for inference.
@@ -223,7 +221,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 outputs = self.forward(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
-                    label_mask=label_mask,
+                    lmask=lmask,
                 )
                 results = []
 

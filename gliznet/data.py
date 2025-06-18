@@ -79,10 +79,13 @@ def add_tokenized_function(
                 for ltext, lint in zip(labels_text, labels_int)
             ]
             labels_text, labels_int = zip(*all_labels)
+            labels_text = [list(i) for i in labels_text]
+            labels_int = [list(i) for i in labels_int]
         else:
             labels_text, labels_int = limit_labels(
                 shuffle_labels, labels_text, labels_int, max_labels
             )
+            labels_text = list(labels_text)
 
         # Tokenize the example
         tokenized: dict[str, torch.Tensor] = tokenizer(
@@ -100,9 +103,9 @@ def add_tokenized_function(
 
         # Return without adding batch dimension (DataLoader will handle batching)
         result = {
-            "input_ids": tokenized["input_ids"].squeeze(0),
-            "attention_mask": tokenized["attention_mask"].squeeze(0),
-            "label_mask": tokenized["label_mask"].squeeze(0),
+            "input_ids": tokenized["input_ids"].unsqueeze(0),
+            "attention_mask": tokenized["attention_mask"].unsqueeze(0),
+            "lmask": tokenized["lmask"].unsqueeze(0),
             "labels": labels,
         }
 
@@ -117,7 +120,7 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     # Stack regular tensors
     input_ids = torch.stack([item["input_ids"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
-    label_mask = torch.stack([item["label_mask"] for item in batch])
+    lmask = torch.stack([item["lmask"] for item in batch])
 
     # Handle labels which can have different lengths per sample
     labels = [item["labels"] for item in batch]
@@ -125,6 +128,6 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
-        "label_mask": label_mask,
+        "lmask": lmask,
         "labels": labels,
     }
