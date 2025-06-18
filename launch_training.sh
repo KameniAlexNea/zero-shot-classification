@@ -25,6 +25,7 @@ nohup uv run train_gliznet.py \
     --report_to wandb \
     --lr_scheduler_type cosine \
     --fp16 \
+    --dataloader_drop_last \
     --eval_do_concat_batches False \
     --data_seed 42 \
     &> nohup.out &

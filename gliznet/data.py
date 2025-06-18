@@ -6,11 +6,11 @@ compared to the original HuggingFace datasets approach.
 """
 
 import random
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 import datasets
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 from gliznet.tokenizer import GliZNETTokenizer
 
@@ -42,6 +42,61 @@ def load_dataset(
         mapper,
     )
     return ds.select_columns(["text", "labels_text", "labels_int"])
+
+
+def add_tokenized_function(
+    hf_dataset: datasets.Dataset,
+    tokenizer: GliZNETTokenizer,
+    text_column: str = "text",
+    labels_text_column: str = "labels_text",
+    labels_int_column: str = "labels_int",
+    max_labels=50,
+    shuffle_labels: bool = True,
+) -> datasets.Dataset:
+    """
+    Tokenizes the HuggingFace dataset using the GliZNETTokenizer.
+    """
+
+    def tokenize_function(examples):
+        text = examples[text_column]
+        labels_text = examples[labels_text_column]
+        labels_int = examples[labels_int_column]
+
+        # randomly shuffle labels if they are more than max_labels
+        if isinstance(labels_text, list) and len(labels_text) > max_labels:
+            combined = list(zip(labels_text, labels_int))
+            if shuffle_labels:
+                random.shuffle(combined)
+            labels_text, labels_int = zip(*combined[:max_labels])
+            labels_int = list(labels_int)  # Convert back to list
+
+        # Tokenize the example
+        tokenized: dict[str, torch.Tensor] = tokenizer(
+            text,
+            labels_text,
+            return_tensors="pt",
+            pad=True,
+        )
+
+        # Convert labels to tensor
+        if isinstance(labels_int, list):
+            labels = torch.tensor(labels_int, dtype=torch.float32)
+        else:
+            labels = torch.tensor([labels_int], dtype=torch.float32)
+
+        # Return without adding batch dimension (DataLoader will handle batching)
+        result = {
+            "input_ids": tokenized["input_ids"].squeeze(0),
+            "attention_mask": tokenized["attention_mask"].squeeze(0),
+            "label_mask": tokenized["label_mask"].squeeze(0),
+            "labels": labels.reshape(1, -1),  # Ensure labels are 2D
+        }
+
+        return result
+
+    return hf_dataset.with_transform(
+        tokenize_function,
+    )
 
 
 class GliZNetDataset(Dataset):
@@ -86,12 +141,14 @@ class GliZNetDataset(Dataset):
         text = example[self.text_column]
         labels_text = example[self.labels_text_column]
         labels_int = example[self.labels_int_column]
+
         # randomly shuffle labels if they are more than max_labels
         if isinstance(labels_text, list) and len(labels_text) > self.max_labels:
             combined = list(zip(labels_text, labels_int))
             if self.shuffle_labels:
                 random.shuffle(combined)
             labels_text, labels_int = zip(*combined[: self.max_labels])
+            labels_int = list(labels_int)  # Convert back to list
 
         # Tokenize the example
         tokenized: dict[str, torch.Tensor] = self.tokenizer(
@@ -102,18 +159,17 @@ class GliZNetDataset(Dataset):
         )
 
         # Convert labels to tensor
-        labels_int = example[self.labels_int_column]
         if isinstance(labels_int, list):
             labels = torch.tensor(labels_int, dtype=torch.float32)
         else:
             labels = torch.tensor([labels_int], dtype=torch.float32)
 
-        # Remove batch dimension from tokenized outputs (DataLoader will add it back)
+        # Return without adding batch dimension (DataLoader will handle batching)
         result = {
-            "input_ids": tokenized["input_ids"].unsqueeze(0),
-            "attention_mask": tokenized["attention_mask"].unsqueeze(0),
-            "label_mask": tokenized["label_mask"].unsqueeze(0),
-            "labels": labels.unsqueeze(0),
+            "input_ids": tokenized["input_ids"].squeeze(0),
+            "attention_mask": tokenized["attention_mask"].squeeze(0),
+            "label_mask": tokenized["label_mask"].squeeze(0),
+            "labels": labels.reshape(1, -1),  # Ensure labels are 2D
         }
 
         return result
@@ -121,9 +177,9 @@ class GliZNetDataset(Dataset):
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     # Stack regular tensors
-    input_ids = torch.cat([item["input_ids"] for item in batch])
-    attention_mask = torch.cat([item["attention_mask"] for item in batch])
-    label_mask = torch.cat([item["label_mask"] for item in batch])
+    input_ids = torch.stack([item["input_ids"] for item in batch])
+    attention_mask = torch.stack([item["attention_mask"] for item in batch])
+    label_mask = torch.stack([item["label_mask"] for item in batch])
 
     # Handle labels which can have different lengths per sample
     labels = [item["labels"] for item in batch]
@@ -134,69 +190,3 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         "label_mask": label_mask,
         "labels": labels,
     }
-
-
-def create_dataloader(
-    hf_dataset: datasets.Dataset,
-    tokenizer: GliZNETTokenizer,
-    batch_size: int = 8,
-    shuffle: bool = True,
-    num_workers: int = 4,
-    pin_memory: bool = True,
-    text_column: str = "text",
-    labels_text_column: str = "labels_text",
-    labels_int_column: str = "labels_int",
-    **kwargs
-) -> DataLoader:
-    dataset = GliZNetDataset(
-        hf_dataset=hf_dataset,
-        tokenizer=tokenizer,
-        text_column=text_column,
-        labels_text_column=labels_text_column,
-        labels_int_column=labels_int_column,
-        shuffle_on_epoch=shuffle,
-    )
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,  # We handle shuffling in the dataset
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        collate_fn=collate_fn,
-        **kwargs
-    )
-
-
-def prepare_data_loaders(
-    train_dataset: datasets.Dataset,
-    val_dataset: Optional[datasets.Dataset],
-    tokenizer: GliZNETTokenizer,
-    batch_size: int = 8,
-    num_workers: int = 4,
-    pin_memory: bool = True,
-    **kwargs
-) -> Tuple[DataLoader, Optional[DataLoader]]:
-    train_loader = create_dataloader(
-        train_dataset,
-        tokenizer,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        **kwargs
-    )
-
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = create_dataloader(
-            val_dataset,
-            tokenizer,
-            batch_size=batch_size,
-            shuffle=False,  # No shuffling for validation
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            **kwargs
-        )
-
-    return train_loader, val_loader

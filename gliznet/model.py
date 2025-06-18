@@ -176,6 +176,11 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                     if sample_labels.numel() == sample_logits.numel():
                         all_logits.append(sample_logits.view(-1, 1))
                         all_targets.append(sample_labels.view(-1, 1))
+                    else:
+                        logger.warning(
+                            f"Sample {i} has mismatched logits and labels sizes: "
+                            f"{sample_logits.numel()} vs {sample_labels.numel()}. Skipping."
+                        )
 
             # Compute loss
             loss = None

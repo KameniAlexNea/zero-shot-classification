@@ -18,7 +18,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from gliznet.data import GliZNetDataset, collate_fn, load_dataset
+from gliznet.data import collate_fn, load_dataset, add_tokenized_function
 from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
@@ -96,11 +96,11 @@ def main():
     tokenizer = GliZNETTokenizer.from_pretrained(model_args.model_name)
 
     # Create datasets
-    train_dataset = GliZNetDataset(
+    train_dataset = add_tokenized_function(
         hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels
     )
 
-    val_dataset = GliZNetDataset(
+    val_dataset = add_tokenized_function(
         hf_dataset=val_data,
         tokenizer=tokenizer,
         shuffle_labels=False,
