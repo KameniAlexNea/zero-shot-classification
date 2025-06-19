@@ -4,6 +4,10 @@ import random
 from faker import Faker
 
 
+def get_subjects(choice = 3):
+    subjects = open("synthetic_data/all_subjects.txt").readlines()
+    return "\n".join(random.choices(subjects, k=choice)) 
+
 def base_output_example():
     # Base example that stays consistent
     return [
@@ -144,6 +148,9 @@ A **not_label** is a label that could plausibly apply to similar texts but does 
 * Labels must be tailored to the content; do not repeat generic sets across examples
 * **NOT_LABELS must be challenging distractors**, not obvious negatives
 * Ensure **maximum diversity** in both the **content**, **text length**, and the **labels**
+
+Here are topics to consider for generating samples:
+{get_subjects(5)}
 
 **OUTPUT FORMAT**:
 Return only a **valid JSON array** of size **{num_samples}**, with each object containing:
