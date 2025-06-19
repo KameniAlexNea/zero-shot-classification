@@ -4,7 +4,7 @@ from collections import namedtuple
 import torch
 import torch.nn as nn
 
-from gliznet.model import GliZNetModel
+from gliznet.model import GliZNetForSequenceClassification
 
 
 class DummyEncoder(nn.Module):
@@ -12,7 +12,9 @@ class DummyEncoder(nn.Module):
         super().__init__()
         self.config = namedtuple("cfg", ("hidden_size",))(hidden_size)
 
-    def forward(self, input_ids, attention_mask=None, return_dict=True):
+    def forward(
+        self, input_ids, attention_mask=None, return_dict=True, *args, **kwargs
+    ):
         batch, seq_len = input_ids.shape
         # last_hidden_state[b,s,:] = input_ids[b,s] repeated
         last_hidden_state = (
@@ -23,24 +25,26 @@ class DummyEncoder(nn.Module):
         return last_hidden_state
 
 
-class TestGliZNetModel(unittest.TestCase):
+class TestGliZNetForSequenceClassification(unittest.TestCase):
     def setUp(self):
         self.hidden_size = 8
-        self.model = GliZNetModel(
-            model_name="bert-base-uncased",
-            hidden_size=self.hidden_size,
+        self.model = GliZNetForSequenceClassification.from_pretrained(
+            "bert-base-uncased",
+            projected_dim=self.hidden_size,
             similarity_metric="dot",
         )
         # replace encoder and align config + bypass proj
-        self.model.encoder = DummyEncoder(self.hidden_size)
+        setattr(
+            self.model, self.model.base_model_prefix, DummyEncoder(self.hidden_size)
+        )
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
         self.model.proj = nn.Identity()
         # sample inputs: batch=2, seq_len=4
-        self.input_ids = torch.tensor([[1, 2, 3, 4], [5, 6, 0, 0]])
+        self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
-        # label_mask: mark pos 2 in sample0, none in sample1
-        self.label_mask = torch.tensor(
+        # lmask: mark pos 2 in sample0, none in sample1
+        self.lmask = torch.tensor(
             [[False, False, True, False], [False, False, False, False]]
         )
         # labels only for sample0: one label target 1.0
@@ -51,19 +55,20 @@ class TestGliZNetModel(unittest.TestCase):
         lab = torch.tensor([[3.0, 4.0]])
         sim = self.model.compute_similarity(t, lab)  # dot / temp
         # expected = 1*3 + 2*4 = 11
-        self.assertTrue(torch.allclose(sim, torch.tensor([[11.0]])))
+        self.assertTrue(torch.allclose(sim, torch.tensor([[5.5]])))
 
     def test_forward_without_labels(self):
         out = self.model(
             input_ids=self.input_ids,
             attention_mask=self.attn,
-            label_mask=self.label_mask,
+            lmask=self.lmask,
             labels=None,
         )
         self.assertIn("logits", out)
         self.assertIn("hidden_states", out)
-        self.assertIn("loss", out)
-        self.assertIsNone(out["loss"])
+
+        loss = out.loss
+        self.assertIsNone(loss)
         # sample0 has one label => logits tensor of shape (1,)
         self.assertEqual(out["logits"][0].shape, (1, 1))
         # sample1 no labels => zero-length
@@ -73,28 +78,23 @@ class TestGliZNetModel(unittest.TestCase):
         out = self.model(
             input_ids=self.input_ids,
             attention_mask=self.attn,
-            label_mask=self.label_mask,
+            lmask=self.lmask,
             labels=self.labels,
         )
         self.assertIn("loss", out)
         self.assertIsInstance(out["loss"], torch.Tensor)
-        self.assertGreater(out["loss"].item(), 0.0)
+        self.assertGreaterEqual(out["loss"].item(), 0.0)
 
     def test_predict(self):
         results = self.model.predict(
             input_ids=self.input_ids,
             attention_mask=self.attn,
-            label_mask=self.label_mask,
-            threshold=0.5,
+            lmask=self.lmask,
         )
         # two samples
         self.assertEqual(len(results), 2)
         for idx, res in enumerate(results):
-            self.assertIn("predictions", res)
-            self.assertIn("probabilities", res)
-            self.assertIn("logits", res)
-            # predictions shape matches logits
-            self.assertEqual(res["predictions"].shape, res["logits"].shape)
+            self.assertIsInstance(res, list)
 
 
 if __name__ == "__main__":

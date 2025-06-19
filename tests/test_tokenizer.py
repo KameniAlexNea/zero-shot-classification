@@ -17,7 +17,7 @@ class TestGliZNETTokenizer(unittest.TestCase):
 
     def setUp(self):
         self.tokenizer = GliZNETTokenizer(
-            pretrained_model_name_or_path=self.pretrained_model_name
+            pretrained_model_name_or_path=self.pretrained_model_name, min_text_token=1
         )
         self.tokenizer.max_length = 20
 
@@ -97,15 +97,13 @@ class TestGliZNETTokenizer(unittest.TestCase):
         truncated_zero_allowed = self.tokenizer._truncate_text_tokens(
             text_tokens_long, label_tokens
         )
-        self.assertEqual(len(truncated_zero_allowed), 0)
+        self.assertEqual(len(truncated_zero_allowed), 1)  # One forced token
 
     def test_build_sequence(self):
         text_tokens = [2001, 2002]  # "text"
         label_tokens_list = [[3001], [3002, 3003]]  # "L1", "L2a L2b"
 
-        sequence, label_mask = self.tokenizer._build_sequence(
-            text_tokens, label_tokens_list
-        )
+        sequence, lmask = self.tokenizer._build_sequence(text_tokens, label_tokens_list)
 
         expected_sequence = [
             self.cls_token_id,
@@ -120,9 +118,9 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.assertEqual(sequence, expected_sequence)
 
         expected_label_mask = [0, 0, 0, 0, 1, 0, 1, 0]
-        self.assertEqual(label_mask, expected_label_mask)
+        self.assertEqual(lmask, expected_label_mask)
         self.assertEqual(
-            len(label_mask),
+            len(lmask),
             len(text_tokens)
             + sum(len(lab) for lab in label_tokens_list)
             + len(label_tokens_list)
@@ -131,7 +129,7 @@ class TestGliZNETTokenizer(unittest.TestCase):
         )
         self.assertEqual(
             len(sequence),
-            len(label_mask),
+            len(lmask),
             "Label mask from _build_sequence is shorter than sequence",
         )
 
@@ -157,12 +155,12 @@ class TestGliZNETTokenizer(unittest.TestCase):
 
         self.assertEqual(result_right["input_ids"], expected_input_ids_right)
         self.assertEqual(result_right["attention_mask"], expected_attn_mask_right)
-        self.assertEqual(result_right["label_mask"], expected_label_mask_right)
+        self.assertEqual(result_right["lmask"], expected_label_mask_right)
         self.assertEqual(
-            len(result_right["label_mask"]),
+            len(result_right["lmask"]),
             self.tokenizer.max_length - (len(token_ids) - len(label_mask_from_build)),
         )
-        self.assertEqual(len(result_right["label_mask"]), self.tokenizer.max_length - 2)
+        self.assertEqual(len(result_right["lmask"]), self.tokenizer.max_length - 2)
 
         original_padding_side = self.tokenizer.tokenizer.padding_side
         self.tokenizer.tokenizer.padding_side = "left"
@@ -175,27 +173,8 @@ class TestGliZNETTokenizer(unittest.TestCase):
 
         self.assertEqual(result_left["input_ids"], expected_input_ids_left)
         self.assertEqual(result_left["attention_mask"], expected_attn_mask_left)
-        self.assertEqual(result_left["label_mask"], expected_label_mask_left)
-        self.assertEqual(len(result_left["label_mask"]), self.tokenizer.max_length - 2)
-
-    def test_create_label_mask(self):
-        sequence_ids = [
-            self.cls_token_id,
-            1,
-            2,
-            self.sep_token_id,
-            10,
-            11,
-            self.sep_token_id,
-            20,
-        ]
-        label_tokens_ids = [[10, 11], [20]]  # Corresponds to L1a,L1b and L2a
-
-        mask = self.tokenizer._create_label_mask(sequence_ids, label_tokens_ids)
-
-        expected_mask = [False, False, False, False, True, False, False, True]
-        self.assertEqual(mask, expected_mask)
-        self.assertEqual(len(mask), len(sequence_ids))
+        self.assertEqual(result_left["lmask"], expected_label_mask_left)
+        self.assertEqual(len(result_left["lmask"]), self.tokenizer.max_length - 2)
 
     def test_tokenize_example_padding_and_tensors(self):
         self.tokenizer.max_length = 25  # Reset for this test
@@ -238,26 +217,24 @@ class TestGliZNETTokenizer(unittest.TestCase):
 
         self.assertIn("input_ids", result)
         self.assertIn("attention_mask", result)
-        self.assertIn("label_mask", result)
+        self.assertIn("lmask", result)
 
         self.assertIsInstance(result["input_ids"], torch.Tensor)
         self.assertIsInstance(result["attention_mask"], torch.Tensor)
-        self.assertIsInstance(result["label_mask"], torch.Tensor)
+        self.assertIsInstance(result["lmask"], torch.Tensor)
 
         self.assertEqual(result["input_ids"].shape[0], self.tokenizer.max_length)
         self.assertEqual(result["attention_mask"].shape[0], self.tokenizer.max_length)
 
         expected_label_mask_len = self.tokenizer.max_length
-        self.assertEqual(result["label_mask"].size(0), expected_label_mask_len)
-        self.assertEqual(result["label_mask"].dtype, torch.bool)
+        self.assertEqual(result["lmask"].size(0), expected_label_mask_len)
+        self.assertEqual(result["lmask"].dtype, torch.bool)
 
         result_no_pad = self.tokenizer.tokenize_example(
             text, labels, return_tensors=None, pad=False
         )
         self.assertLessEqual(len(result_no_pad["input_ids"]), self.tokenizer.max_length)
-        self.assertEqual(
-            len(result_no_pad["label_mask"]), len(result_no_pad["input_ids"])
-        )
+        self.assertEqual(len(result_no_pad["lmask"]), len(result_no_pad["input_ids"]))
 
     def test_tokenize_batch(self):
         self.tokenizer.max_length = 30
@@ -295,10 +272,8 @@ class TestGliZNETTokenizer(unittest.TestCase):
             result["attention_mask"].shape, (len(texts), self.tokenizer.max_length)
         )
         expected_label_mask_len = self.tokenizer.max_length
-        self.assertEqual(
-            result["label_mask"].shape, (len(texts), expected_label_mask_len)
-        )
-        self.assertEqual(result["label_mask"].dtype, torch.bool)
+        self.assertEqual(result["lmask"].shape, (len(texts), expected_label_mask_len))
+        self.assertEqual(result["lmask"].dtype, torch.bool)
 
         with self.assertRaises(ValueError):
             self.tokenizer.tokenize_batch(
@@ -314,7 +289,7 @@ class TestGliZNETTokenizer(unittest.TestCase):
                 len(result_no_pad_no_pt["input_ids"][i]), self.tokenizer.max_length
             )
             self.assertEqual(
-                len(result_no_pad_no_pt["label_mask"][i]),
+                len(result_no_pad_no_pt["lmask"][i]),
                 len(result_no_pad_no_pt["input_ids"][i]),
             )
 

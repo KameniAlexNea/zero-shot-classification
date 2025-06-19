@@ -96,7 +96,7 @@ class ZeroShotTrainer:
             )
             eval_dataset = dataset["test"]  # Use test split for evaluation
 
-            logger.success(f"Loaded evaluation dataset successfully:")
+            logger.success("Loaded evaluation dataset successfully:")
             logger.info(f"  Eval samples: {len(eval_dataset)}")
 
             # Check if it has hard negatives
@@ -119,7 +119,7 @@ class ZeroShotTrainer:
                     for label in item.get("not_labels", []):
                         eval_labels.add(label)
 
-            logger.info(f"Evaluation dataset statistics:")
+            logger.info("Evaluation dataset statistics:")
             logger.info(f"  Eval labels: {len(eval_labels)}")
 
             return eval_dataset, eval_labels

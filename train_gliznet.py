@@ -1,89 +1,93 @@
 #!/usr/bin/env python3
 
-import argparse
 import os
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
+import importlib
+from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 from loguru import logger
-from transformers import EarlyStoppingCallback, Trainer, TrainingArguments
+from transformers import (
+    EarlyStoppingCallback,
+    HfArgumentParser,
+    Trainer,
+    TrainingArguments,
+)
 
-from gliznet.data import GliZNetDataset, collate_fn
-from gliznet.model import GliZNetModel
-from gliznet.tokenizer import GliZNETTokenizer, load_dataset
+from gliznet.data import add_tokenized_function, collate_fn, load_dataset
+from gliznet.metrics import compute_metrics
+from gliznet.model import create_gli_znet_for_sequence_classification
+from gliznet.tokenizer import GliZNETTokenizer
 
 
-class GliZNetTrainer(Trainer):
-    """Custom Trainer for GliZNetModel that handles the specific data format."""
+def get_transformers_class(class_name):
+    transformers_module = importlib.import_module("transformers")
+    return getattr(transformers_module, class_name)
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
 
-    def compute_loss(self, model, inputs, return_outputs=False, *args, **kwargs):
-        """Compute loss for GliZNetModel."""
-        input_ids = inputs["input_ids"]
-        attention_mask = inputs["attention_mask"]
-        label_mask = inputs["label_mask"]
-        labels = inputs["labels"]
+def seed_everything(seed: int = 42):
+    """Set random seed for reproducibility."""
+    import random
 
-        # Forward pass
-        outputs = model(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            label_mask=label_mask,
-            labels=labels,
-        )
-
-        loss = outputs.get("loss")
-        if loss is None:
-            # If no loss computed (no valid labels), return zero loss
-            loss = torch.tensor(0.0, device=input_ids.device, requires_grad=True)
-
-        return (loss, outputs) if return_outputs else loss
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Train GliZNetModel for zero-shot classification"
-    )
-    parser.add_argument("--model_name", default="bert-base-uncased")
-    parser.add_argument("--hidden_size", type=int, default=256)
-    parser.add_argument(
-        "--similarity_metric", default="bilinear", choices=["cosine", "dot", "bilinear"]
-    )
-    parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--num_epochs", type=int, default=1)
-    parser.add_argument("--learning_rate", type=float, default=1e-5)
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--save_path", default="models/fzeronet_model.pt")
-    parser.add_argument("--output_dir", default="./results")
-    parser.add_argument(
-        "--shuffle_labels",
-        action="store_false",
-        default=True,
-        help="Disable shuffling of labels (enabled by default).",
-    )
-    parser.add_argument("--eval_steps", type=int, default=500)
-    parser.add_argument("--save_steps", type=int, default=1000)
-    parser.add_argument("--logging_steps", type=int, default=100)
-    parser.add_argument("--warmup_steps", type=int, default=100)
-    parser.add_argument("--max_labels", type=int, default=20)
-    parser.add_argument("--weight_decay", type=float, default=0.01)
+    @dataclass
+    class ModelArgs:
+        model_name: str = field(
+            default="sentence-transformers/all-MiniLM-L6-v2",
+            metadata={"help": "Pretrained model name or path"},
+        )
+        model_class: str = field(
+            default="BertPreTrainedModel",
+            metadata={"help": "Model class to use"},
+        )
+        projected_dim: int = field(
+            default=256, metadata={"help": "Hidden size for projection layer"}
+        )
+        similarity_metric: str = field(
+            default="dot",
+            metadata={"help": "Similarity metric: cosine, bilinear, dot"},
+        )
+        max_labels: Optional[int] = field(
+            default=50, metadata={"help": "Maximum number of labels"}
+        )  # 50 to avoid overflow
+        shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
+        save_path: str = field(
+            default=None,
+            metadata={"help": "Legacy model save path"},
+        )
+        early_stopping_patience: int = field(
+            default=3,
+            metadata={"help": "Early stopping patience"},
+        )
 
-    args = parser.parse_args()
+    parser = HfArgumentParser((ModelArgs, TrainingArguments))
+    args: tuple[ModelArgs, TrainingArguments] = parser.parse_args_into_dataclasses()
+    model_args, training_args = args
 
     # Set device
-    if args.device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    else:
-        device = args.device
-
+    device = (
+        "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
+    )
     logger.info(f"Using device: {device}")
 
+    testing_data = load_dataset(split="test")
+
     # Load and prepare dataset
-    dataset = load_dataset(max_labels=args.max_labels, shuffle_labels=args.shuffle_labels)
+    dataset = load_dataset()
     splits = dataset.train_test_split(test_size=0.1, seed=42)
     train_data = splits["train"]
     val_data = splits["test"]
@@ -93,81 +97,62 @@ def main():
     )
 
     # Initialize tokenizer
-    tokenizer = GliZNETTokenizer(model_name=args.model_name)
+    tokenizer = GliZNETTokenizer.from_pretrained(model_args.model_name)
 
     # Create datasets
-    train_dataset = GliZNetDataset(hf_dataset=train_data, tokenizer=tokenizer)
+    train_dataset = add_tokenized_function(
+        hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels
+    )
 
-    val_dataset = GliZNetDataset(hf_dataset=val_data, tokenizer=tokenizer)
+    val_dataset = add_tokenized_function(
+        hf_dataset=val_data,
+        tokenizer=tokenizer,
+        shuffle_labels=False,
+        max_labels=model_args.max_labels,
+    )
+    testing_dataset = add_tokenized_function(
+        hf_dataset=testing_data,
+        tokenizer=tokenizer,
+        shuffle_labels=False,
+        max_labels=model_args.max_labels,
+    )
 
     # Initialize model
-    model = GliZNetModel(
-        model_name=args.model_name,
-        hidden_size=args.hidden_size,
-        similarity_metric=args.similarity_metric,
+    pretrained_cls = create_gli_znet_for_sequence_classification(
+        get_transformers_class(model_args.model_class)
+    )
+    model = pretrained_cls.from_pretrained(
+        model_args.model_name,
+        projected_dim=model_args.projected_dim,
+        similarity_metric=model_args.similarity_metric,
     )
 
     # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # Setup training arguments
-    training_args = TrainingArguments(
-        run_name="gliznet_training",
-        output_dir=args.output_dir,
-        num_train_epochs=args.num_epochs,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        logging_steps=args.logging_steps,
-        eval_steps=args.eval_steps,
-        save_steps=args.save_steps,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        dataloader_pin_memory=True,
-        dataloader_num_workers=4,
-        remove_unused_columns=False,
-        do_train=True,
-        do_eval=True,
-        report_to="wandb",
-        lr_scheduler_type="cosine",
-        data_seed=42,
-    )
+    os.makedirs(training_args.output_dir, exist_ok=True)
 
     # Initialize trainer
-    trainer = GliZNetTrainer(
+    trainer = Trainer(
         model=model,
+        processing_class=tokenizer.tokenizer,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collate_fn,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=model_args.early_stopping_patience
+            )
+        ],
+        compute_metrics=compute_metrics,
     )
 
     # Start training
     logger.info("Starting training with Transformers Trainer...")
     trainer.train()
 
-    # Save the final model
-    trainer.save_model(args.output_dir)
-
-    # Also save in the legacy format for compatibility
-    if args.save_path:
-        os.makedirs(os.path.dirname(args.save_path), exist_ok=True)
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "training_args": training_args,
-            },
-            args.save_path,
-        )
-        logger.info(f"Legacy model saved at {args.save_path}")
-
     logger.info("Training complete")
+    trainer.evaluate(testing_dataset, metric_key_prefix="test")
+    logger.info("Evaluation complete")
 
 
 if __name__ == "__main__":
