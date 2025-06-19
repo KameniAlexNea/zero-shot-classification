@@ -1,5 +1,6 @@
 import json
 import os
+import random
 from typing import Dict, List
 
 from llm_clients import BaseLLMClient, create_llm_client
@@ -12,28 +13,35 @@ from tqdm import tqdm
 class DatasetGenerator:
     def __init__(self, llm_client: BaseLLMClient):
         self.llm_client = llm_client
-        logger.info("Initialized DatasetGenerator with LLM client")
+        self.all_topics = open("synthetic_data/all_subjects.txt").read().splitlines()
+        logger.info("Initialized DatasetGenerator with LLM client: " + str(len(self.all_topics)) + " topics loaded")
 
     def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
         """Create the prompt for generating synthetic data."""
-        return generate_prompt(
-            num_samples=num_samples,
-            min_labels=min_labels,
-            max_labels=max_labels,
+        topics = "\n".join(random.choices(self.all_topics, k=3))
+        return (
+            generate_prompt(
+                num_samples=num_samples,
+                min_labels=min_labels,
+                max_labels=max_labels,
+                topics=topics,
+            ),
+            topics,
         )
 
     def generate_dataset(
         self, num_samples: int, min_labels: int = 1, max_labels: int = 5
     ) -> List[Dict[str, List[str]]]:
         """Generate a single batch of synthetic data."""
-        prompt = self._create_prompt(num_samples, min_labels, max_labels)
+        prompt, topics = self._create_prompt(num_samples, min_labels, max_labels)
 
         # LLM call - clearly separated
         raw_response = self.llm_client.generate_text(prompt)
 
         # Parse response
         data = parse_json(raw_response)
-        return data if isinstance(data, list) else []
+        data = data if isinstance(data, list) else []
+        return {"topics": topics, "data": data}
 
     def generate_large_dataset(
         self, total_samples: int, batch_size: int = 50, output_dir: str = "batches"
@@ -62,7 +70,7 @@ class DatasetGenerator:
                 with open(batch_file, "w") as f:
                     json.dump(batch_data, f, indent=2)
 
-                all_data.extend(batch_data)
+                all_data.extend(batch_data["data"])
 
                 # Update progress bar
                 pbar.set_postfix(

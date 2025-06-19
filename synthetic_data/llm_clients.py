@@ -17,7 +17,7 @@ class LLMConfig:
     top_p: float = 0.95
     max_retries: int = 3
     retry_delay: float = 1.0
-    repeat_penalty: float = 1.3
+    repeat_penalty: float = 1.1
 
 
 class BaseLLMClient(ABC):
