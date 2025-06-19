@@ -10,7 +10,7 @@ from sklearn.metrics import (
 )
 
 
-def compute_metrics(eval_pred):
+def compute_metrics(eval_pred, activated: bool = False, threshold: float = 0.5):
     """Compute metrics for evaluation."""
     logits, labels = eval_pred
     logits: list[np.ndarray] = [i.reshape(-1) for j in logits for i in j]
@@ -19,10 +19,11 @@ def compute_metrics(eval_pred):
     logits = np.concat(logits)
     labels = np.concat(labels)
 
-    logits = 1 / (1 + np.exp(-logits))
+    if not activated:
+        logits = 1 / (1 + np.exp(-logits))
 
     # Calculate accuracy, precision, recall and f1-score
-    predictions = (logits > 0.5).astype(int)
+    predictions = (logits > threshold).astype(int)
 
     # Basic metrics
     accuracy = accuracy_score(labels, predictions)
@@ -31,7 +32,20 @@ def compute_metrics(eval_pred):
     f1 = f1_score(labels, predictions, zero_division=0)
 
     # Advanced metrics
-    metrics = {"accuracy": accuracy, "precision": precision, "recall": recall, "f1": f1}
+    metrics = {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+    }
+    if activated:
+        stats = {
+            "support": len(labels),
+            "threshold": threshold,
+            "num_positive": np.sum(labels),
+            "avg_probability": np.mean(logits),
+        }
+        metrics.update(stats)
 
     # Only calculate ROC AUC when both classes are present
     if len(np.unique(labels)) > 1:
