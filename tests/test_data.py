@@ -4,6 +4,7 @@ import torch
 from datasets import Dataset
 from torch.utils.data import DataLoader
 
+from gliznet.config import LabelName
 from gliznet.data import add_tokenized_function, collate_fn
 
 
