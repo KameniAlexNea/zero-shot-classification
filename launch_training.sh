@@ -27,5 +27,6 @@ nohup uv run train_gliznet.py \
     --fp16 \
     --dataloader_drop_last \
     --eval_do_concat_batches False \
+    --eval_on_start \
     --data_seed 42 \
     &> nohup.out &

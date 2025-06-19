@@ -4,6 +4,8 @@ import os
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import importlib
 from dataclasses import dataclass, field
@@ -136,29 +138,9 @@ def main():
         compute_metrics=compute_metrics,
     )
 
-    # evaluate the model before training
-    logger.info("Evaluating model before training...")
-    eval_results = trainer.evaluate()
-    logger.info(f"Initial evaluation results: {eval_results}")
-
     # Start training
     logger.info("Starting training with Transformers Trainer...")
     trainer.train()
-
-    # Save the final model
-    # trainer.save_model(training_args.output_dir)
-
-    # Also save in the legacy format for compatibility
-    if model_args.save_path:
-        os.makedirs(os.path.dirname(model_args.save_path), exist_ok=True)
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "training_args": training_args,
-            },
-            model_args.save_path,
-        )
-        logger.info(f"Legacy model saved at {model_args.save_path}")
 
     logger.info("Training complete")
 
