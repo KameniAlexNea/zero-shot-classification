@@ -84,7 +84,7 @@ def main():
     )
     logger.info(f"Using device: {device}")
 
-    testing_dataset = load_dataset(split="test")
+    testing_data = load_dataset(split="test")
 
     # Load and prepare dataset
     dataset = load_dataset()
@@ -111,7 +111,7 @@ def main():
         max_labels=model_args.max_labels,
     )
     testing_dataset = add_tokenized_function(
-        hf_dataset=testing_dataset,
+        hf_dataset=testing_data,
         tokenizer=tokenizer,
         shuffle_labels=False,
         max_labels=model_args.max_labels,
@@ -151,6 +151,8 @@ def main():
     trainer.train()
 
     logger.info("Training complete")
+    trainer.evaluate(testing_dataset, metric_key_prefix="test")
+    logger.info("Evaluation complete")
 
 
 if __name__ == "__main__":

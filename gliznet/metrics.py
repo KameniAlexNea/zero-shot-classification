@@ -16,8 +16,8 @@ def compute_metrics(eval_pred, activated: bool = False, threshold: float = 0.5):
     logits: list[np.ndarray] = [i.reshape(-1) for j in logits for i in j]
     labels: list[np.ndarray] = [i.reshape(-1) for j in labels for i in j]
 
-    logits = np.concat(logits)
-    labels = np.concat(labels)
+    logits = np.concatenate(logits)
+    labels = np.concatenate(labels)
 
     if not activated:
         logits = 1 / (1 + np.exp(-logits))
