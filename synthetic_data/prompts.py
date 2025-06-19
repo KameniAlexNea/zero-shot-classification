@@ -1,167 +1,120 @@
 import json
 import random
-
 from faker import Faker
 
 
-def get_subjects(choice = 3):
-    subjects = open("synthetic_data/all_subjects.txt").readlines()
-    return "\n".join(random.choices(subjects, k=choice)) 
+def get_subjects(choice=3):
+    """Get random subjects from the subjects file."""
+    with open("synthetic_data/all_subjects.txt") as f:
+        subjects = f.readlines()
+    return "\n".join(random.choices(subjects, k=choice))
 
-def base_output_example():
-    # Base example that stays consistent
+
+def create_base_examples():
+    """Create consistent base examples for the prompt."""
     return [
         {
             "sentence": "The new smartphone camera produces amazing low-light photos.",
-            "labels": random.choices(
-                ["technology", "product_review", "positive", "consumer_electronics"],
-                k=3,
-            ),
-            "not_labels": [
-                "negative_review",
-                "software_issue",
-                "customer_complaint",
-                "technical_problem",
-            ],
+            "labels": ["technology", "product_review", "positive", "consumer_electronics"],
+            "not_labels": ["negative_review", "software_issue", "customer_complaint", "technical_problem"],
         },
         {
             "sentence": "How do I reset my password for the company portal?",
-            "labels": random.choices(
-                ["question", "technical_support", "workplace", "instruction_request"],
-                k=3,
-            ),
-            "not_labels": [
-                "product_review",
-                "complaint",
-                "announcement",
-                "marketing_content",
-            ],
-        },
-        {
-            "sentence": "The quarterly financial report shows a significant increase in revenue compared to last year. Our company has successfully expanded into new markets, particularly in the Asia-Pacific region, where we've seen a 35% growth in customer acquisition. The board of directors is optimistic about maintaining this momentum through strategic partnerships and continued investment in research and development.",
-            "labels": random.choices(
-                [
-                    "business",
-                    "financial_report",
-                    "corporate_communication",
-                    "formal",
-                    "positive_outlook",
-                ],
-                k=4,
-            ),
-            "not_labels": [
-                "negative_outlook",
-                "technical_documentation",
-                "customer_complaint",
-                "casual_conversation",
-                "product_advertisement",
-            ],
-        },
+            "labels": ["question", "technical_support", "workplace", "instruction_request"],
+            "not_labels": ["product_review", "complaint", "announcement", "marketing_content"],
+        }
     ]
 
 
-def random_labels():
+def get_random_label_categories():
+    """Generate random label categories for inspiration."""
     fake = Faker()
-    # Simple, controlled random elements
-    random_domain = random.choices(
-        [
-            fake.job().lower().replace(" ", "_"),
-            fake.job_female().lower().replace(" ", "_"),
-            fake.job_male().lower().replace(" ", "_"),
-            fake.job().lower().replace(" ", "_"),
-            fake.job_male().lower().replace(" ", "_"),
-        ],
-        k=4,
-    )
-
-    random_industry = random.choices(
-        [
-            "retail",
-            "manufacturing",
-            "consulting",
-            "media",
-            "automotive",
-            "food_service",
-        ],
-        k=4,
-    )
-
-    random_tone = random.choices(
-        ["professional", "casual", "technical", "friendly", "formal", "conversational"],
-        k=4,
-    )
-    return random_domain, random_industry, random_tone
+    
+    domains = [
+        fake.job().lower().replace(" ", "_") for _ in range(4)
+    ]
+    
+    industries = random.choices([
+        "retail", "manufacturing", "consulting", "media", 
+        "automotive", "food_service", "healthcare", "education"
+    ], k=4)
+    
+    tones = random.choices([
+        "professional", "casual", "technical", "friendly", 
+        "formal", "conversational", "academic", "promotional"
+    ], k=4)
+    
+    return domains, industries, tones
 
 
 def generate_prompt(num_samples: int, min_labels: int, max_labels: int):
-    output_example = base_output_example()
+    """
+    Generate a comprehensive prompt for creating diverse text classification examples.
+    
+    Args:
+        num_samples: Number of examples to generate
+        min_labels: Minimum number of labels per example
+        max_labels: Maximum number of labels per example
+    
+    Returns:
+        Formatted prompt string
+    """
+    base_examples = create_base_examples()
+    domains, industries, tones = get_random_label_categories()
+    subject_topics = get_subjects(5)
+    
+    prompt = f"""**TASK: Generate Diverse Text Classification Data**
 
-    # Simple, controlled random elements
-    random_domain, random_industry, random_tone = random_labels()
+You are an expert data generator creating **{num_samples}** diverse text examples for zero-shot classification training.
 
-    return f"""**You are an expert data generator for machine learning classification tasks.**
+**CORE REQUIREMENTS:**
+• Generate exactly {num_samples} unique text samples
+• Each sample needs {min_labels}-{max_labels} descriptive labels that DO apply
+• Each sample needs {min_labels}-{max_labels} hard negative labels that do NOT apply
+• Ensure maximum diversity in content, length, and style
 
-**TASK**: Generate **exactly {num_samples}** diverse text examples for zero-shot classification training. Each example must include a **text sample**, a list of **descriptive labels**, and a list of **hard negative labels**. The text and labels will be used to train or evaluate classifiers.
+**TEXT DIVERSITY GUIDELINES:**
 
-**IMPORTANT**:
-There is **no predefined list of labels** or topics. You must create them based on the content of each generated text.
-The **examples below are illustrative only** and must not be reused or replicated.
+**Content Variety:**
+• Topics: business, science, health, technology, culture, education, etc.
+• Text types: statements, questions, reviews, instructions, announcements
+• Writing styles: technical, conversational, formal, casual, promotional
 
-**TEXT LENGTH DIVERSITY**:
-Generate a **diverse mix of text lengths** to ensure comprehensive training data: Short sentences, medium sentences, and longer paragraphs.
-Aim for approximately **1/3 short, 1/3 medium, 1/3 paragraph** length distribution.
+**LABEL GUIDELINES:**
 
-**WHAT IS A LABEL**:
-A **label** is a category that describes some aspect of the text. This can relate to its **topic**, **domain**, **intent**, **tone**, **format**, or **style**. Labels help a model understand what the text is about or how it is written.
+**What is a Label:**
+A category describing the text's topic, domain, intent, tone, format, or style.
 
-**WHAT IS A NOT_LABEL (HARD NEGATIVE)**:
-A **not_label** is a label that could plausibly apply to similar texts but does NOT apply to this specific text. These should be **challenging negatives** that test the model's ability to distinguish subtle differences. For example:
-- For a positive product review: "negative_review", "customer_complaint", "technical_issue"
-- For a technical question: "product_advertisement", "corporate_announcement", "social_media_post"
-- For formal business communication: "casual_conversation", "personal_story", "entertainment_content"
+**What is a Hard Negative (not_label):**
+A plausible but incorrect label that could confuse a weak model. Focus on subtle distinctions rather than obvious negatives.
 
-**HARD NEGATIVE REQUIREMENTS**:
-- NOT_LABELS should be **semantically related** but **contextually incorrect**
-- They should be **plausible distractors** that could confuse a weak model
-- Avoid obvious negatives (e.g., "cooking" for a tech review)
-- Focus on **subtle distinctions** (tone, intent, domain nuances)
+**Examples of Good Hard Negatives:**
+• For positive review → "negative_review", "customer_complaint"
+• For technical question → "product_advertisement", "social_media_post"
+• For formal communication → "casual_conversation", "personal_story"
 
-**LABEL INSPIRATION** (use these as inspiration, but create your own unique labels):
+**LABEL INSPIRATION:**
+Use these as inspiration but create unique labels:
 
-* Content types: "news_article", "product_review", "email", "social_media_post", "instruction"
-* Domains: "{'", "'.join(random_domain)}"
-* Sentiment/tone: "{'", "'.join(random_tone)}"
-* Intent/function: "question", "request", "opinion", "instruction_request", "announcement"
-* Industry: "{'", "'.join(random_industry)}"
-... and many more
+• Content types: "news_article", "product_review", "email", "social_media_post"
+• Domains: "{', '.join(domains)}"
+• Tones: "{', '.join(tones)}"
+• Industries: "{', '.join(industries)}"
+• Intent: "question", "request", "opinion", "instruction", "announcement"
 
-**REQUIREMENTS**:
+**TOPIC SUGGESTIONS:**
+{subject_topics}
 
-* Generate **{num_samples}** text entries, each with a unique and realistic text sample
-* **Vary text length**: Include short sentences, medium sentences, and longer paragraphs
-* To reduce bias, ensure diversity in both the **content** and the **labels**
-* Topics should vary widely: include areas like business, science, health, technology, culture, education, etc.
-* Vary the **text type**: include statements, instructions, questions, reviews, announcements, complaints, etc.
-* Use different **writing styles**: technical, conversational, promotional, formal, casual, etc.
-* Assign **{min_labels} to {max_labels}** relevant and informative labels to each entry
-* Assign **{min_labels} to {max_labels}** hard negative labels that are plausible but incorrect
-* Labels must be tailored to the content; do not repeat generic sets across examples
-* **NOT_LABELS must be challenging distractors**, not obvious negatives
-* Ensure **maximum diversity** in both the **content**, **text length**, and the **labels**
 
-Here are topics to consider for generating samples:
-{get_subjects(5)}
-
-**OUTPUT FORMAT**:
-Return only a **valid JSON array** of size **{num_samples}**, with each object containing:
-
-* "sentence": the generated text (can be a sentence or paragraph)
-* "labels": a list of {min_labels}-{max_labels} descriptive strings that DO apply
-* "not_labels": a list of {min_labels}-{max_labels} hard negative labels that do NOT apply but could be plausible
-
-**Example (for illustration only)**:
-
+**EXAMPLE OUTPUT (for reference only):**
 ```json
-{json.dumps(output_example, indent=2)}
+{json.dumps(base_examples, indent=2)}
 ```
-"""
+
+**FINAL REMINDERS:**
+• NO predefined label sets - create based on content
+• Focus on CHALLENGING hard negatives, not obvious ones
+• Ensure MAXIMUM diversity in all aspects
+• Return ONLY the JSON array, nothing else"""
+    
+    return prompt

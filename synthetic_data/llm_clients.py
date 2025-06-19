@@ -17,6 +17,7 @@ class LLMConfig:
     top_p: float = 0.95
     max_retries: int = 3
     retry_delay: float = 1.0
+    repeat_penalty: float = 1.3
 
 
 class BaseLLMClient(ABC):
@@ -98,6 +99,8 @@ class OllamaClient(BaseLLMClient):
             options={
                 "seed": seed,
                 "temperature": temperature,
+                "repeat_penalty": self.config.repeat_penalty,
+                "max_tokens": self.config.max_tokens,
             },
         )
 
