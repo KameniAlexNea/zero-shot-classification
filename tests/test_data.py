@@ -34,8 +34,8 @@ class TestDataModule(unittest.TestCase):
         self.hf_data = Dataset.from_dict(
             {
                 "text": ["hello", "world"],
-                "labels_text": [["a"], ["b", "c"]],
-                "labels_int": [[1], [0, 1]],
+                LabelName.ltext: [["a"], ["b", "c"]],
+                LabelName.lint: [[1], [0, 1]],
             }
         )
         # use dummy tokenizer that returns seq_len=4

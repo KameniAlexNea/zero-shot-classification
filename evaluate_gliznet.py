@@ -9,6 +9,7 @@ from loguru import logger
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 
+from gliznet.config import LabelName
 from gliznet.data import load_dataset
 from gliznet.model import GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
@@ -41,7 +42,7 @@ class ModelEvaluator:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(self.config.device)
 
-    def _load_models(self) -> Tuple[GliZNetForSequenceClassification, GliZNETTokenizer]:
+    def _load_models(self):
         """Load model and tokenizer from checkpoint."""
         logger.info(f"Loading model from {self.config.model_path} on {self.device}")
 
@@ -108,8 +109,8 @@ class ModelEvaluator:
         ):
             try:
                 sentences = batch["text"]
-                labels = batch["labels_text"]
-                masks = batch["labels_int"]
+                labels = batch[LabelName.ltext]
+                masks = batch[LabelName.lint]
 
                 inputs_texts, labels_texts, labels_logits = self._prepare_batch_inputs(
                     sentences, labels, masks

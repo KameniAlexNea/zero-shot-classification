@@ -11,6 +11,7 @@ from typing import Dict, List, Union
 import datasets
 import torch
 
+from .config import LabelName
 from .tokenizer import GliZNETTokenizer
 
 
@@ -32,15 +33,15 @@ def load_dataset(
             labels, labels_int = zip(*combined)
         return {
             "text": x[text_column],
-            "labels_text": labels,
-            "labels_int": labels_int,
+            LabelName.ltext: labels,
+            LabelName.lint: labels_int,
         }
 
     ds = datasets.load_dataset(path, name)[split]
     ds = ds.map(
         mapper,
     )
-    return ds.select_columns(["text", "labels_text", "labels_int"])
+    return ds.select_columns(["text", LabelName.ltext, LabelName.lint])
 
 
 def limit_labels(
@@ -58,8 +59,8 @@ def add_tokenized_function(
     hf_dataset: datasets.Dataset,
     tokenizer: GliZNETTokenizer,
     text_column: str = "text",
-    labels_text_column: str = "labels_text",
-    labels_int_column: str = "labels_int",
+    labels_text_column: str = LabelName.ltext,
+    labels_int_column: str = LabelName.lint,
     max_labels=50,
     shuffle_labels: bool = True,
 ) -> datasets.Dataset:
