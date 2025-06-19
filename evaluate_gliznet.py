@@ -1,4 +1,5 @@
 import json
+from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -20,7 +21,6 @@ class EvaluationConfig:
     """Configuration for evaluation."""
 
     model_path: str = "results/best_model/model"
-    model_name: str = "results/best_model/model"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20
@@ -47,10 +47,10 @@ class ModelEvaluator:
         logger.info(f"Loading model from {self.config.model_path} on {self.device}")
 
         try:
-            tokenizer = GliZNETTokenizer.from_pretrained(self.config.model_name)
+            tokenizer = GliZNETTokenizer.from_pretrained(self.config.model_path)
 
             model = model = GliZNetForSequenceClassification.from_pretrained(
-                self.config.model_name,
+                self.config.model_path,
             )
             model.to(self.device)
             model.eval()
@@ -245,9 +245,35 @@ class ModelEvaluator:
                 logger.info(f"{metric.upper()}: {value}")
 
 
+args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
+args.add_argument(
+    "--model_path",
+    type=str,
+    default="results/best_model/model",
+    help="Path to the trained model directory.",
+)
+args.add_argument(
+    "--threshold",
+    type=float,
+    default=0.5,
+    help="Threshold for binary classification.",
+)
+args.add_argument(
+    "--results_dir",
+    type=str,
+    default="results/evaluation",
+    help="Directory to save evaluation results.",
+)
+args = args.parse_args()
+
+
 def main():
     """Main evaluation function."""
-    config = EvaluationConfig()
+    config = EvaluationConfig(
+        model_path=args.model_path,
+        threshold=args.threshold,
+        results_dir=args.results_dir,
+    )
 
     # Load test dataset
     logger.info("Loading test dataset...")

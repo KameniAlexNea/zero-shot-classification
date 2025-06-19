@@ -84,6 +84,8 @@ def main():
     )
     logger.info(f"Using device: {device}")
 
+    testing_dataset = load_dataset(split="test")
+
     # Load and prepare dataset
     dataset = load_dataset()
     splits = dataset.train_test_split(test_size=0.1, seed=42)
@@ -104,6 +106,12 @@ def main():
 
     val_dataset = add_tokenized_function(
         hf_dataset=val_data,
+        tokenizer=tokenizer,
+        shuffle_labels=False,
+        max_labels=model_args.max_labels,
+    )
+    testing_dataset = add_tokenized_function(
+        hf_dataset=testing_dataset,
         tokenizer=tokenizer,
         shuffle_labels=False,
         max_labels=model_args.max_labels,
