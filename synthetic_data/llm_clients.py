@@ -70,7 +70,7 @@ class GroqClient(BaseLLMClient):
             seed=seed,
             stream=False,
             # stop=None,
-            timeout=30
+            timeout=30,
         )
 
         return completion.choices[0].message.content

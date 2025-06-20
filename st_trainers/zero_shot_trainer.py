@@ -1,8 +1,13 @@
-import json
 import os
+
+os.environ["WANDB_PROJECT"] = "gliznet"
+os.environ["WANDB_WATCH"] = "none"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 from dataclasses import dataclass
 from typing import List, Set, Tuple
-
+import json
 import torch
 from datasets import Dataset, load_dataset
 from loguru import logger
@@ -205,7 +210,16 @@ class ZeroShotTrainer:
         logger.info("Initializing SentenceTransformer...")
         self.model = SentenceTransformer(
             model_name_or_path=self.config.model_name,
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device=(
+                "cuda"
+                + (
+                    ":" + os.environ["CUDA_VISIBLE_DEVICES"]
+                    if "CUDA_VISIBLE_DEVICES" in os.environ
+                    else ""
+                )
+                if torch.cuda.is_available()
+                else "cpu"
+            ),
         )
 
         # Choose appropriate loss function

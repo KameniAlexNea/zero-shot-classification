@@ -84,7 +84,9 @@ def random_labels():
     return random_domain, random_industry, random_tone
 
 
-def generate_prompt(num_samples: int, min_labels: int, max_labels: int, topics: str = None) -> str:
+def generate_prompt(
+    num_samples: int, min_labels: int, max_labels: int, topics: str = None
+) -> str:
     output_example = base_output_example()
 
     # Simple, controlled random elements

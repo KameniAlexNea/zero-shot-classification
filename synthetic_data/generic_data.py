@@ -14,7 +14,11 @@ class DatasetGenerator:
     def __init__(self, llm_client: BaseLLMClient):
         self.llm_client = llm_client
         self.all_topics = open("synthetic_data/all_subjects.txt").read().splitlines()
-        logger.info("Initialized DatasetGenerator with LLM client: " + str(len(self.all_topics)) + " topics loaded")
+        logger.info(
+            "Initialized DatasetGenerator with LLM client: "
+            + str(len(self.all_topics))
+            + " topics loaded"
+        )
 
     def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
         """Create the prompt for generating synthetic data."""
@@ -41,7 +45,7 @@ class DatasetGenerator:
         # Parse response
         try:
             data = parse_json(raw_response)
-        except Exception as _:
+        except Exception:
             data = []
         data = data if isinstance(data, list) else []
         return {"topics": topics, "data": data}
