@@ -39,7 +39,10 @@ class DatasetGenerator:
         raw_response = self.llm_client.generate_text(prompt)
 
         # Parse response
-        data = parse_json(raw_response)
+        try:
+            data = parse_json(raw_response)
+        except Exception as _:
+            data = []
         data = data if isinstance(data, list) else []
         return {"topics": topics, "data": data}
 
