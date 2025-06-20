@@ -5,7 +5,7 @@ os.environ["WANDB_WATCH"] = "none"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Set, Tuple
 import json
 import torch
@@ -19,50 +19,64 @@ from sentence_transformers import (
     SentenceTransformerTrainingArguments
 )
 from sentence_transformers.evaluation import TripletEvaluator
+from transformers import HfArgumentParser
 from tqdm import tqdm
-
-import wandb
 
 
 @dataclass
-class TrainingConfig:
-    model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    batch_size: int = 64
-    mini_batch_size: int = 32  # For CachedMultipleNegativesRankingLoss
-    learning_rate: float = 2e-5
-    num_epochs: int = 5
-    max_length: int = 512
-    warmup_steps: int = 1000
-    weight_decay: float = 0.01
-    scale: float = 20.0  # Scale for similarity function
-    evaluation_steps: int = 1000
-    dataset_name: str = "alexneakameni/ZSHOT-HARDSET"
-    train_split: str = "couplet"  # For training
-    eval_split: str = "triplet"  # For evaluation
+class ModelArgs:
+    model_name: str = field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        metadata={"help": "Base model name or path"},
+    )
+    dataset_name: str = field(
+        default="alexneakameni/ZSHOT-HARDSET",
+        metadata={"help": "Hugging Face dataset name"},
+    )
+    train_split: str = field(
+        default="couplet", 
+        metadata={"help": "Dataset split for training"}
+    )
+    eval_split: str = field(
+        default="triplet", 
+        metadata={"help": "Dataset split for evaluation"}
+    )
+    mini_batch_size: int = field(
+        default=32, 
+        metadata={"help": "Mini batch size for CachedMultipleNegativesRankingLoss"}
+    )
+    scale: float = field(
+        default=20.0, 
+        metadata={"help": "Scale for similarity function"}
+    )
+    margin: float = field(
+        default=0.1, 
+        metadata={"help": "Margin for triplet evaluation"}
+    )
 
 
 class ZeroShotTrainer:
-    def __init__(self, config: TrainingConfig):
-        self.config = config
+    def __init__(self, model_args: ModelArgs):
+        self.model_args = model_args
         self.all_labels = set()
         self.model = None
 
         logger.info(
-            f"Initialized ZeroShotTrainer with SentenceTransformer: {config.model_name}"
+            f"Initialized ZeroShotTrainer with SentenceTransformer: {model_args.model_name}"
         )
         logger.info(
-            f"Will use dataset: {config.dataset_name}, train split: {config.train_split}, eval split: {config.eval_split}"
+            f"Will use dataset: {model_args.dataset_name}, train split: {model_args.train_split}, eval split: {model_args.eval_split}"
         )
 
     def load_training_dataset(self) -> Tuple[Dataset, Dataset, Set[str]]:
         """Load couplet dataset for training."""
         logger.info(
-            f"Loading TRAINING dataset: {self.config.dataset_name}/{self.config.train_split}"
+            f"Loading TRAINING dataset: {self.model_args.dataset_name}/{self.model_args.train_split}"
         )
 
         try:
             # Load the couplet dataset for training
-            dataset = load_dataset(self.config.dataset_name, self.config.train_split)
+            dataset = load_dataset(self.model_args.dataset_name, self.model_args.train_split)
             train_dataset = dataset["train"]
             test_dataset = dataset["test"]
 
@@ -90,12 +104,12 @@ class ZeroShotTrainer:
     def load_evaluation_dataset(self) -> Tuple[Dataset, Set[str]]:
         """Load triplet dataset for evaluation."""
         logger.info(
-            f"Loading EVALUATION dataset: {self.config.dataset_name}/{self.config.eval_split}"
+            f"Loading EVALUATION dataset: {self.model_args.dataset_name}/{self.model_args.eval_split}"
         )
 
         try:
             # Load the triplet dataset for evaluation
-            dataset = load_dataset(self.config.dataset_name, self.config.eval_split)
+            dataset = load_dataset(self.model_args.dataset_name, self.model_args.eval_split)
             eval_dataset = dataset["test"]  # Use test split for evaluation
 
             logger.success("Loaded evaluation dataset successfully:")
@@ -175,15 +189,15 @@ class ZeroShotTrainer:
         logger.info(f"Created {len(anchors)} triplets for evaluation")
         return anchors, positives, negatives
 
-    def train(self, output_dir: str = "models/zero_shot_classifier"):
+    def train(self, training_args: SentenceTransformerTrainingArguments):
         """Complete training pipeline using couplet for training and triplet for evaluation."""
 
         # Initialize wandb
-        wandb.init(
-            project="zero-shot-classification",
-            config=self.config.__dict__,
-            name=f"zero-shot-train-{self.config.train_split}-eval-{self.config.eval_split}-{self.config.model_name.split('/')[-1]}",
-        )
+        # wandb.init(
+        #     project="zero-shot-classification",
+        #     config={**self.model_args.__dict__, **training_args.to_dict()},
+        #     name=f"zero-shot-train-{self.model_args.train_split}-eval-{self.model_args.eval_split}-{self.model_args.model_name.split('/')[-1]}",
+        # )
 
         # Load training dataset (couplet)
         train_hf, train_test_hf, train_labels = self.load_training_dataset()
@@ -210,7 +224,7 @@ class ZeroShotTrainer:
         # Initialize model
         logger.info("Initializing SentenceTransformer...")
         self.model = SentenceTransformer(
-            model_name_or_path=self.config.model_name,
+            model_name_or_path=self.model_args.model_name,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
@@ -218,8 +232,8 @@ class ZeroShotTrainer:
         logger.info("Using CachedMultipleNegativesRankingLoss...")
         train_loss = losses.CachedMultipleNegativesRankingLoss(
             model=self.model,
-            scale=self.config.scale,
-            mini_batch_size=self.config.mini_batch_size,
+            scale=self.model_args.scale,
+            mini_batch_size=self.model_args.mini_batch_size,
             show_progress_bar=False,
             similarity_fct=util.cos_sim,
         )
@@ -235,40 +249,17 @@ class ZeroShotTrainer:
             positives=positives,
             negatives=negatives,
             main_similarity_function="cosine",
-            margin=0.1,  # Margin for triplet evaluation
+            margin=self.model_args.margin,
             name="zero_shot_triplet_eval",
-            batch_size=self.config.batch_size,
+            batch_size=training_args.per_device_eval_batch_size,
             show_progress_bar=False,
         )
-
-        # Training arguments
-        args = {
-            "output_dir": output_dir,
-            "num_train_epochs": self.config.num_epochs,
-            "per_device_train_batch_size": self.config.batch_size,
-            "per_device_eval_batch_size": self.config.batch_size,
-            "warmup_steps": self.config.warmup_steps,
-            "weight_decay": self.config.weight_decay,
-            "learning_rate": self.config.learning_rate,
-            "logging_steps": 100,
-            "eval_strategy": "steps",
-            "eval_steps": self.config.evaluation_steps,
-            "save_steps": self.config.evaluation_steps,
-            "save_strategy": "steps",
-            "load_best_model_at_end": True,
-            "metric_for_best_model": "zero_shot_triplet_eval_cosine_accuracy",
-            "greater_is_better": True,
-            "report_to": "wandb",
-            "run_name": f"zero-shot-train-{self.config.train_split}-eval-{self.config.eval_split}",
-            "dataloader_num_workers": 4,
-            "fp16": torch.cuda.is_available(),
-        }
 
         # Initialize trainer
         logger.info("Initializing SentenceTransformerTrainer...")
         trainer = SentenceTransformerTrainer(
             model=self.model,
-            args=SentenceTransformerTrainingArguments(**args),
+            args=training_args,
             train_dataset=train_dataset,
             loss=train_loss,
             evaluator=evaluator,
@@ -278,10 +269,10 @@ class ZeroShotTrainer:
         logger.info("Starting training...")
         logger.info("Training setup:")
         logger.info(
-            f"  • Training data: {self.config.dataset_name}/{self.config.train_split}"
+            f"  • Training data: {self.model_args.dataset_name}/{self.model_args.train_split}"
         )
         logger.info(
-            f"  • Evaluation data: {self.config.dataset_name}/{self.config.eval_split}"
+            f"  • Evaluation data: {self.model_args.dataset_name}/{self.model_args.eval_split}"
         )
         logger.info(f"  • Loss: {type(train_loss).__name__}")
         logger.info(f"  • Evaluator: TripletEvaluator with {len(anchors)} triplets")
@@ -292,14 +283,14 @@ class ZeroShotTrainer:
         trainer.train()
 
         # Save model and metadata
-        os.makedirs(output_dir, exist_ok=True)
-        self.model.save(output_dir)
+        os.makedirs(training_args.output_dir, exist_ok=True)
+        self.model.save(training_args.output_dir)
 
         # Save dataset info
         dataset_info = {
-            "dataset_name": self.config.dataset_name,
-            "train_split": self.config.train_split,
-            "eval_split": self.config.eval_split,
+            "dataset_name": self.model_args.dataset_name,
+            "train_split": self.model_args.train_split,
+            "eval_split": self.model_args.eval_split,
             "train_labels": list(train_labels),
             "eval_labels": list(eval_labels),
             "num_train_samples": len(train_hf),
@@ -310,93 +301,46 @@ class ZeroShotTrainer:
             "total_unique_labels": len(train_labels | eval_labels),
         }
 
-        with open(os.path.join(output_dir, "dataset_info.json"), "w") as f:
+        with open(os.path.join(training_args.output_dir, "dataset_info.json"), "w") as f:
             json.dump(dataset_info, f, indent=2)
 
         # Save config
-        with open(os.path.join(output_dir, "training_config.json"), "w") as f:
-            json.dump(self.config.__dict__, f, indent=2)
+        with open(os.path.join(training_args.output_dir, "training_config.json"), "w") as f:
+            config_dict = {**self.model_args.__dict__, **training_args.to_dict()}
+            json.dump(config_dict, f, indent=2)
 
         # Final evaluation
         logger.info("Performing final triplet evaluation with hard negatives...")
         final_score = evaluator(
-            self.model, output_path=os.path.join(output_dir, "final_eval_triplet.csv")
+            self.model, output_path=os.path.join(training_args.output_dir, "final_eval_triplet.csv")
         )
 
         logger.success(
             f"Final triplet accuracy with hard negatives: {final_score[evaluator.primary_metric]:.4f}"
         )
 
-        wandb.log({"final_triplet_accuracy": final_score[evaluator.primary_metric]})
-        wandb.finish()
+        # wandb.log({"final_triplet_accuracy": final_score[evaluator.primary_metric]})
+        # wandb.finish()
 
-        logger.success(f"Training completed! Model saved to {output_dir}")
+        logger.success(f"Training completed! Model saved to {training_args.output_dir}")
         return self.model
 
 
 def main():
-    import argparse
+    parser = HfArgumentParser((ModelArgs, SentenceTransformerTrainingArguments))
+    model_args, training_args = parser.parse_args_into_dataclasses()
 
-    parser = argparse.ArgumentParser(description="Train zero-shot classification model")
-    parser.add_argument(
-        "--dataset-name",
-        type=str,
-        default="alexneakameni/ZSHOT-HARDSET",
-        help="Hugging Face dataset name",
+    # Set device
+    device = (
+        "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
     )
-    parser.add_argument(
-        "--train-split", type=str, default="couplet", help="Dataset split for training"
-    )
-    parser.add_argument(
-        "--eval-split", type=str, default="triplet", help="Dataset split for evaluation"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="models/zero_shot_classifier",
-        help="Output directory for trained model",
-    )
-    parser.add_argument(
-        "--model-name",
-        type=str,
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        help="Base model name",
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=64, help="Training batch size"
-    )
-    parser.add_argument(
-        "--mini-batch-size",
-        type=int,
-        default=32,
-        help="Mini batch size for gradient caching",
-    )
-    parser.add_argument(
-        "--learning-rate", type=float, default=2e-5, help="Learning rate"
-    )
-    parser.add_argument(
-        "--num-epochs", type=int, default=5, help="Number of training epochs"
-    )
-    parser.add_argument(
-        "--scale", type=float, default=20.0, help="Scale for similarity function"
-    )
+    logger.info(f"Using device: {device}")
 
-    args = parser.parse_args()
+    # Create output directory
+    os.makedirs(training_args.output_dir, exist_ok=True)
 
-    config = TrainingConfig(
-        dataset_name=args.dataset_name,
-        train_split=args.train_split,
-        eval_split=args.eval_split,
-        model_name=args.model_name,
-        batch_size=args.batch_size,
-        mini_batch_size=args.mini_batch_size,
-        learning_rate=args.learning_rate,
-        num_epochs=args.num_epochs,
-        scale=args.scale,
-    )
-
-    trainer = ZeroShotTrainer(config)
-    trainer.train(args.output_dir)
+    trainer = ZeroShotTrainer(model_args)
+    trainer.train(training_args)
 
 
 if __name__ == "__main__":
