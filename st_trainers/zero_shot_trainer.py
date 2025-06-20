@@ -16,6 +16,7 @@ from sentence_transformers import (
     SentenceTransformerTrainer,
     losses,
     util,
+    SentenceTransformerTrainingArguments
 )
 from sentence_transformers.evaluation import TripletEvaluator
 from tqdm import tqdm
@@ -61,9 +62,7 @@ class ZeroShotTrainer:
 
         try:
             # Load the couplet dataset for training
-            dataset = load_dataset(
-                self.config.dataset_name, split=self.config.train_split
-            )
+            dataset = load_dataset(self.config.dataset_name, self.config.train_split)
             train_dataset = dataset["train"]
             test_dataset = dataset["test"]
 
@@ -96,9 +95,7 @@ class ZeroShotTrainer:
 
         try:
             # Load the triplet dataset for evaluation
-            dataset = load_dataset(
-                self.config.dataset_name, split=self.config.eval_split
-            )
+            dataset = load_dataset(self.config.dataset_name, self.config.eval_split)
             eval_dataset = dataset["test"]  # Use test split for evaluation
 
             logger.success("Loaded evaluation dataset successfully:")
@@ -138,8 +135,10 @@ class ZeroShotTrainer:
         logger.info("Creating pairs (anchor, positive)")
         dataset_dict = {"anchor": [], "positive": []}
 
+        text_key = "text" if "text" in hf_dataset.column_names else "sentence"
+
         for item in tqdm(hf_dataset, desc="Creating pairs"):
-            text = item["sentence"]
+            text = item[text_key]
             positive_labels = item["labels"]
 
             for pos_label in positive_labels:
@@ -157,10 +156,12 @@ class ZeroShotTrainer:
         positives = []
         negatives = []
 
+        text_key = "text" if "text" in eval_dataset.column_names else "sentence"
+
         logger.info("Creating triplet evaluation data...")
 
         for item in tqdm(eval_dataset, desc="Creating triplet evaluation data"):
-            text = item["sentence"]
+            text = item[text_key]
             positive_labels = item["labels"]
             negative_labels = item.get("not_labels", [])
 
@@ -210,16 +211,7 @@ class ZeroShotTrainer:
         logger.info("Initializing SentenceTransformer...")
         self.model = SentenceTransformer(
             model_name_or_path=self.config.model_name,
-            device=(
-                "cuda"
-                + (
-                    ":" + os.environ["CUDA_VISIBLE_DEVICES"]
-                    if "CUDA_VISIBLE_DEVICES" in os.environ
-                    else ""
-                )
-                if torch.cuda.is_available()
-                else "cpu"
-            ),
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
         # Choose appropriate loss function
@@ -259,7 +251,7 @@ class ZeroShotTrainer:
             "weight_decay": self.config.weight_decay,
             "learning_rate": self.config.learning_rate,
             "logging_steps": 100,
-            "evaluation_strategy": "steps",
+            "eval_strategy": "steps",
             "eval_steps": self.config.evaluation_steps,
             "save_steps": self.config.evaluation_steps,
             "save_strategy": "steps",
@@ -276,7 +268,7 @@ class ZeroShotTrainer:
         logger.info("Initializing SentenceTransformerTrainer...")
         trainer = SentenceTransformerTrainer(
             model=self.model,
-            args=args,
+            args=SentenceTransformerTrainingArguments(**args),
             train_dataset=train_dataset,
             loss=train_loss,
             evaluator=evaluator,
