@@ -1,10 +1,5 @@
 import os
 
-os.environ["WANDB_PROJECT"] = "gliznet"
-os.environ["WANDB_WATCH"] = "none"
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 from dataclasses import dataclass, field
 from typing import List, Set, Tuple
 import json
@@ -192,13 +187,6 @@ class ZeroShotTrainer:
     def train(self, training_args: SentenceTransformerTrainingArguments):
         """Complete training pipeline using couplet for training and triplet for evaluation."""
 
-        # Initialize wandb
-        # wandb.init(
-        #     project="zero-shot-classification",
-        #     config={**self.model_args.__dict__, **training_args.to_dict()},
-        #     name=f"zero-shot-train-{self.model_args.train_split}-eval-{self.model_args.eval_split}-{self.model_args.model_name.split('/')[-1]}",
-        # )
-
         # Load training dataset (couplet)
         train_hf, train_test_hf, train_labels = self.load_training_dataset()
 
@@ -319,8 +307,6 @@ class ZeroShotTrainer:
             f"Final triplet accuracy with hard negatives: {final_score[evaluator.primary_metric]:.4f}"
         )
 
-        # wandb.log({"final_triplet_accuracy": final_score[evaluator.primary_metric]})
-        # wandb.finish()
 
         logger.success(f"Training completed! Model saved to {training_args.output_dir}")
         return self.model

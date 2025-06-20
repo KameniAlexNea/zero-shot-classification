@@ -5,6 +5,7 @@ export WANDB_PROJECT="zero-shot-classification"
 export WANDB_WATCH="none"
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 export CUDA_VISIBLE_DEVICES="1"
+export TOKENIZERS_PARALLELISM="true"
 
 # Training script path
 SCRIPT_PATH="st_trainers/zero_shot_trainer.py"
@@ -18,7 +19,7 @@ EVAL_SPLIT="triplet"
 # Training arguments
 OUTPUT_DIR="./models/zero_shot_classifier_$(date +%Y%m%d_%H%M%S)"
 NUM_EPOCHS=5
-BATCH_SIZE=64
+BATCH_SIZE=128
 MINI_BATCH_SIZE=32
 LEARNING_RATE=2e-5
 WARMUP_STEPS=1000
@@ -50,7 +51,6 @@ nohup uv run "$SCRIPT_PATH" \
     --save_strategy "steps" \
     --load_best_model_at_end \
     --metric_for_best_model "zero_shot_triplet_eval_cosine_accuracy" \
-    --greater_is_better \
     --report_to "wandb" \
     --dataloader_num_workers 4 \
     --fp16 \
