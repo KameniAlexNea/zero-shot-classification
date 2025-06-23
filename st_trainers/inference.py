@@ -209,7 +209,7 @@ def main():
                     parts = command[9:].split(" | ")
                     if len(parts) == 2:
                         text, labels_str = parts
-                        labels = [l.strip() for l in labels_str.split(",")]
+                        labels = [lab.strip() for lab in labels_str.split(",")]
                         result = inference.classify_with_threshold(
                             text.strip(), labels, args.threshold
                         )

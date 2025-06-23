@@ -63,135 +63,118 @@ class ZeroShotTrainer:
             f"Will use dataset: {model_args.dataset_name}, train split: {model_args.train_split}, eval split: {model_args.eval_split}"
         )
 
-    def load_training_dataset(self) -> Tuple[Dataset, Dataset, Set[str]]:
-        """Load couplet dataset for training."""
-        logger.info(
-            f"Loading TRAINING dataset: {self.model_args.dataset_name}/{self.model_args.train_split}"
-        )
+    def load_dataset(self, split_name: str, split_type: str = "train") -> Tuple[Dataset, Set[str]]:
+        """Load dataset and return standardized format with text, positive, negative (optional)."""
+        logger.info(f"Loading dataset: {self.model_args.dataset_name}/{split_name}")
 
         try:
-            # Load the couplet dataset for training
-            dataset = load_dataset(self.model_args.dataset_name, self.model_args.train_split)
-            train_dataset = dataset["train"]
-            test_dataset = dataset["test"]
+            # Load the dataset
+            dataset = load_dataset(self.model_args.dataset_name, split_name)
+            target_dataset = dataset[split_type]
 
-            logger.success("Loaded training dataset successfully:")
-            logger.info(f"  Train samples: {len(train_dataset)}")
-            logger.info(f"  Test samples: {len(test_dataset)}")
+            logger.success(f"Loaded {split_name} dataset successfully:")
+            logger.info(f"  Samples: {len(target_dataset)}")
 
-            # Extract all unique labels from training data
-            train_labels = set()
+            # Check available columns
+            has_negatives = "not_labels" in target_dataset.column_names
 
-            logger.info("Analyzing training label distribution...")
-            for item in tqdm(train_dataset, desc="Processing train labels"):
-                for label in item["labels"]:
-                    train_labels.add(label)
-
-            logger.info("Training dataset statistics:")
-            logger.info(f"  Train labels: {len(train_labels)}")
-
-            return train_dataset, test_dataset, train_labels
-
-        except Exception as e:
-            logger.error(f"Failed to load training dataset from Hugging Face: {e}")
-            raise
-
-    def load_evaluation_dataset(self) -> Tuple[Dataset, Set[str]]:
-        """Load triplet dataset for evaluation."""
-        logger.info(
-            f"Loading EVALUATION dataset: {self.model_args.dataset_name}/{self.model_args.eval_split}"
-        )
-
-        try:
-            # Load the triplet dataset for evaluation
-            dataset = load_dataset(self.model_args.dataset_name, self.model_args.eval_split)
-            eval_dataset = dataset["test"]  # Use test split for evaluation
-
-            logger.success("Loaded evaluation dataset successfully:")
-            logger.info(f"  Eval samples: {len(eval_dataset)}")
-
-            # Check if it has hard negatives
-            sample = eval_dataset[0]
-            has_not_labels = "not_labels" in sample
-
-            if has_not_labels:
-                logger.info("✓ Evaluation dataset contains hard negatives (not_labels)")
+            if has_negatives:
+                logger.info("✓ Dataset contains hard negatives (not_labels)")
             else:
-                logger.warning("✗ Evaluation dataset missing hard negatives")
+                logger.info("✗ Dataset missing hard negatives")
 
-            # Extract all unique labels from evaluation data
-            eval_labels = set()
-
-            logger.info("Analyzing evaluation label distribution...")
-            for item in tqdm(eval_dataset, desc="Processing eval labels"):
+            # Extract all unique labels
+            all_labels = set()
+            logger.info("Analyzing label distribution...")
+            
+            for item in tqdm(target_dataset, desc="Processing labels"):
                 for label in item["labels"]:
-                    eval_labels.add(label)
-                if has_not_labels:
+                    all_labels.add(label)
+                if has_negatives:
                     for label in item.get("not_labels", []):
-                        eval_labels.add(label)
+                        all_labels.add(label)
 
-            logger.info("Evaluation dataset statistics:")
-            logger.info(f"  Eval labels: {len(eval_labels)}")
-
-            return eval_dataset, eval_labels
+            logger.info(f"Dataset statistics: {len(all_labels)} unique labels")
+            return target_dataset, all_labels
 
         except Exception as e:
-            logger.error(f"Failed to load evaluation dataset from Hugging Face: {e}")
+            logger.error(f"Failed to load dataset from Hugging Face: {e}")
             raise
 
-    def create_contrastive_dataset(self, hf_dataset: Dataset) -> Dataset:
-        """Convert HF dataset to contrastive learning format."""
-        logger.info("Creating pairs (anchor, positive)")
-        dataset_dict = {"anchor": [], "positive": []}
-
+    def prepare_contrastive_dataset(self, hf_dataset: Dataset) -> Dataset:
+        """Convert HF dataset to standardized contrastive format: text, positive, negative (optional)."""
+        logger.info("Preparing contrastive dataset")
+        
         text_key = "text" if "text" in hf_dataset.column_names else "sentence"
+        has_negatives = "not_labels" in hf_dataset.column_names
+        
+        dataset_dict = {"text": [], "positive": []}
+        if has_negatives:
+            dataset_dict["negative"] = []
 
-        for item in tqdm(hf_dataset, desc="Creating pairs"):
+        for item in tqdm(hf_dataset, desc="Creating contrastive pairs"):
             text = item[text_key]
             positive_labels = item["labels"]
+            negative_labels = item.get("not_labels", []) if has_negatives else []
 
+            # Create positive pairs
             for pos_label in positive_labels:
-                dataset_dict["anchor"].append(text)
+                dataset_dict["text"].append(text)
                 dataset_dict["positive"].append(pos_label)
+                
+                if has_negatives and negative_labels:
+                    # Use first negative or cycle through them
+                    neg_idx = len(dataset_dict["text"]) % len(negative_labels) - 1
+                    dataset_dict["negative"].append(negative_labels[neg_idx])
 
-        logger.info(f"Created {len(dataset_dict['anchor'])} pairs")
+        logger.info(f"Created {len(dataset_dict['text'])} contrastive pairs")
+        if has_negatives:
+            logger.info(f"  With negatives: {len(dataset_dict['negative'])}")
+            
         return Dataset.from_dict(dataset_dict)
 
-    def create_triplet_evaluation_data(
-        self, eval_dataset: Dataset
-    ) -> Tuple[List[str], List[str], List[str]]:
-        """Create triplet evaluation data (anchors, positives, negatives) from dataset."""
+    def create_triplet_evaluation_data(self, contrastive_dataset: Dataset) -> Tuple[List[str], List[str], List[str]]:
+        """Create triplet evaluation data from standardized contrastive dataset."""
         anchors = []
         positives = []
         negatives = []
 
-        text_key = "text" if "text" in eval_dataset.column_names else "sentence"
-
         logger.info("Creating triplet evaluation data...")
 
-        for item in tqdm(eval_dataset, desc="Creating triplet evaluation data"):
-            text = item[text_key]
-            positive_labels = item["labels"]
-            negative_labels = item.get("not_labels", [])
+        # Check if dataset has negatives
+        has_negatives = "negative" in contrastive_dataset.column_names
 
-            # Create all combinations of positive and negative labels for this text
-            for pos_label in positive_labels:
-                for neg_label in negative_labels:
-                    anchors.append(text)
-                    positives.append(pos_label)
-                    negatives.append(neg_label)
+        if not has_negatives:
+            logger.warning("Dataset has no negatives - using random negatives from positives")
+            # Collect all unique positives for random negatives
+            all_positives = list(set(contrastive_dataset["positive"]))
+
+        for i, item in enumerate(tqdm(contrastive_dataset, desc="Creating triplet evaluation data")):
+            text = item["text"]
+            positive = item["positive"]
+            
+            if has_negatives:
+                negative = item["negative"]
+            else:
+                # Use random negative from other positives
+                import random
+                negative = random.choice([p for p in all_positives if p != positive])
+            
+            anchors.append(text)
+            positives.append(positive)
+            negatives.append(negative)
 
         logger.info(f"Created {len(anchors)} triplets for evaluation")
         return anchors, positives, negatives
 
     def train(self, training_args: SentenceTransformerTrainingArguments):
-        """Complete training pipeline using couplet for training and triplet for evaluation."""
+        """Complete training pipeline using simplified data loading."""
 
-        # Load training dataset (couplet)
-        train_hf, train_test_hf, train_labels = self.load_training_dataset()
+        # Load training dataset
+        train_hf, train_labels = self.load_dataset(self.model_args.train_split, "train")
 
-        # Load evaluation dataset (triplet)
-        eval_hf, eval_labels = self.load_evaluation_dataset()
+        # Load evaluation dataset  
+        eval_hf, eval_labels = self.load_dataset(self.model_args.eval_split, "test")
 
         # Check for label overlap between train and eval
         label_overlap = train_labels & eval_labels
@@ -203,11 +186,13 @@ class ZeroShotTrainer:
         else:
             logger.success("✓ No label overlap - true zero-shot setup!")
 
-        # Convert training data to contrastive learning format
-        train_dataset = self.create_contrastive_dataset(train_hf)
+        # Prepare contrastive datasets
+        train_dataset = self.prepare_contrastive_dataset(train_hf)
+        eval_dataset = self.prepare_contrastive_dataset(eval_hf)
 
-        logger.info("Training dataset created:")
+        logger.info("Datasets prepared:")
         logger.info(f"  Train: {len(train_dataset)} pairs")
+        logger.info(f"  Eval: {len(eval_dataset)} pairs")
 
         # Initialize model
         logger.info("Initializing SentenceTransformer...")
@@ -216,8 +201,15 @@ class ZeroShotTrainer:
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
 
-        # Choose appropriate loss function
+        # Choose appropriate loss function - update to use 'text' instead of 'anchor'
         logger.info("Using CachedMultipleNegativesRankingLoss...")
+        
+        # Convert dataset format for compatibility with the loss function
+        train_loss_dataset = Dataset.from_dict({
+            "anchor": train_dataset["text"],
+            "positive": train_dataset["positive"]
+        })
+        
         train_loss = losses.CachedMultipleNegativesRankingLoss(
             model=self.model,
             scale=self.model_args.scale,
@@ -226,11 +218,9 @@ class ZeroShotTrainer:
             similarity_fct=util.cos_sim,
         )
 
-        # Create TripletEvaluator using triplet data with hard negatives
-        logger.info(
-            "Setting up TripletEvaluator with triplet data and hard negatives..."
-        )
-        anchors, positives, negatives = self.create_triplet_evaluation_data(eval_hf)
+        # Create TripletEvaluator using standardized evaluation data
+        logger.info("Setting up TripletEvaluator...")
+        anchors, positives, negatives = self.create_triplet_evaluation_data(eval_dataset)
 
         evaluator = TripletEvaluator(
             anchors=anchors,
@@ -248,7 +238,7 @@ class ZeroShotTrainer:
         trainer = SentenceTransformerTrainer(
             model=self.model,
             args=training_args,
-            train_dataset=train_dataset,
+            train_dataset=train_loss_dataset,
             loss=train_loss,
             evaluator=evaluator,
         )
@@ -264,9 +254,6 @@ class ZeroShotTrainer:
         )
         logger.info(f"  • Loss: {type(train_loss).__name__}")
         logger.info(f"  • Evaluator: TripletEvaluator with {len(anchors)} triplets")
-        logger.info(
-            "🎯 Key insight: Training on couplets, evaluating with triplet hard negatives!"
-        )
 
         trainer.train()
 
@@ -285,7 +272,8 @@ class ZeroShotTrainer:
             "num_eval_samples": len(eval_hf),
             "train_pairs": len(train_dataset),
             "eval_triplets": len(anchors),
-            "has_hard_negatives_eval": True,
+            "has_hard_negatives_train": "negative" in train_dataset.column_names,
+            "has_hard_negatives_eval": "negative" in eval_dataset.column_names,
             "total_unique_labels": len(train_labels | eval_labels),
         }
 
@@ -298,15 +286,14 @@ class ZeroShotTrainer:
             json.dump(config_dict, f, indent=2)
 
         # Final evaluation
-        logger.info("Performing final triplet evaluation with hard negatives...")
+        logger.info("Performing final triplet evaluation...")
         final_score = evaluator(
             self.model, output_path=os.path.join(training_args.output_dir, "final_eval_triplet.csv")
         )
 
         logger.success(
-            f"Final triplet accuracy with hard negatives: {final_score[evaluator.primary_metric]:.4f}"
+            f"Final triplet accuracy: {final_score[evaluator.primary_metric]:.4f}"
         )
-
 
         logger.success(f"Training completed! Model saved to {training_args.output_dir}")
         return self.model
