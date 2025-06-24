@@ -29,7 +29,7 @@ class ModelArgs:
         metadata={"help": "Hugging Face dataset name"},
     )
     train_split: str = field(
-        default="couplet", metadata={"help": "Dataset split for training"}
+        default="triplet", metadata={"help": "Dataset split for training"}
     )
     eval_split: str = field(
         default="triplet", metadata={"help": "Dataset split for evaluation"}
@@ -119,15 +119,16 @@ class ZeroShotTrainer:
             positive_labels = item["labels"]
             negative_labels = item.get("not_labels", []) if has_negatives else []
 
-            # Create positive pairs
-            for pos_label in positive_labels:
-                dataset_dict["text"].append(text)
-                dataset_dict["positive"].append(pos_label)
+            if has_negatives and negative_labels: # Ensure we have negatives
+                # Create positive pairs
+                for pos_label in positive_labels:
+                    dataset_dict["text"].append(text)
+                    dataset_dict["positive"].append(pos_label)
 
-                if has_negatives and negative_labels:
-                    # Use first negative or cycle through them
-                    neg_idx = len(dataset_dict["text"]) % len(negative_labels) - 1
-                    dataset_dict["negative"].append(negative_labels[neg_idx])
+                    if has_negatives and negative_labels:
+                        # Use first negative or cycle through them
+                        neg_idx = len(dataset_dict["text"]) % len(negative_labels) - 1
+                        dataset_dict["negative"].append(negative_labels[neg_idx])
 
         logger.info(f"Created {len(dataset_dict['text'])} contrastive pairs")
         if has_negatives:

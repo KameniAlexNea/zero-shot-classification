@@ -22,7 +22,7 @@ NUM_EPOCHS=5
 BATCH_SIZE=128
 MINI_BATCH_SIZE=32
 LEARNING_RATE=2e-5
-WARMUP_STEPS=1000
+WARMUP_RATIO=0.1
 WEIGHT_DECAY=0.01
 SCALE=20.0
 MARGIN=0.1
@@ -42,7 +42,7 @@ nohup uv run "$SCRIPT_PATH" \
     --per_device_train_batch_size "$BATCH_SIZE" \
     --per_device_eval_batch_size "$BATCH_SIZE" \
     --learning_rate "$LEARNING_RATE" \
-    --warmup_steps "$WARMUP_STEPS" \
+    --warmup_ratio "$WARMUP_RATIO" \
     --weight_decay "$WEIGHT_DECAY" \
     --logging_steps 100 \
     --eval_strategy "epoch" \
@@ -55,6 +55,6 @@ nohup uv run "$SCRIPT_PATH" \
     --dataloader_num_workers 4 \
     --fp16 \
     --run_name "zero-shot-train-${TRAIN_SPLIT}-eval-${EVAL_SPLIT}" \
-    &> nohup2.out &
+    &> nohup.out &
 
 echo "Training completed! Model saved to: $OUTPUT_DIR"
