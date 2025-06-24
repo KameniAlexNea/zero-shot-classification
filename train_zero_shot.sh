@@ -45,10 +45,10 @@ nohup uv run "$SCRIPT_PATH" \
     --warmup_steps "$WARMUP_STEPS" \
     --weight_decay "$WEIGHT_DECAY" \
     --logging_steps 100 \
-    --eval_strategy "steps" \
+    --eval_strategy "epoch" \
     --eval_steps "$EVAL_STEPS" \
     --save_steps "$EVAL_STEPS" \
-    --save_strategy "steps" \
+    --save_strategy "epoch" \
     --load_best_model_at_end \
     --metric_for_best_model "zero_shot_triplet_eval_cosine_accuracy" \
     --report_to "wandb" \

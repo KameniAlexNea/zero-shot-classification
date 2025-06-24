@@ -1,21 +1,21 @@
+import json
 import os
-
 from dataclasses import dataclass, field
 from typing import List, Set, Tuple
-import json
+
 import torch
 from datasets import Dataset, load_dataset
 from loguru import logger
 from sentence_transformers import (
     SentenceTransformer,
     SentenceTransformerTrainer,
+    SentenceTransformerTrainingArguments,
     losses,
     util,
-    SentenceTransformerTrainingArguments
 )
 from sentence_transformers.evaluation import TripletEvaluator
-from transformers import HfArgumentParser
 from tqdm import tqdm
+from transformers import EarlyStoppingCallback, HfArgumentParser
 
 
 @dataclass
@@ -29,24 +29,24 @@ class ModelArgs:
         metadata={"help": "Hugging Face dataset name"},
     )
     train_split: str = field(
-        default="couplet", 
-        metadata={"help": "Dataset split for training"}
+        default="couplet", metadata={"help": "Dataset split for training"}
     )
     eval_split: str = field(
-        default="triplet", 
-        metadata={"help": "Dataset split for evaluation"}
+        default="triplet", metadata={"help": "Dataset split for evaluation"}
     )
     mini_batch_size: int = field(
-        default=32, 
-        metadata={"help": "Mini batch size for CachedMultipleNegativesRankingLoss"}
+        default=32,
+        metadata={"help": "Mini batch size for CachedMultipleNegativesRankingLoss"},
     )
     scale: float = field(
-        default=20.0, 
-        metadata={"help": "Scale for similarity function"}
+        default=20.0, metadata={"help": "Scale for similarity function"}
     )
     margin: float = field(
-        default=0.1, 
-        metadata={"help": "Margin for triplet evaluation"}
+        default=0.1, metadata={"help": "Margin for triplet evaluation"}
+    )
+    early_stopping_patience: int = field(
+        default=3,
+        metadata={"help": "Early stopping patience"},
     )
 
 
@@ -63,7 +63,9 @@ class ZeroShotTrainer:
             f"Will use dataset: {model_args.dataset_name}, train split: {model_args.train_split}, eval split: {model_args.eval_split}"
         )
 
-    def load_dataset(self, split_name: str, split_type: str = "train") -> Tuple[Dataset, Set[str]]:
+    def load_dataset(
+        self, split_name: str, split_type: str = "train"
+    ) -> Tuple[Dataset, Set[str]]:
         """Load dataset and return standardized format with text, positive, negative (optional)."""
         logger.info(f"Loading dataset: {self.model_args.dataset_name}/{split_name}")
 
@@ -86,7 +88,7 @@ class ZeroShotTrainer:
             # Extract all unique labels
             all_labels = set()
             logger.info("Analyzing label distribution...")
-            
+
             for item in tqdm(target_dataset, desc="Processing labels"):
                 for label in item["labels"]:
                     all_labels.add(label)
@@ -104,10 +106,10 @@ class ZeroShotTrainer:
     def prepare_contrastive_dataset(self, hf_dataset: Dataset) -> Dataset:
         """Convert HF dataset to standardized contrastive format: text, positive, negative (optional)."""
         logger.info("Preparing contrastive dataset")
-        
+
         text_key = "text" if "text" in hf_dataset.column_names else "sentence"
         has_negatives = "not_labels" in hf_dataset.column_names
-        
+
         dataset_dict = {"text": [], "positive": []}
         if has_negatives:
             dataset_dict["negative"] = []
@@ -121,7 +123,7 @@ class ZeroShotTrainer:
             for pos_label in positive_labels:
                 dataset_dict["text"].append(text)
                 dataset_dict["positive"].append(pos_label)
-                
+
                 if has_negatives and negative_labels:
                     # Use first negative or cycle through them
                     neg_idx = len(dataset_dict["text"]) % len(negative_labels) - 1
@@ -130,10 +132,12 @@ class ZeroShotTrainer:
         logger.info(f"Created {len(dataset_dict['text'])} contrastive pairs")
         if has_negatives:
             logger.info(f"  With negatives: {len(dataset_dict['negative'])}")
-            
+
         return Dataset.from_dict(dataset_dict)
 
-    def create_triplet_evaluation_data(self, contrastive_dataset: Dataset) -> Tuple[List[str], List[str], List[str]]:
+    def create_triplet_evaluation_data(
+        self, contrastive_dataset: Dataset
+    ) -> Tuple[List[str], List[str], List[str]]:
         """Create triplet evaluation data from standardized contrastive dataset."""
         anchors = []
         positives = []
@@ -145,21 +149,26 @@ class ZeroShotTrainer:
         has_negatives = "negative" in contrastive_dataset.column_names
 
         if not has_negatives:
-            logger.warning("Dataset has no negatives - using random negatives from positives")
+            logger.warning(
+                "Dataset has no negatives - using random negatives from positives"
+            )
             # Collect all unique positives for random negatives
             all_positives = list(set(contrastive_dataset["positive"]))
 
-        for i, item in enumerate(tqdm(contrastive_dataset, desc="Creating triplet evaluation data")):
+        for i, item in enumerate(
+            tqdm(contrastive_dataset, desc="Creating triplet evaluation data")
+        ):
             text = item["text"]
             positive = item["positive"]
-            
+
             if has_negatives:
                 negative = item["negative"]
             else:
                 # Use random negative from other positives
                 import random
+
                 negative = random.choice([p for p in all_positives if p != positive])
-            
+
             anchors.append(text)
             positives.append(positive)
             negatives.append(negative)
@@ -173,7 +182,7 @@ class ZeroShotTrainer:
         # Load training dataset
         train_hf, train_labels = self.load_dataset(self.model_args.train_split, "train")
 
-        # Load evaluation dataset  
+        # Load evaluation dataset
         eval_hf, eval_labels = self.load_dataset(self.model_args.eval_split, "test")
 
         # Check for label overlap between train and eval
@@ -203,13 +212,12 @@ class ZeroShotTrainer:
 
         # Choose appropriate loss function - update to use 'text' instead of 'anchor'
         logger.info("Using CachedMultipleNegativesRankingLoss...")
-        
+
         # Convert dataset format for compatibility with the loss function
-        train_loss_dataset = Dataset.from_dict({
-            "anchor": train_dataset["text"],
-            "positive": train_dataset["positive"]
-        })
-        
+        train_loss_dataset = Dataset.from_dict(
+            {"anchor": train_dataset["text"], "positive": train_dataset["positive"]}
+        )
+
         train_loss = losses.CachedMultipleNegativesRankingLoss(
             model=self.model,
             scale=self.model_args.scale,
@@ -220,7 +228,9 @@ class ZeroShotTrainer:
 
         # Create TripletEvaluator using standardized evaluation data
         logger.info("Setting up TripletEvaluator...")
-        anchors, positives, negatives = self.create_triplet_evaluation_data(eval_dataset)
+        anchors, positives, negatives = self.create_triplet_evaluation_data(
+            eval_dataset
+        )
 
         evaluator = TripletEvaluator(
             anchors=anchors,
@@ -241,6 +251,11 @@ class ZeroShotTrainer:
             train_dataset=train_loss_dataset,
             loss=train_loss,
             evaluator=evaluator,
+            callbacks=[
+                EarlyStoppingCallback(
+                    early_stopping_patience=self.model_args.early_stopping_patience
+                )
+            ],
         )
 
         # Train model
@@ -259,7 +274,7 @@ class ZeroShotTrainer:
 
         # Save model and metadata
         os.makedirs(training_args.output_dir, exist_ok=True)
-        self.model.save(training_args.output_dir)
+        # self.model.save(training_args.output_dir)
 
         # Save dataset info
         dataset_info = {
@@ -277,18 +292,25 @@ class ZeroShotTrainer:
             "total_unique_labels": len(train_labels | eval_labels),
         }
 
-        with open(os.path.join(training_args.output_dir, "dataset_info.json"), "w") as f:
+        with open(
+            os.path.join(training_args.output_dir, "dataset_info.json"), "w"
+        ) as f:
             json.dump(dataset_info, f, indent=2)
 
         # Save config
-        with open(os.path.join(training_args.output_dir, "training_config.json"), "w") as f:
+        with open(
+            os.path.join(training_args.output_dir, "training_config.json"), "w"
+        ) as f:
             config_dict = {**self.model_args.__dict__, **training_args.to_dict()}
             json.dump(config_dict, f, indent=2)
 
         # Final evaluation
         logger.info("Performing final triplet evaluation...")
         final_score = evaluator(
-            self.model, output_path=os.path.join(training_args.output_dir, "final_eval_triplet.csv")
+            self.model,
+            output_path=os.path.join(
+                training_args.output_dir, "final_eval_triplet.csv"
+            ),
         )
 
         logger.success(
