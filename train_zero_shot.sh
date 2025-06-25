@@ -13,7 +13,7 @@ SCRIPT_PATH="st_trainers/zero_shot_trainer.py"
 # Model and dataset arguments
 MODEL_NAME="sentence-transformers/all-MiniLM-L6-v2"
 DATASET_NAME="alexneakameni/ZSHOT-HARDSET"
-TRAIN_SPLIT="couplet"
+TRAIN_SPLIT="triplet"
 EVAL_SPLIT="triplet"
 
 # Training arguments
@@ -55,6 +55,7 @@ nohup uv run "$SCRIPT_PATH" \
     --dataloader_num_workers 4 \
     --fp16 \
     --run_name "zero-shot-train-${TRAIN_SPLIT}-eval-${EVAL_SPLIT}" \
+    --batch_sampler no_duplicates \
     &> nohup.out &
 
 echo "Training completed! Model saved to: $OUTPUT_DIR"

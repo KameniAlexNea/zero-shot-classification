@@ -1,19 +1,22 @@
 import json
 import os
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import List, Set, Tuple
 
 import torch
 from datasets import Dataset, load_dataset
 from loguru import logger
-from sentence_transformers import (
-    SentenceTransformer,
-    SentenceTransformerTrainer,
-    SentenceTransformerTrainingArguments,
-    losses,
-    util,
+from sentence_transformers.cross_encoder import CrossEncoder
+from sentence_transformers.cross_encoder.losses import (
+    CachedMultipleNegativesRankingLoss,
+)
+from sentence_transformers.cross_encoder.trainer import CrossEncoderTrainer
+from sentence_transformers.cross_encoder.training_args import (
+    CrossEncoderTrainingArguments,
 )
 from sentence_transformers.evaluation import TripletEvaluator
+from sentence_transformers.training_args import BatchSamplers
 from tqdm import tqdm
 from transformers import EarlyStoppingCallback, HfArgumentParser
 
@@ -55,6 +58,7 @@ class ZeroShotTrainer:
         self.model_args = model_args
         self.all_labels = set()
         self.model = None
+        self.num_negatives = 3
 
         logger.info(
             f"Initialized ZeroShotTrainer with SentenceTransformer: {model_args.model_name}"
@@ -119,7 +123,11 @@ class ZeroShotTrainer:
             positive_labels = item["labels"]
             negative_labels = item.get("not_labels", []) if has_negatives else []
 
-            if has_negatives and negative_labels: # Ensure we have negatives
+            if not has_negatives:
+                for pos_label in positive_labels:
+                    dataset_dict["text"].append(text)
+                    dataset_dict["positive"].append(pos_label)
+            if has_negatives and negative_labels:  # Ensure we have negatives
                 # Create positive pairs
                 for pos_label in positive_labels:
                     dataset_dict["text"].append(text)
@@ -135,6 +143,32 @@ class ZeroShotTrainer:
             logger.info(f"  With negatives: {len(dataset_dict['negative'])}")
 
         return Dataset.from_dict(dataset_dict)
+
+    def prepare_training_data(self, hf_dataset: Dataset) -> Dataset:
+        text_key = "text" if "text" in hf_dataset.column_names else "sentence"
+
+        def create_triplets(batch):
+            outputs = defaultdict(list)
+            for query, pos_labels, neg_labels in zip(
+                batch[text_key],
+                batch["labels"],
+                batch.get("not_labels", [[]] * len(batch[text_key])),
+            ):
+                if len(neg_labels) < self.num_negatives:
+                    continue
+                for pos_label in pos_labels:
+                    outputs["text"].append(query)
+                    outputs["positive"].append(pos_label)
+                    for idx in range(self.num_negatives):
+                        outputs[f"negative_{idx + 1}"].append(neg_labels[idx])
+            return outputs
+
+        return hf_dataset.map(
+            create_triplets,
+            batched=True,
+            remove_columns=hf_dataset.column_names,
+            desc="Preparing training triplets",
+        )
 
     def create_triplet_evaluation_data(
         self, contrastive_dataset: Dataset
@@ -177,7 +211,7 @@ class ZeroShotTrainer:
         logger.info(f"Created {len(anchors)} triplets for evaluation")
         return anchors, positives, negatives
 
-    def train(self, training_args: SentenceTransformerTrainingArguments):
+    def train(self, training_args: CrossEncoderTrainingArguments):
         """Complete training pipeline using simplified data loading."""
 
         # Load training dataset
@@ -197,7 +231,7 @@ class ZeroShotTrainer:
             logger.success("✓ No label overlap - true zero-shot setup!")
 
         # Prepare contrastive datasets
-        train_dataset = self.prepare_contrastive_dataset(train_hf)
+        train_dataset = self.prepare_training_data(train_hf)
         eval_dataset = self.prepare_contrastive_dataset(eval_hf)
 
         logger.info("Datasets prepared:")
@@ -206,7 +240,7 @@ class ZeroShotTrainer:
 
         # Initialize model
         logger.info("Initializing SentenceTransformer...")
-        self.model = SentenceTransformer(
+        self.model = CrossEncoder(
             model_name_or_path=self.model_args.model_name,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
@@ -214,17 +248,13 @@ class ZeroShotTrainer:
         # Choose appropriate loss function - update to use 'text' instead of 'anchor'
         logger.info("Using CachedMultipleNegativesRankingLoss...")
 
-        # Convert dataset format for compatibility with the loss function
-        train_loss_dataset = Dataset.from_dict(
-            {"anchor": train_dataset["text"], "positive": train_dataset["positive"]}
-        )
-
-        train_loss = losses.CachedMultipleNegativesRankingLoss(
+        train_loss = CachedMultipleNegativesRankingLoss(
             model=self.model,
             scale=self.model_args.scale,
             mini_batch_size=self.model_args.mini_batch_size,
             show_progress_bar=False,
-            similarity_fct=util.cos_sim,
+            num_negatives=self.num_negatives,
+            # similarity_fct=util.cos_sim,
         )
 
         # Create TripletEvaluator using standardized evaluation data
@@ -246,10 +276,10 @@ class ZeroShotTrainer:
 
         # Initialize trainer
         logger.info("Initializing SentenceTransformerTrainer...")
-        trainer = SentenceTransformerTrainer(
+        trainer = CrossEncoderTrainer(
             model=self.model,
             args=training_args,
-            train_dataset=train_loss_dataset,
+            train_dataset=train_dataset,
             loss=train_loss,
             evaluator=evaluator,
             callbacks=[
@@ -285,7 +315,7 @@ class ZeroShotTrainer:
             "train_labels": list(train_labels),
             "eval_labels": list(eval_labels),
             "num_train_samples": len(train_hf),
-            "num_eval_samples": len(eval_hf),
+            "num_eval_samples": len(eval_dataset),
             "train_pairs": len(train_dataset),
             "eval_triplets": len(anchors),
             "has_hard_negatives_train": "negative" in train_dataset.column_names,
@@ -323,7 +353,8 @@ class ZeroShotTrainer:
 
 
 def main():
-    parser = HfArgumentParser((ModelArgs, SentenceTransformerTrainingArguments))
+    BatchSamplers.NO_DUPLICATES
+    parser = HfArgumentParser((ModelArgs, CrossEncoderTrainingArguments))
     model_args, training_args = parser.parse_args_into_dataclasses()
 
     # Set device
