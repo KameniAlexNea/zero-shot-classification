@@ -15,7 +15,7 @@ from sentence_transformers.cross_encoder.trainer import CrossEncoderTrainer
 from sentence_transformers.cross_encoder.training_args import (
     CrossEncoderTrainingArguments,
 )
-from sentence_transformers.evaluation import TripletEvaluator
+from sentence_transformers.cross_encoder.evaluation import CrossEncoderClassificationEvaluator
 from sentence_transformers.training_args import BatchSamplers
 from tqdm import tqdm
 from transformers import EarlyStoppingCallback, HfArgumentParser
@@ -258,20 +258,23 @@ class ZeroShotTrainer:
         )
 
         # Create TripletEvaluator using standardized evaluation data
-        logger.info("Setting up TripletEvaluator...")
+        logger.info("Setting up ClassificationEvaluator...")
         anchors, positives, negatives = self.create_triplet_evaluation_data(
             eval_dataset
         )
 
-        evaluator = TripletEvaluator(
-            anchors=anchors,
-            positives=positives,
-            negatives=negatives,
-            main_similarity_function="cosine",
-            margin=self.model_args.margin,
-            name="zero_shot_triplet_eval",
-            batch_size=training_args.per_device_eval_batch_size,
-            show_progress_bar=False,
+        pairs_positives = list(zip(anchors, positives))
+        pairs_negatives = list(zip(anchors, negatives))
+        pairs = pairs_positives + pairs_negatives
+        label_pairs = [1] * len(pairs_positives) + [0] * len(pairs_negatives)
+
+        evaluator = CrossEncoderClassificationEvaluator(
+            sentence_pairs=pairs,
+            labels=label_pairs,
+            name=f"{self.model_args.dataset_name}-{self.model_args.eval_split}",
+            batch_size=training_args.eval_batch_size,
+            show_progress_bar=True,
+            write_csv=True,
         )
 
         # Initialize trainer
@@ -299,7 +302,7 @@ class ZeroShotTrainer:
             f"  • Evaluation data: {self.model_args.dataset_name}/{self.model_args.eval_split}"
         )
         logger.info(f"  • Loss: {type(train_loss).__name__}")
-        logger.info(f"  • Evaluator: TripletEvaluator with {len(anchors)} triplets")
+        logger.info(f"  • Evaluator: Classification with {len(anchors)} triplets")
 
         trainer.train()
 

@@ -18,7 +18,7 @@ EVAL_SPLIT="triplet"
 
 # Training arguments
 OUTPUT_DIR="./models/zero_shot_classifier_$(date +%Y%m%d_%H%M%S)"
-NUM_EPOCHS=5
+NUM_EPOCHS=50
 BATCH_SIZE=128
 MINI_BATCH_SIZE=32
 LEARNING_RATE=2e-5
@@ -50,12 +50,16 @@ nohup uv run "$SCRIPT_PATH" \
     --save_steps "$EVAL_STEPS" \
     --save_strategy "epoch" \
     --load_best_model_at_end \
-    --metric_for_best_model "zero_shot_triplet_eval_cosine_accuracy" \
+    --metric_for_best_model "loss" \
     --report_to "wandb" \
     --dataloader_num_workers 4 \
     --fp16 \
     --run_name "zero-shot-train-${TRAIN_SPLIT}-eval-${EVAL_SPLIT}" \
     --batch_sampler no_duplicates \
+    --load_best_model_at_end \
+    --save_total_limit 2 \
+    --lr_scheduler_type cosine \
+    --eval_on_start \
     &> nohup.out &
 
 echo "Training completed! Model saved to: $OUTPUT_DIR"
