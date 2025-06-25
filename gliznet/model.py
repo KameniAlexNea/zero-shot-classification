@@ -82,9 +82,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def compute_similarity(self, text_repr: torch.Tensor, label_repr: torch.Tensor):
             if self.similarity_metric == "dot":
-                sim = (text_repr * label_repr).sum(
+                sim = (text_repr * label_repr).mean(
                     dim=1, keepdim=True
-                ) / text_repr.shape[1]
+                )
             elif self.similarity_metric == "bilinear":
                 sim = self.classifier(text_repr, label_repr)
             else:
