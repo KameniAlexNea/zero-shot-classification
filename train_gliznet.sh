@@ -2,6 +2,7 @@ nohup uv run train_gliznet.py \
     --model_name microsoft/deberta-v3-small \
     --model_class DebertaV2PreTrainedModel \
     --run_name "gliznet_training" \
+    --use_fast_tokenizer false \
     --projected_dim 256 \
     --similarity_metric dot \
     --max_labels 20 \

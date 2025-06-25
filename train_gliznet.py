@@ -43,36 +43,47 @@ def seed_everything(seed: int = 42):
     torch.backends.cudnn.benchmark = False
 
 
+@dataclass
+class ModelArgs:
+    model_name: str = field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        metadata={"help": "Pretrained model name or path"},
+    )
+    model_class: str = field(
+        default="BertPreTrainedModel",
+        metadata={"help": "Model class to use"},
+    )
+    projected_dim: int = field(
+        default=256, metadata={"help": "Hidden size for projection layer"}
+    )
+    similarity_metric: str = field(
+        default="dot",
+        metadata={"help": "Similarity metric: cosine, bilinear, dot"},
+    )
+    max_labels: Optional[int] = field(
+        default=50, metadata={"help": "Maximum number of labels"}
+    )  # 50 to avoid overflow
+    shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
+    save_path: str = field(
+        default=None,
+        metadata={"help": "Legacy model save path"},
+    )
+    early_stopping_patience: int = field(
+        default=3,
+        metadata={"help": "Early stopping patience"},
+    )
+    use_fast_tokenizer: bool = field(
+        default=True,
+        metadata={"help": "Use fast tokenizer if available"},
+    )
+    model_max_length: int = field(
+        default=512,
+        metadata={"help": "Maximum sequence length for the model"},
+    )
+
+
 def main():
-    @dataclass
-    class ModelArgs:
-        model_name: str = field(
-            default="sentence-transformers/all-MiniLM-L6-v2",
-            metadata={"help": "Pretrained model name or path"},
-        )
-        model_class: str = field(
-            default="BertPreTrainedModel",
-            metadata={"help": "Model class to use"},
-        )
-        projected_dim: int = field(
-            default=256, metadata={"help": "Hidden size for projection layer"}
-        )
-        similarity_metric: str = field(
-            default="dot",
-            metadata={"help": "Similarity metric: cosine, bilinear, dot"},
-        )
-        max_labels: Optional[int] = field(
-            default=50, metadata={"help": "Maximum number of labels"}
-        )  # 50 to avoid overflow
-        shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
-        save_path: str = field(
-            default=None,
-            metadata={"help": "Legacy model save path"},
-        )
-        early_stopping_patience: int = field(
-            default=3,
-            metadata={"help": "Early stopping patience"},
-        )
+    print("Starting process at...", os.getpid())
 
     parser = HfArgumentParser((ModelArgs, TrainingArguments))
     args: tuple[ModelArgs, TrainingArguments] = parser.parse_args_into_dataclasses()
@@ -97,8 +108,11 @@ def main():
     )
 
     # Initialize tokenizer
-    tokenizer = GliZNETTokenizer.from_pretrained(model_args.model_name)
-
+    tokenizer = GliZNETTokenizer.from_pretrained(
+        model_args.model_name,
+        use_fast=model_args.use_fast_tokenizer,
+        model_max_length=model_args.model_max_length,
+    )
     # Create datasets
     train_dataset = add_tokenized_function(
         hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels
