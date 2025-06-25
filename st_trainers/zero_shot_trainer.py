@@ -273,7 +273,7 @@ class ZeroShotTrainer:
         evaluator = CrossEncoderClassificationEvaluator(
             sentence_pairs=pairs,
             labels=label_pairs,
-            name=f"{self.model_args.dataset_name}-{self.model_args.eval_split}",
+            name=f"{self.model_args.eval_split}",
             batch_size=training_args.eval_batch_size,
             show_progress_bar=True,
             write_csv=True,
@@ -374,7 +374,7 @@ def main():
     os.makedirs(
         os.path.join(
             training_args.output_dir,
-            "eval/CrossEncoderClassificationEvaluator_alexneakameni",
+            model_args.eval_split,
         ),
         exist_ok=True,
     )

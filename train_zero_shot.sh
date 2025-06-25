@@ -20,6 +20,7 @@ EVAL_SPLIT="triplet"
 OUTPUT_DIR="./models/zero_shot_classifier_$(date +%Y%m%d_%H%M%S)"
 NUM_EPOCHS=50
 BATCH_SIZE=128
+EVAL_BATCH_SIZE=256
 MINI_BATCH_SIZE=32
 LEARNING_RATE=2e-5
 WARMUP_RATIO=0.1
@@ -40,7 +41,7 @@ nohup uv run "$SCRIPT_PATH" \
     --output_dir "$OUTPUT_DIR" \
     --num_train_epochs "$NUM_EPOCHS" \
     --per_device_train_batch_size "$BATCH_SIZE" \
-    --per_device_eval_batch_size "$BATCH_SIZE" \
+    --per_device_eval_batch_size "$EVAL_BATCH_SIZE" \
     --learning_rate "$LEARNING_RATE" \
     --warmup_ratio "$WARMUP_RATIO" \
     --weight_decay "$WEIGHT_DECAY" \
@@ -49,8 +50,7 @@ nohup uv run "$SCRIPT_PATH" \
     --eval_steps "$EVAL_STEPS" \
     --save_steps "$EVAL_STEPS" \
     --save_strategy "epoch" \
-    --load_best_model_at_end \
-    --metric_for_best_model "loss" \
+    --metric_for_best_model "${EVAL_SPLIT}_average_precision" \
     --report_to "wandb" \
     --dataloader_num_workers 4 \
     --fp16 \
@@ -61,5 +61,3 @@ nohup uv run "$SCRIPT_PATH" \
     --lr_scheduler_type cosine \
     --eval_on_start \
     &> nohup.out &
-
-echo "Training completed! Model saved to: $OUTPUT_DIR"
