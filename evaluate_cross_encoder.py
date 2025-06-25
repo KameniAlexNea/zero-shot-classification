@@ -1,4 +1,3 @@
-import importlib
 import json
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -9,17 +8,12 @@ import numpy as np
 import torch
 from datasets import Dataset
 from loguru import logger
+from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
-from gliznet.data import add_tokenized_function, load_dataset
+from gliznet.config import LabelName
+from gliznet.data import load_dataset
 from gliznet.metrics import compute_metrics
-from gliznet.model import create_gli_znet_for_sequence_classification
-from gliznet.tokenizer import GliZNETTokenizer
-
-
-def get_transformers_class(class_name):
-    transformers_module = importlib.import_module("transformers")
-    return getattr(transformers_module, class_name)
 
 
 @dataclass
@@ -32,7 +26,7 @@ class EvaluationConfig:
     batch_size: int = 64
     max_labels: int = 20
     threshold: float = 0.5
-    results_dir: str = "results/evaluation_test"
+    results_dir: str = "results/evaluation"
 
 
 class ModelEvaluator:
@@ -41,7 +35,10 @@ class ModelEvaluator:
     def __init__(self, config: EvaluationConfig):
         self.config = config
         self.device = self._get_device()
-        self.model, self.tokenizer = self._load_models()
+        self.model = CrossEncoder(
+            model_name_or_path=self.config.model_path,
+            device=self.device,
+        )
 
     def _get_device(self) -> torch.device:
         """Get the appropriate device for inference."""
@@ -49,34 +46,15 @@ class ModelEvaluator:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(self.config.device)
 
-    def _load_models(self):
-        """Load model and tokenizer from checkpoint."""
-        logger.info(f"Loading model from {self.config.model_path} on {self.device}")
-
-        try:
-            tokenizer = GliZNETTokenizer.from_pretrained(self.config.model_path)
-
-            model = create_gli_znet_for_sequence_classification(
-                get_transformers_class(self.config.model_class)
-            ).from_pretrained(
-                self.config.model_path,
-            )
-            model.to(self.device)
-            model.eval()
-
-            logger.info("Model loaded successfully")
-            return model, tokenizer
-
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
-
     def predict_batch(self, inputs: dict[str, torch.Tensor]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
         with torch.no_grad():
-            inputs_gpu = {k: v.to(self.device) for k, v in inputs.items()}
-            predictions = self.model.predict(**inputs_gpu)
+            inputs_gpu = [
+                (text, label)
+                for text, label in zip(inputs["text"], inputs[LabelName.ltext])
+            ]
+            predictions = self.model.predict(inputs_gpu)
 
         return predictions
 
@@ -91,11 +69,11 @@ class ModelEvaluator:
             dataset.iter(batch_size=self.config.batch_size), desc="Evaluating"
         ):
             try:
-                labels = batch.pop("labels")
+                labels = batch.pop(LabelName.lint)
                 logits = self.predict_batch(batch)
 
                 all_predictions.append([np.array(logit) for logit in logits])
-                all_true_labels.append([lab.numpy() for lab in labels])
+                all_true_labels.append(labels.numpy())
 
             except Exception as e:
                 logger.error(f"Error processing batch: {e}")
@@ -189,12 +167,6 @@ def main():
     # Load test dataset
     logger.info("Loading test dataset...")
     data = load_dataset(split="test")
-    data = add_tokenized_function(
-        hf_dataset=data,
-        tokenizer=evaluator.tokenizer,
-        max_labels=config.max_labels,
-        shuffle_labels=False,
-    )
 
     # Run evaluation
     results = evaluator.evaluate_dataset(data)

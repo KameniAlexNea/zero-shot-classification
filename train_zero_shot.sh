@@ -29,6 +29,7 @@ SCALE=20.0
 MARGIN=0.1
 EVAL_STEPS=500
 
+# --batch_sampler no_duplicates \
 # Run training
 nohup uv run "$SCRIPT_PATH" \
     --model_name "$MODEL_NAME" \
@@ -53,9 +54,8 @@ nohup uv run "$SCRIPT_PATH" \
     --metric_for_best_model "${EVAL_SPLIT}_average_precision" \
     --report_to "wandb" \
     --dataloader_num_workers 4 \
-    --fp16 \
+    --bf16 \
     --run_name "zero-shot-train-${TRAIN_SPLIT}-eval-${EVAL_SPLIT}" \
-    --batch_sampler no_duplicates \
     --load_best_model_at_end \
     --save_total_limit 2 \
     --lr_scheduler_type cosine \
