@@ -60,4 +60,5 @@ nohup uv run "$SCRIPT_PATH" \
     --save_total_limit 2 \
     --lr_scheduler_type cosine \
     --eval_on_start \
+    --auto_find_batch_size \
     &> nohup.out &

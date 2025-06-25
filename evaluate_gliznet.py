@@ -33,6 +33,7 @@ class EvaluationConfig:
     max_labels: int = 20
     threshold: float = 0.5
     results_dir: str = "results/evaluation_test"
+    use_fast_tokenizer: bool = True
 
 
 class ModelEvaluator:
@@ -54,7 +55,9 @@ class ModelEvaluator:
         logger.info(f"Loading model from {self.config.model_path} on {self.device}")
 
         try:
-            tokenizer = GliZNETTokenizer.from_pretrained(self.config.model_path)
+            tokenizer = GliZNETTokenizer.from_pretrained(
+                self.config.model_path, use_fast=self.config.use_fast_tokenizer
+            )
 
             model = create_gli_znet_for_sequence_classification(
                 get_transformers_class(self.config.model_class)
@@ -171,6 +174,11 @@ args.add_argument(
     default="BertPreTrainedModel",
     help="Model class to use",
 )
+args.add_argument(
+    "--use_fast_tokenizer",
+    action="store_true",
+    help="Use fast tokenizer if available.",
+)
 args = args.parse_args()
 
 
@@ -181,6 +189,7 @@ def main():
         threshold=args.threshold,
         results_dir=args.results_dir,
         model_class=args.model_class,
+        use_fast_tokenizer=args.use_fast_tokenizer,
     )
 
     # Initialize evaluator
