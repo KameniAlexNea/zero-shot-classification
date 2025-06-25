@@ -1,3 +1,10 @@
+import os
+
+os.environ["WANDB_PROJECT"] = "zero-shot-classification"
+os.environ["WANDB_WATCH"] = "none"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 import json
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -21,7 +28,6 @@ class EvaluationConfig:
     """Configuration for evaluation."""
 
     model_path: str = "results/best_model/model"
-    model_class: str = "BertPreTrainedModel"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20
@@ -46,13 +52,14 @@ class ModelEvaluator:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(self.config.device)
 
-    def predict_batch(self, inputs: dict[str, torch.Tensor]) -> List[List[float]]:
+    def predict_batch(self, inputs: dict[str, list[str]]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
         with torch.no_grad():
             inputs_gpu = [
                 (text, label)
-                for text, label in zip(inputs["text"], inputs[LabelName.ltext])
+                for text, labels in zip(inputs["text"], inputs[LabelName.ltext])
+                for label in labels
             ]
             predictions = self.model.predict(inputs_gpu)
 
@@ -72,8 +79,8 @@ class ModelEvaluator:
                 labels = batch.pop(LabelName.lint)
                 logits = self.predict_batch(batch)
 
-                all_predictions.append([np.array(logit) for logit in logits])
-                all_true_labels.append(labels.numpy())
+                all_predictions.append(logits)
+                all_true_labels.append([np.array(label) for label in labels])
 
             except Exception as e:
                 logger.error(f"Error processing batch: {e}")
@@ -128,7 +135,7 @@ args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
 args.add_argument(
     "--model_path",
     type=str,
-    default="results/checkpoint-2148",
+    default="models/zero_shot_classifier_20250625_140501/triplet/checkpoint-2500",
     help="Path to the trained model directory.",
 )
 args.add_argument(
@@ -143,12 +150,6 @@ args.add_argument(
     default="results/evaluation",
     help="Directory to save evaluation results.",
 )
-args.add_argument(
-    "--model_class",
-    type=str,
-    default="BertPreTrainedModel",
-    help="Model class to use",
-)
 args = args.parse_args()
 
 
@@ -158,7 +159,6 @@ def main():
         model_path=args.model_path,
         threshold=args.threshold,
         results_dir=args.results_dir,
-        model_class=args.model_class,
     )
 
     # Initialize evaluator

@@ -1,5 +1,6 @@
 nohup uv run train_gliznet.py \
-    --model_name sentence-transformers/all-MiniLM-L6-v2 \
+    --model_name microsoft/deberta-v3-small \
+    --model_class DebertaV2PreTrainedModel \
     --run_name "gliznet_training" \
     --projected_dim 256 \
     --similarity_metric dot \
