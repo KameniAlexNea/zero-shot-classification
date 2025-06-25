@@ -18,7 +18,7 @@ EVAL_SPLIT="triplet"
 
 # Training arguments
 OUTPUT_DIR="./models/zero_shot_classifier_$(date +%Y%m%d_%H%M%S)"
-NUM_EPOCHS=50
+NUM_EPOCHS=5
 BATCH_SIZE=128
 EVAL_BATCH_SIZE=256
 MINI_BATCH_SIZE=32
@@ -27,7 +27,7 @@ WARMUP_RATIO=0.1
 WEIGHT_DECAY=0.01
 SCALE=20.0
 MARGIN=0.1
-EVAL_STEPS=1000
+EVAL_STEPS=500
 
 # Run training
 nohup uv run "$SCRIPT_PATH" \
@@ -46,10 +46,10 @@ nohup uv run "$SCRIPT_PATH" \
     --warmup_ratio "$WARMUP_RATIO" \
     --weight_decay "$WEIGHT_DECAY" \
     --logging_steps 100 \
-    --eval_strategy "epoch" \
+    --eval_strategy "steps" \
     --eval_steps "$EVAL_STEPS" \
     --save_steps "$EVAL_STEPS" \
-    --save_strategy "epoch" \
+    --save_strategy "steps" \
     --metric_for_best_model "${EVAL_SPLIT}_average_precision" \
     --report_to "wandb" \
     --dataloader_num_workers 4 \

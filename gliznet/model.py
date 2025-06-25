@@ -37,6 +37,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             similarity_metric: str = "dot",
             temperature: float = 1.0,
             dropout_rate: float = 0.1,
+            scale_loss: float = 10.0,
         ):
             super().__init__(config)
             # load any pretrained transformer model and alias for backward compatibility
@@ -59,6 +60,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             self.similarity_metric = similarity_metric
             self.temperature = temperature
             self.dropout = nn.Dropout(dropout_rate)
+            self.scale_loss = scale_loss
 
             # Projection layer
             if (
@@ -92,10 +94,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             return sim
 
         def backbone_forward(self, *args, **kwargs):
-            """
-            Forward pass through the backbone model.
-            This method is used to ensure compatibility with the HuggingFace interface.
-            """
             return getattr(self, self.base_model_prefix)(*args, **kwargs)
 
         def forward(
@@ -144,13 +142,18 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             )
 
             hidden = self.dropout(encoder_outputs.last_hidden_state)
-            hidden_proj = self.proj(hidden)  # (batch_size, seq_len, hidden_size)
 
             # Get positions of label tokens
             pos = torch.nonzero(lmask)[:, 0]  # (total_valid_samples,)
 
-            # Compute similarities: (total_label_tokens, hidden_size) x (total_label_tokens, hidden_size)
-            logits = self.compute_similarity(hidden_proj[pos, 0], hidden_proj[lmask])
+            # Project only the tokens we need: CLS tokens at pos and masked label tokens
+            text_repr = self.proj(
+                hidden[pos, 0]
+            )  # (total_valid_samples, projected_dim)
+            label_repr = self.proj(hidden[lmask])  # (total_label_tokens, projected_dim)
+
+            # Compute similarities: (total_label_tokens, projected_dim) x (total_label_tokens, projected_dim)
+            logits = self.compute_similarity(text_repr, label_repr)
 
             # Group logits by batch
             grouped_logits = defaultdict(list)
@@ -186,8 +189,8 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 total_logits = torch.cat(all_logits)
                 total_labels = torch.cat(all_targets)
                 loss_values: torch.Tensor = self.loss_fn(total_logits, total_labels)
-                loss = loss_values.mean(
-                    dim=0, keepdim=True
+                loss = (
+                    loss_values.mean(dim=0, keepdim=True) * self.scale_loss
                 )  # Average loss across all valid labels
             elif self.training:
                 logger.warning(
@@ -228,7 +231,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 results = []
 
                 logits_list = (
-                    outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
+                    outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[1]
                 )
                 for logits in logits_list:
                     results.append(logits.sigmoid().cpu().view(-1).numpy().tolist())
