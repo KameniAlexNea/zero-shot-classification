@@ -8,6 +8,9 @@ import torch
 from datasets import Dataset, load_dataset
 from loguru import logger
 from sentence_transformers.cross_encoder import CrossEncoder
+from sentence_transformers.cross_encoder.evaluation import (
+    CrossEncoderClassificationEvaluator,
+)
 from sentence_transformers.cross_encoder.losses import (
     CachedMultipleNegativesRankingLoss,
 )
@@ -15,7 +18,6 @@ from sentence_transformers.cross_encoder.trainer import CrossEncoderTrainer
 from sentence_transformers.cross_encoder.training_args import (
     CrossEncoderTrainingArguments,
 )
-from sentence_transformers.cross_encoder.evaluation import CrossEncoderClassificationEvaluator
 from sentence_transformers.training_args import BatchSamplers
 from tqdm import tqdm
 from transformers import EarlyStoppingCallback, HfArgumentParser
@@ -368,6 +370,14 @@ def main():
 
     # Create output directory
     os.makedirs(training_args.output_dir, exist_ok=True)
+
+    os.makedirs(
+        os.path.join(
+            training_args.output_dir,
+            "eval/CrossEncoderClassificationEvaluator_alexneakameni",
+        ),
+        exist_ok=True,
+    )
 
     trainer = ZeroShotTrainer(model_args)
     trainer.train(training_args)
