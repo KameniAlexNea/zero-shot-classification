@@ -213,6 +213,33 @@ class ZeroShotTrainer:
         logger.info(f"Created {len(anchors)} triplets for evaluation")
         return anchors, positives, negatives
 
+    def create_evaluation_pairs(
+        self, anchors: List[str], positives: List[str], negatives: List[str]
+    ) -> Tuple[List[Tuple[str, str]], List[int]]:
+        """Create evaluation pairs from anchors, positives, and negatives."""
+        pairs_positives = list(zip(anchors, positives))
+        pairs_negatives = list(zip(anchors, negatives))
+        pairs = pairs_positives + pairs_negatives
+        label_pairs = [1] * len(pairs_positives) + [0] * len(pairs_negatives)
+
+        # Remove duplicates from pairs and labels
+        unique_pairs = []
+        unique_labels = []
+        seen_pairs = set()
+
+        for pair, label in zip(pairs, label_pairs):
+            # Convert the pair to a hashable format (tuple of strings)
+            pair_key = (pair[0], pair[1])
+
+            # Only add if we haven't seen this pair before
+            if pair_key not in seen_pairs:
+                seen_pairs.add(pair_key)
+                unique_pairs.append(pair)
+                unique_labels.append(label)
+
+        logger.info(f"After deduplication: {len(unique_pairs)} unique pairs")
+        return unique_pairs, unique_labels
+
     def train(self, training_args: CrossEncoderTrainingArguments):
         """Complete training pipeline using simplified data loading."""
 
@@ -265,10 +292,9 @@ class ZeroShotTrainer:
             eval_dataset
         )
 
-        pairs_positives = list(zip(anchors, positives))
-        pairs_negatives = list(zip(anchors, negatives))
-        pairs = pairs_positives + pairs_negatives
-        label_pairs = [1] * len(pairs_positives) + [0] * len(pairs_negatives)
+        pairs, label_pairs = self.create_evaluation_pairs(anchors, positives, negatives)
+
+        logger.info(f"After deduplication: {len(pairs)} unique pairs")
 
         evaluator = CrossEncoderClassificationEvaluator(
             sentence_pairs=pairs,
@@ -344,9 +370,7 @@ class ZeroShotTrainer:
         logger.info("Performing final triplet evaluation...")
         final_score = evaluator(
             self.model,
-            output_path=os.path.join(
-                training_args.output_dir, "final_eval_triplet.csv"
-            ),
+            output_path=training_args.output_dir,
         )
 
         logger.success(

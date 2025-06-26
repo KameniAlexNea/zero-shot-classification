@@ -11,7 +11,7 @@ export TOKENIZERS_PARALLELISM="true"
 SCRIPT_PATH="st_trainers/zero_shot_trainer.py"
 
 # Model and dataset arguments
-MODEL_NAME="sentence-transformers/all-MiniLM-L6-v2"
+MODEL_NAME="microsoft/deberta-v3-base"
 DATASET_NAME="alexneakameni/ZSHOT-HARDSET"
 TRAIN_SPLIT="triplet"
 EVAL_SPLIT="triplet"

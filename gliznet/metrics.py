@@ -62,3 +62,63 @@ def compute_metrics(eval_pred, activated: bool = False, threshold: float = 0.5):
             pass
 
     return metrics
+
+
+def compute_best_metrics(logits: list[float], labels: list[float]):
+    """Compute best metrics for a given threshold."""
+    logits = np.array(logits)
+    labels = np.array(labels)
+
+    # Find the best threshold for optimizing F1 score
+    thresholds = np.linspace(min(logits), max(logits), 20)
+    best_f1 = 0
+    threshold = 0.5  # default threshold
+
+    for t in thresholds:
+        preds = (logits > t).astype(int)
+        current_f1 = f1_score(labels, preds, zero_division=0)
+        if current_f1 > best_f1:
+            best_f1 = current_f1
+            threshold = t
+
+    predictions = (logits > threshold).astype(int)
+
+    accuracy = accuracy_score(labels, predictions)
+    precision = precision_score(labels, predictions, zero_division=0)
+    recall = recall_score(labels, predictions, zero_division=0)
+    f1 = f1_score(labels, predictions, zero_division=0)
+
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "threshold": threshold,
+    }
+
+
+if __name__ == "__main__":
+    # Example usage
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(
+        description="Compute metrics for model evaluation."
+    )
+    parser.add_argument("--file", type=str, help="Path to the evaluation file.")
+    args = parser.parse_args()
+
+    data = json.load(open(args.file, "r"))
+    logits = data["detailed_results"]["predictions"]
+    labels = data["detailed_results"]["true_labels"]
+    if isinstance(logits[0], list):
+        logits = [item for sublist in logits for item in sublist]
+    if isinstance(logits[0], list):
+        logits = [item for sublist in logits for item in sublist]
+    if isinstance(labels[0], list):
+        labels = [item for sublist in labels for item in sublist]
+    if isinstance(labels[0], list):
+        labels = [item for sublist in labels for item in sublist]
+
+    metrics = compute_best_metrics(logits, labels)
+    print(metrics)

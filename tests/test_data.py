@@ -34,12 +34,6 @@ class DummyTokenizer:
         if self.seq_len > 1:
             lmask[:, 1] = True
 
-        # If single text, squeeze batch dimension to match expected behavior
-        # if batch_size == 1 and not isinstance(text, list):
-        #     input_ids = input_ids.squeeze(0)
-        #     attention_mask = attention_mask.squeeze(0)
-        #     lmask = lmask.squeeze(0)
-
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
