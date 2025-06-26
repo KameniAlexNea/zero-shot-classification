@@ -17,6 +17,7 @@ class LLMConfig:
     top_p: float = 0.95
     max_retries: int = 3
     retry_delay: float = 1.0
+    repeat_penalty: float = 1.1
 
 
 class BaseLLMClient(ABC):
@@ -58,7 +59,7 @@ class GroqClient(BaseLLMClient):
 
     def _make_groq_request(self, prompt: str) -> str:
         """Make a single request to Groq API."""
-        temperature = random.uniform(0.7, 0.9)
+        temperature = random.uniform(0.1, 0.3)
         seed = random.randint(1, 100000)
         completion = self.client.chat.completions.create(
             model=self.config.model,
@@ -68,7 +69,8 @@ class GroqClient(BaseLLMClient):
             top_p=self.config.top_p,
             seed=seed,
             stream=False,
-            stop=None,
+            # stop=None,
+            timeout=30,
         )
 
         return completion.choices[0].message.content
@@ -98,6 +100,8 @@ class OllamaClient(BaseLLMClient):
             options={
                 "seed": seed,
                 "temperature": temperature,
+                "repeat_penalty": self.config.repeat_penalty,
+                "max_tokens": self.config.max_tokens,
             },
         )
 

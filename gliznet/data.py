@@ -38,6 +38,7 @@ def load_dataset(
         }
 
     ds = datasets.load_dataset(path, name)[split]
+    text_column = "text" if "text" in ds.column_names else "sentence"
     ds = ds.map(
         mapper,
     )

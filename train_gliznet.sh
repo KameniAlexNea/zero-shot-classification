@@ -1,19 +1,21 @@
 nohup uv run train_gliznet.py \
-    --model_name sentence-transformers/all-MiniLM-L6-v2 \
+    --model_name microsoft/deberta-v3-large \
+    --model_class DebertaV2PreTrainedModel \
     --run_name "gliznet_training" \
+    --use_fast_tokenizer false \
     --projected_dim 256 \
     --similarity_metric dot \
     --max_labels 20 \
-    --per_device_train_batch_size 32 \
-    --per_device_eval_batch_size 64 \
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 128 \
     --num_train_epochs 50 \
     --output_dir results \
     --learning_rate 2e-4 \
-    --logging_steps 50 \
+    --logging_steps 100 \
     --warmup_ratio 0.1 \
     --weight_decay 1e-3 \
-    --eval_steps 50 \
-    --save_steps 50 \
+    --eval_steps 100 \
+    --save_steps 100 \
     --eval_strategy epoch \
     --save_strategy epoch \
     --save_total_limit 2 \
@@ -29,4 +31,5 @@ nohup uv run train_gliznet.py \
     --eval_do_concat_batches False \
     --eval_on_start \
     --data_seed 42 \
+    --auto_find_batch_size \
     &> nohup.out &
