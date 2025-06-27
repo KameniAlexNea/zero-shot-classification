@@ -259,6 +259,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             input_ids: torch.Tensor,
             attention_mask: torch.Tensor,
             lmask: torch.Tensor,
+            activation_fn: Optional[str] = "sigmoid", # Activation function for logits: sigmoid or softmax
         ) -> List[List[float]]:
             """
             Efficient prediction method for inference.
@@ -286,7 +287,10 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             results = []
             for logits in logits_list:
                 if logits.numel() > 0:
-                    probs = torch.sigmoid(logits).cpu().flatten().tolist()
+                    if activation_fn == "softmax":
+                        probs = torch.softmax(logits, dim=-1).cpu().flatten().tolist()
+                    elif activation_fn == "sigmoid":
+                        probs = logits.sigmoid().cpu().flatten().tolist()
                 else:
                     probs = []
                 results.append(probs)

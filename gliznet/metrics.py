@@ -7,6 +7,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    classification_report
 )
 
 
@@ -64,29 +65,38 @@ def compute_metrics(eval_pred, activated: bool = False, threshold: float = 0.5):
     return metrics
 
 
-def compute_best_metrics(logits: list[float], labels: list[float]):
+def compute_best_metrics(logits: list[float], labels: list[float], multi: bool = False):
     """Compute best metrics for a given threshold."""
     logits = np.array(logits)
     labels = np.array(labels)
 
-    # Find the best threshold for optimizing F1 score
-    thresholds = np.linspace(min(logits), max(logits), 20)
-    best_f1 = 0
-    threshold = 0.5  # default threshold
+    threshold = None
 
-    for t in thresholds:
-        preds = (logits > t).astype(int)
-        current_f1 = f1_score(labels, preds, zero_division=0)
-        if current_f1 > best_f1:
-            best_f1 = current_f1
-            threshold = t
+    if not multi:
+        # Find the best threshold for optimizing F1 score
+        thresholds = np.linspace(min(logits), max(logits), 20)
+        best_f1 = 0
+        threshold = 0.5  # default threshold
 
-    predictions = (logits > threshold).astype(int)
+        for t in thresholds:
+            preds = (logits > t).astype(int)
+            current_f1 = f1_score(labels, preds, zero_division=0, average="weighted" if multi else "binary")
+            if current_f1 > best_f1:
+                best_f1 = current_f1
+                threshold = t
+
+        predictions = (logits > threshold).astype(int)
+    else:
+        predictions = logits
+
 
     accuracy = accuracy_score(labels, predictions)
-    precision = precision_score(labels, predictions, zero_division=0)
-    recall = recall_score(labels, predictions, zero_division=0)
-    f1 = f1_score(labels, predictions, zero_division=0)
+    precision = precision_score(labels, predictions, zero_division=0, average="weighted" if multi else "binary")
+    recall = recall_score(labels, predictions, zero_division=0, average="weighted" if multi else "binary")
+    f1 = f1_score(labels, predictions, zero_division=0, average="weighted" if multi else "binary")
+
+    if multi:
+        print(classification_report(labels, predictions, zero_division=0))
 
     return {
         "accuracy": accuracy,
@@ -106,11 +116,16 @@ if __name__ == "__main__":
         description="Compute metrics for model evaluation."
     )
     parser.add_argument("--file", type=str, help="Path to the evaluation file.")
+    parser.add_argument("--multi", action="store_true", help="Use multi-label metrics.")
     args = parser.parse_args()
 
     data = json.load(open(args.file, "r"))
     logits = data["detailed_results"]["predictions"]
     labels = data["detailed_results"]["true_labels"]
+    if args.multi:
+        logits = [np.argmax(i) for i in logits]
+        labels = [np.argmax(i) for sublist in labels for i in sublist]
+        print(logits[:10], labels[:10])  # Print first 10 for debugging
     if isinstance(logits[0], list):
         logits = [item for sublist in logits for item in sublist]
     if isinstance(logits[0], list):
@@ -120,5 +135,5 @@ if __name__ == "__main__":
     if isinstance(labels[0], list):
         labels = [item for sublist in labels for item in sublist]
 
-    metrics = compute_best_metrics(logits, labels)
+    metrics = compute_best_metrics(logits, labels, multi=args.multi)
     print(metrics)
