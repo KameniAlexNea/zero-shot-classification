@@ -276,19 +276,34 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
             )
 
-            # Vectorized sigmoid computation for efficiency
-            results = []
-            for logits in logits_list:
-                if logits.numel() > 0:
-                    if activation_fn == "softmax":
-                        probs = torch.softmax(logits, dim=-1).cpu().flatten().tolist()
-                    elif activation_fn == "sigmoid":
-                        probs = logits.sigmoid().cpu().flatten().tolist()
-                else:
-                    probs = []
-                results.append(probs)
-
-            return results
+            # Vectorize activation: sigmoid via flat concat, softmax via masked padded tensor
+            batch_size = len(logits_list)
+            lengths = [log.numel() for log in logits_list]
+            if batch_size == 0:
+                return []
+            # Sigmoid: independent per logit
+            if activation_fn == "sigmoid":
+                flat = (
+                    torch.cat(logits_list)
+                    if sum(lengths) > 0
+                    else torch.tensor([], device=logits_list[0].device)
+                )
+                sig_flat = flat.sigmoid()
+                splits = torch.split(sig_flat, lengths)
+                return [s.cpu().tolist() for s in splits]
+            # Softmax: mask padding as -inf to avoid affecting probabilities
+            max_len = max(lengths) if lengths else 0
+            if max_len == 0:
+                return [[] for _ in range(batch_size)]
+            padded = logits_list[0].new_full((batch_size, max_len), float("-inf"))
+            for idx, log in enumerate(logits_list):
+                if lengths[idx] > 0:
+                    padded[idx, : lengths[idx]] = log
+            probs_tensor = torch.softmax(padded, dim=-1)
+            return [
+                probs_tensor[i, :length].cpu().tolist()
+                for i, length in enumerate(lengths)
+            ]
 
     return GliZNetForSequenceClassification
 

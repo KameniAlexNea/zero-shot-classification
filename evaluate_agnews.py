@@ -56,6 +56,7 @@ class EvaluationConfig:
     threshold: float = 0.5
     results_dir: str = "results/evaluation_test"
     use_fast_tokenizer: bool = True
+    activation: str = "softmax"
 
 
 class ModelEvaluator:
@@ -101,7 +102,9 @@ class ModelEvaluator:
 
         with torch.no_grad():
             inputs_gpu = {k: v.to(self.device) for k, v in inputs.items()}
-            predictions = self.model.predict(**inputs_gpu)
+            predictions = self.model.predict(
+                **inputs_gpu, activation_fn=self.config.activation
+            )
 
         return predictions
 
@@ -142,25 +145,26 @@ class ModelEvaluator:
 
     def save_results(self, results: Dict[str, Any]) -> None:
         """Save evaluation results to files."""
-        results_dir = Path(self.config.results_dir)
-        results_dir.mkdir(parents=True, exist_ok=True)
+        if self.config.results_dir is not None:
+            results_dir = Path(self.config.results_dir)
+            results_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save main results
-        results_path = results_dir / "evaluation_results.json"
-        with open(results_path, "w") as f:
-            json.dump(results, f, indent=2, default=str)
+            # Save main results
+            results_path = results_dir / "evaluation_results.json"
+            with open(results_path, "w") as f:
+                json.dump(results, f, indent=2, default=str)
 
-        # Save metrics summary
-        metrics_path = results_dir / "metrics_summary.json"
-        with open(metrics_path, "w") as f:
-            json.dump(
-                {"metrics": results["metrics"], "summary": results["summary"]},
-                f,
-                indent=2,
-                default=str,
-            )
+            # Save metrics summary
+            metrics_path = results_dir / "metrics_summary.json"
+            with open(metrics_path, "w") as f:
+                json.dump(
+                    {"metrics": results["metrics"], "summary": results["summary"]},
+                    f,
+                    indent=2,
+                    default=str,
+                )
 
-        logger.info(f"Results saved to {results_dir}")
+            logger.info(f"Results saved to {results_dir}")
 
         # Print metrics summary
         logger.info("=== Evaluation Results ===")
@@ -175,7 +179,6 @@ args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
 args.add_argument(
     "--model_path",
     type=str,
-    default="results/checkpoint-2148",
     help="Path to the trained model directory.",
 )
 args.add_argument(
@@ -187,7 +190,7 @@ args.add_argument(
 args.add_argument(
     "--results_dir",
     type=str,
-    default="results/evaluation",
+    default=None,
     help="Directory to save evaluation results.",
 )
 args.add_argument(
@@ -201,6 +204,12 @@ args.add_argument(
     action="store_true",
     help="Use fast tokenizer if available.",
 )
+args.add_argument(
+    "--activation",
+    type=str,
+    default="softmax",
+    help="Activation function to use for model outputs.",
+)
 args = args.parse_args()
 
 
@@ -212,6 +221,7 @@ def main():
         results_dir=args.results_dir,
         model_class=args.model_class,
         use_fast_tokenizer=args.use_fast_tokenizer,
+        activation=args.activation,
     )
 
     # Initialize evaluator
