@@ -2,12 +2,12 @@ import numpy as np
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
+    classification_report,
     f1_score,
     matthews_corrcoef,
     precision_score,
     recall_score,
     roc_auc_score,
-    classification_report
 )
 
 
@@ -80,7 +80,12 @@ def compute_best_metrics(logits: list[float], labels: list[float], multi: bool =
 
         for t in thresholds:
             preds = (logits > t).astype(int)
-            current_f1 = f1_score(labels, preds, zero_division=0, average="weighted" if multi else "binary")
+            current_f1 = f1_score(
+                labels,
+                preds,
+                zero_division=0,
+                average="weighted" if multi else "binary",
+            )
             if current_f1 > best_f1:
                 best_f1 = current_f1
                 threshold = t
@@ -89,11 +94,16 @@ def compute_best_metrics(logits: list[float], labels: list[float], multi: bool =
     else:
         predictions = logits
 
-
     accuracy = accuracy_score(labels, predictions)
-    precision = precision_score(labels, predictions, zero_division=0, average="weighted" if multi else "binary")
-    recall = recall_score(labels, predictions, zero_division=0, average="weighted" if multi else "binary")
-    f1 = f1_score(labels, predictions, zero_division=0, average="weighted" if multi else "binary")
+    precision = precision_score(
+        labels, predictions, zero_division=0, average="weighted" if multi else "binary"
+    )
+    recall = recall_score(
+        labels, predictions, zero_division=0, average="weighted" if multi else "binary"
+    )
+    f1 = f1_score(
+        labels, predictions, zero_division=0, average="weighted" if multi else "binary"
+    )
 
     if multi:
         print(classification_report(labels, predictions, zero_division=0))

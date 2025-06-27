@@ -197,59 +197,50 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             logits = self.compute_similarity(text_repr, label_repr)
 
             # Group logits by batch index efficiently
-            return self._group_logits_by_batch(
-                logits, batch_indices, batch_size, device
-            )
+            return self._group_logits_by_batch(logits, batch_indices, batch_size)
 
         def _group_logits_by_batch(
             self,
             logits: torch.Tensor,
             batch_indices: torch.Tensor,
             batch_size: int,
-            device: torch.device,
         ) -> List[torch.Tensor]:
             """Group logits by batch index using efficient tensor operations."""
-            outputs_logits = []
-
-            for i in range(batch_size):
-                mask = batch_indices == i
-                if mask.any():
-                    sample_logits = logits[mask]
-                    outputs_logits.append(sample_logits.reshape(1, -1))
-                else:
-                    outputs_logits.append(torch.zeros((1, 0), device=device))
-
-            return outputs_logits
+            # Count occurrences per batch and split logits accordingly
+            counts = torch.bincount(batch_indices, minlength=batch_size)
+            # Split logits into chunks for each sample; zero-count yields empty tensor
+            splits = torch.split(logits, counts.tolist(), dim=0)
+            # Reshape each chunk to (1, num_labels) preserving device
+            return [chunk.reshape(1, -1) for chunk in splits]
 
         def _compute_loss(
             self, outputs_logits: List[torch.Tensor], labels: List[torch.Tensor]
         ) -> Optional[torch.Tensor]:
             """Compute loss efficiently by batching valid samples."""
-            valid_logits = []
-            valid_labels = []
-
-            for i, (sample_logits, sample_labels) in enumerate(
-                zip(outputs_logits, labels)
-            ):
-                if (
-                    sample_logits.numel() > 0
-                    and sample_labels.numel() == sample_logits.numel()
-                ):
-                    valid_logits.append(sample_logits.view(-1, 1))
-                    valid_labels.append(sample_labels.view(-1, 1))
-                elif sample_logits.numel() > 0:  # Size mismatch
-                    logger.warning(
-                        f"Sample {i}: logits size {sample_logits.numel()} != labels size {sample_labels.numel()}"
-                    )
-
-            if not valid_logits:
+            # Flatten valid logits and labels in one pass
+            filtered = [
+                (log.view(-1, 1), lab.view(-1, 1))
+                for log, lab in zip(outputs_logits, labels)
+                if log.numel() > 0 and lab.numel() == log.numel()
+            ]
+            if not filtered:
                 if self.training:
                     logger.warning("No valid labels found in batch during training")
                 return None
-
-            # Compute loss efficiently
-            total_logits = torch.cat(valid_logits)
-            total_labels = torch.cat(valid_labels)
+            # Warn once for any mismatches
+            mismatches = [
+                str(i)
+                for i, (log, lab) in enumerate(zip(outputs_logits, labels))
+                if log.numel() > 0 and lab.numel() != log.numel()
+            ]
+            if mismatches:
+                logger.warning(
+                    f"Size mismatch for samples at indices: {', '.join(mismatches)}"
+                )
+            # Concatenate all valid logits and labels
+            total_logits, total_labels = zip(*filtered)
+            total_logits = torch.cat(total_logits)
+            total_labels = torch.cat(total_labels)
             loss_values = self.loss_fn(total_logits, total_labels)
             return loss_values.mean() * self.scale_loss
 
@@ -259,7 +250,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             input_ids: torch.Tensor,
             attention_mask: torch.Tensor,
             lmask: torch.Tensor,
-            activation_fn: Optional[str] = "sigmoid", # Activation function for logits: sigmoid or softmax
+            activation_fn: Optional[
+                str
+            ] = "sigmoid",  # Activation function for logits: sigmoid or softmax
         ) -> List[List[float]]:
             """
             Efficient prediction method for inference.

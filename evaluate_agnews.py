@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+import datasets
 import numpy as np
 import torch
-import datasets
 from datasets import Dataset
 from loguru import logger
 from tqdm import tqdm
 
-from gliznet.data import add_tokenized_function, LabelName
+from gliznet.data import LabelName, add_tokenized_function
 from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
