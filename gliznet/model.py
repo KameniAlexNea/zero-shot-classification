@@ -3,7 +3,6 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from loguru import logger
 from transformers import AutoModel, BertConfig, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
@@ -223,25 +222,11 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 for log, lab in zip(outputs_logits, labels)
                 if log.numel() > 0 and lab.numel() == log.numel()
             ]
-            if not filtered:
-                if self.training:
-                    logger.warning("No valid labels found in batch during training")
-                return None
-            # Warn once for any mismatches
-            mismatches = [
-                str(i)
-                for i, (log, lab) in enumerate(zip(outputs_logits, labels))
-                if log.numel() > 0 and lab.numel() != log.numel()
-            ]
-            if mismatches:
-                logger.warning(
-                    f"Size mismatch for samples at indices: {', '.join(mismatches)}"
-                )
             # Concatenate all valid logits and labels
             total_logits, total_labels = zip(*filtered)
             total_logits = torch.cat(total_logits)
             total_labels = torch.cat(total_labels)
-            loss_values = self.loss_fn(total_logits, total_labels)
+            loss_values: torch.Tensor = self.loss_fn(total_logits, total_labels)
             return loss_values.mean() * self.scale_loss
 
         @torch.inference_mode()

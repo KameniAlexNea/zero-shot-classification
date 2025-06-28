@@ -142,6 +142,10 @@ class GliZNETTokenizer:
         pad: bool = True,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
+        text_tokens = [
+            self._truncate_text_tokens(text, labels)
+            for text, labels in zip(text_tokens, label_tokens)
+        ]
         token_ids, label_masks = zip(
             *[
                 self._build_sequence(text, labels)
