@@ -100,14 +100,20 @@ class GliZNETTokenizer:
                     return_token_type_ids=False,
                 )["input_ids"],
             )
-        return self.tokenizer(
+        text_ids = self.tokenizer(
             texts, return_attention_mask=False, return_token_type_ids=False
-        )["input_ids"], [
-            self.tokenizer(
-                labels, return_attention_mask=False, return_token_type_ids=False
-            )["input_ids"]
-            for labels in all_labels
-        ]
+        )["input_ids"]
+        merged_labels = sum(all_labels, start=[])
+        merged_labels_ids = self.tokenizer(
+            merged_labels, return_attention_mask=False, return_token_type_ids=False
+        )["input_ids"]
+        labels_ids = []
+        idx = 0
+        for label_group in all_labels:
+            labels_ids.append(merged_labels_ids[idx : idx + len(label_group)])
+            idx += len(label_group)
+
+        return text_ids, labels_ids
 
     def tokenize_example(
         self,

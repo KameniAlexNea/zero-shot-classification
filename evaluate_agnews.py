@@ -38,6 +38,7 @@ def load_agnews_dataset():
     )
     return test_ds
 
+
 def load_imdb_dataset():
     test_ds = datasets.load_dataset("stanfordnlp/imdb")["test"]
     mapping = {0: "negative", 1: "positive"}
