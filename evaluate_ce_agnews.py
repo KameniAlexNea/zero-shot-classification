@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
-import datasets
 import numpy as np
 import torch
 from datasets import Dataset
@@ -20,49 +19,18 @@ from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
 from gliznet.config import LabelName
+from gliznet.evaluation_ds import (
+    load_agnews_dataset,
+    load_amazon_massive_intent,
+    load_imdb_dataset,
+)
 from gliznet.metrics import compute_metrics
 
-
-def load_agnews_dataset():
-    test_ds = datasets.load_dataset("sh0416/ag_news")["test"]
-    mapping = {1: "World", 2: "Sports", 3: "Business", 4: "Science_or_Technology"}
-    mapping = {k: v.lower() + "_news" for k, v in mapping.items()}
-
-    def convert_labels(label: int):
-        return {
-            LabelName.ltext: list(mapping.values()),
-            LabelName.lint: [i == label for i in mapping],
-        }
-
-    test_ds = test_ds.map(
-        lambda x: {
-            "text": (x["title"] + "\n" + x["description"]),
-            **convert_labels(x["label"]),
-        },
-        remove_columns=test_ds.column_names,
-    )
-    return test_ds
-
-
-def load_imdb_dataset():
-    test_ds = datasets.load_dataset("stanfordnlp/imdb")["test"]
-    mapping = {0: "negative", 1: "positive"}
-    mapping = {k: v.lower() + "_sentiment" for k, v in mapping.items()}
-
-    def convert_labels(label: int):
-        return {
-            LabelName.ltext: list(mapping.values()),
-            LabelName.lint: [i == label for i in mapping],
-        }
-
-    test_ds = test_ds.map(
-        lambda x: {
-            "text": x["text"],
-            **convert_labels(x["label"]),
-        },
-        remove_columns=test_ds.column_names,
-    )
-    return test_ds
+ds_mapping = {
+    "agnews": load_agnews_dataset,
+    "imdb": load_imdb_dataset,
+    "amazon_massive_intent": load_amazon_massive_intent,
+}
 
 
 @dataclass
@@ -247,14 +215,10 @@ def main():
     evaluator = ModelEvaluator(config)
 
     logger.info("Loading test dataset...")
-    if args.data not in ["imdb", "agnews"]:
-        raise ValueError("Invalid dataset specified. Choose 'imdb' or 'agnews'.")
-    if args.data == "imdb":
-        logger.info("Using IMDB dataset for evaluation.")
-        data = load_imdb_dataset()
-    else:
-        logger.info("Using AG News dataset for evaluation.")
-        data = load_agnews_dataset()
+    if args.data not in ds_mapping:
+        raise ValueError("Invalid dataset specified. Choose " + str(ds_mapping.keys()))
+    logger.info("Using IMDB dataset for evaluation." + args.data)
+    data = ds_mapping[args.data]()
 
     # Load test dataset
     logger.info("Loading test dataset...")
