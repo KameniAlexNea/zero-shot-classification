@@ -60,7 +60,11 @@ class GliZNETTokenizer:
             2 + label_flat_count + sep_count
         )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
 
-        allowed_text = self.max_length - reserve if reserve < self.max_length else self.min_text_token
+        allowed_text = (
+            self.max_length - reserve
+            if reserve < self.max_length
+            else self.min_text_token
+        )
 
         # Ensure we don't go below minimum text tokens but also don't exceed what's available
         max_allowed_text = max(self.min_text_token, allowed_text)
@@ -161,8 +165,7 @@ class GliZNETTokenizer:
             ]
         )
         padded_results = [
-            self._pad_and_mask(ids, mask)
-            for ids, mask in zip(token_ids, label_masks)
+            self._pad_and_mask(ids, mask) for ids, mask in zip(token_ids, label_masks)
         ]
         result = {
             "input_ids": [r["input_ids"] for r in padded_results],

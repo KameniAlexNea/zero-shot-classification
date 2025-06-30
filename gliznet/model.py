@@ -273,10 +273,18 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
             # Apply activation function to each tensor in the list
             probs_list = []
+
             def activate(x):
-                return torch.sigmoid(x) if activation_fn == "sigmoid" else torch.softmax(x, dim=0)
+                return (
+                    torch.sigmoid(x)
+                    if activation_fn == "sigmoid"
+                    else torch.softmax(x, dim=0)
+                )
+
             probs_list = [
-                activate(logits.squeeze(-1)).cpu().tolist()  # logits shape: (num_labels, 1) -> squeeze to (num_labels,)
+                activate(logits.squeeze(-1))
+                .cpu()
+                .tolist()  # logits shape: (num_labels, 1) -> squeeze to (num_labels,)
                 for logits in logits_list
             ]
             return probs_list
