@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 import torch
 from transformers import AutoTokenizer, BertTokenizerFast
@@ -38,8 +38,8 @@ class GliZNETTokenizer:
         )
 
     def _build_sequence(
-        self, text_tokens: List[str], label_tokens: List[List[str]]
-    ) -> tuple[List[str], List[int]]:
+        self, text_tokens: List[int], label_tokens: List[List[int]]
+    ) -> tuple[List[int], List[int]]:
         sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
         labels_mask = [0] * len(sequence)
         for i, tokens in enumerate(label_tokens):
@@ -51,16 +51,22 @@ class GliZNETTokenizer:
         return sequence, labels_mask
 
     def _truncate_text_tokens(
-        self, text_tokens: List[str], label_tokens: List[List[str]]
-    ) -> List[str]:
+        self, text_tokens: List[int], label_tokens: List[List[int]]
+    ) -> List[int]:
         label_flat_count = sum([len(sub) for sub in label_tokens])
         # Ensure sep_count is not negative if label_tokens is empty
         sep_count = max(0, len(label_tokens) - 1)
         reserve = (
             2 + label_flat_count + sep_count
         )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
-        allowed = self.max_length - reserve
-        return text_tokens[: max(self.min_text_token, allowed)]
+
+        allowed_text = self.max_length - reserve if reserve < self.max_length else self.min_text_token
+
+        # Ensure we don't go below minimum text tokens but also don't exceed what's available
+        max_allowed_text = max(self.min_text_token, allowed_text)
+        truncated_length = min(len(text_tokens), max_allowed_text)
+
+        return text_tokens[:truncated_length]
 
     def _pad_and_mask(self, token_ids: List[int], lmask: List[bool]) -> Dict[str, Any]:
         side = getattr(self.tokenizer, "padding_side", "right")
@@ -92,7 +98,11 @@ class GliZNETTokenizer:
         if isinstance(texts, str):
             return (
                 self.tokenizer(
-                    texts, return_attention_mask=False, return_token_type_ids=False
+                    texts,
+                    return_attention_mask=False,
+                    return_token_type_ids=False,
+                    max_length=self.max_length,
+                    truncation=True,
                 )["input_ids"],
                 self.tokenizer(
                     all_labels,
@@ -101,11 +111,17 @@ class GliZNETTokenizer:
                 )["input_ids"],
             )
         text_ids = self.tokenizer(
-            texts, return_attention_mask=False, return_token_type_ids=False
+            texts,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+            max_length=self.max_length,
+            truncation=True,
         )["input_ids"]
         merged_labels = sum(all_labels, start=[])
         merged_labels_ids = self.tokenizer(
-            merged_labels, return_attention_mask=False, return_token_type_ids=False
+            merged_labels,
+            return_attention_mask=False,
+            return_token_type_ids=False,
         )["input_ids"]
         labels_ids = []
         idx = 0
@@ -119,33 +135,19 @@ class GliZNETTokenizer:
         self,
         text: str,
         all_labels: List[str],
-        return_tensors: Optional[str] = "pt",
-        pad: bool = True,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
         token_ids, lmask = self._build_sequence(text_tokens, label_tokens)
 
-        if pad:
-            result = self._pad_and_mask(token_ids, lmask)
-        else:
-            attention_mask = [1] * len(token_ids)
-            result = {
-                "input_ids": token_ids,
-                "attention_mask": attention_mask,
-                "lmask": lmask,
-            }
-
-        if return_tensors == "pt":
-            result.update(self._to_tensors(result))
+        result = self._pad_and_mask(token_ids, lmask)
+        result.update(self._to_tensors(result))
         return result
 
     def tokenize_batch(
         self,
         texts: List[str],
         all_labels: List[List[str]],
-        return_tensors: Optional[str] = "pt",
-        pad: bool = True,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
         text_tokens = [
@@ -158,40 +160,26 @@ class GliZNETTokenizer:
                 for text, labels in zip(text_tokens, label_tokens)
             ]
         )
-        if pad:
-            padded_results = [
-                self._pad_and_mask(ids, mask)
-                for ids, mask in zip(token_ids, label_masks)
-            ]
-            result = {
-                "input_ids": [r["input_ids"] for r in padded_results],
-                "attention_mask": [r["attention_mask"] for r in padded_results],
-                "lmask": [r["lmask"] for r in padded_results],
-            }
-        else:
-            result = {
-                "input_ids": token_ids,
-                "attention_mask": [[1] * len(ids) for ids in token_ids],
-                "lmask": label_masks,
-            }
-        if return_tensors == "pt":
-            result.update(self._to_tensors(result))
+        padded_results = [
+            self._pad_and_mask(ids, mask)
+            for ids, mask in zip(token_ids, label_masks)
+        ]
+        result = {
+            "input_ids": [r["input_ids"] for r in padded_results],
+            "attention_mask": [r["attention_mask"] for r in padded_results],
+            "lmask": [r["lmask"] for r in padded_results],
+        }
+        result.update(self._to_tensors(result))
         return result
 
     def __call__(
         self,
         texts: Union[List[str], str],
         labels: List[Union[List[str], str]],
-        return_tensors: Optional[str] = "pt",
-        pad: bool = True,
     ):
         if isinstance(texts, str):
-            return self.tokenize_example(
-                texts, labels, return_tensors=return_tensors, pad=pad
-            )
-        return self.tokenize_batch(
-            texts, labels, return_tensors=return_tensors, pad=pad
-        )
+            return self.tokenize_example(texts, labels)
+        return self.tokenize_batch(texts, labels)
 
     def decode_sequence(self, input_ids: List[int]) -> str:
         return self.tokenizer.decode(

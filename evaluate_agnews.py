@@ -148,7 +148,7 @@ class ModelEvaluator:
 
             except Exception as e:
                 logger.error(f"Error processing batch: {e}")
-                continue
+                raise e
 
         # Calculate comprehensive metrics
         metrics = compute_metrics((all_predictions, all_true_labels), True)
@@ -231,6 +231,12 @@ args.add_argument(
     default="softmax",
     help="Activation function to use for model outputs.",
 )
+args.add_argument(
+    "--data",
+    type=str,
+    default="agnews",
+    help="Dataset to evaluate on (agnews or imdb).",
+)
 args = args.parse_args()
 
 
@@ -250,7 +256,14 @@ def main():
 
     # Load test dataset
     logger.info("Loading test dataset...")
-    data = load_imdb_dataset()
+    if args.data not in ["imdb", "agnews"]:
+        raise ValueError("Invalid dataset specified. Choose 'imdb' or 'agnews'.")
+    if args.data == "imdb":
+        logger.info("Using IMDB dataset for evaluation.")
+        data = load_imdb_dataset()
+    else:
+        logger.info("Using AG News dataset for evaluation.")
+        data = load_agnews_dataset()
     data = add_tokenized_function(
         hf_dataset=data,
         tokenizer=evaluator.tokenizer,
