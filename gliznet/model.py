@@ -53,7 +53,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
     class GliZNetForSequenceClassification(base_class):
         def __init__(
             self,
-            config: base_class.config_class,
+            config: base_class.config_class,  # type: ignore
             projected_dim: Optional[int] = None,
             similarity_metric: str = "dot",
             temperature: float = 1.0,

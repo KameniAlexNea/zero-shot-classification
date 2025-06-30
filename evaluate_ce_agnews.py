@@ -44,6 +44,27 @@ def load_agnews_dataset():
     return test_ds
 
 
+def load_imdb_dataset():
+    test_ds = datasets.load_dataset("stanfordnlp/imdb")["test"]
+    mapping = {0: "negative", 1: "positive"}
+    mapping = {k: v.lower() + "_sentiment" for k, v in mapping.items()}
+
+    def convert_labels(label: int):
+        return {
+            LabelName.ltext: list(mapping.values()),
+            LabelName.lint: [i == label for i in mapping],
+        }
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": x["text"],
+            **convert_labels(x["label"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
 @dataclass
 class EvaluationConfig:
     """Configuration for evaluation."""
@@ -54,6 +75,7 @@ class EvaluationConfig:
     max_labels: int = 20
     threshold: float = 0.5
     results_dir: str = "results/evaluation"
+    activation: str = "softmax"
 
 
 class ModelEvaluator:
@@ -76,6 +98,17 @@ class ModelEvaluator:
     def predict_batch(self, inputs: dict[str, list[str]]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
+        def activate(logits: torch.Tensor) -> torch.Tensor:
+            """Apply activation function to logits."""
+            if self.config.activation == "softmax":
+                return logits.softmax(dim=-1)
+            elif self.config.activation == "sigmoid":
+                return logits.sigmoid()
+            else:
+                raise ValueError(
+                    f"Unsupported activation function: {self.config.activation}"
+                )
+
         with torch.no_grad():
             inputs_gpu = [
                 (text, label)
@@ -94,7 +127,7 @@ class ModelEvaluator:
             pos = 0
             while i < len(predictions):
                 all_predictions.append(
-                    predictions[i : i + len(labels[pos])].softmax(dim=0).cpu().numpy()
+                    activate(predictions[i : i + len(labels[pos])]).cpu().numpy()
                 )
                 i += len(labels[pos])
                 pos += 1
@@ -186,6 +219,18 @@ args.add_argument(
     default=None,
     help="Directory to save evaluation results.",
 )
+args.add_argument(
+    "--activation",
+    type=str,
+    default="softmax",
+    help="Activation function to use for model outputs.",
+)
+args.add_argument(
+    "--data",
+    type=str,
+    default="agnews",
+    help="Dataset to evaluate on (agnews or imdb).",
+)
 args = args.parse_args()
 
 
@@ -195,10 +240,21 @@ def main():
         model_path=args.model_path,
         threshold=args.threshold,
         results_dir=args.results_dir,
+        activation=args.activation,
     )
 
     # Initialize evaluator
     evaluator = ModelEvaluator(config)
+
+    logger.info("Loading test dataset...")
+    if args.data not in ["imdb", "agnews"]:
+        raise ValueError("Invalid dataset specified. Choose 'imdb' or 'agnews'.")
+    if args.data == "imdb":
+        logger.info("Using IMDB dataset for evaluation.")
+        data = load_imdb_dataset()
+    else:
+        logger.info("Using AG News dataset for evaluation.")
+        data = load_agnews_dataset()
 
     # Load test dataset
     logger.info("Loading test dataset...")
