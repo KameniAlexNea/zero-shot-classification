@@ -205,6 +205,12 @@ args.add_argument(
     default="agnews",
     help="Dataset to evaluate on (agnews or imdb).",
 )
+args.add_argument(
+    "--max_labels",
+    type=int,
+    default=100,
+    help="Maximum number of labels to consider for each example.",
+)
 args = args.parse_args()
 
 
@@ -217,6 +223,7 @@ def main():
         model_class=args.model_class,
         use_fast_tokenizer=args.use_fast_tokenizer,
         activation=args.activation,
+        max_labels=args.max_labels,
     )
 
     # Initialize evaluator

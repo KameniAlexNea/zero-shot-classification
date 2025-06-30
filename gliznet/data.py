@@ -52,8 +52,7 @@ def limit_labels(
     if shuffle_labels:
         random.shuffle(combined)
     labels_text, labels_int = zip(*combined[:max_labels])
-    labels_int = list(labels_int)  # Convert back to list
-    return labels_text, labels_int
+    return list(labels_text), list(labels_int)
 
 
 def add_tokenized_function(
@@ -80,14 +79,12 @@ def add_tokenized_function(
                 limit_labels(shuffle_labels, ltext, lint, max_labels)
                 for ltext, lint in zip(labels_text, labels_int)
             ]
-            labels_text, labels_int = zip(*all_labels)
-            labels_text = [list(i) for i in labels_text]
-            labels_int = [list(i) for i in labels_int]
+            labels_text = [list(i) for i, _ in all_labels]
+            labels_int = [list(i) for _, i in all_labels]
         else:
             labels_text, labels_int = limit_labels(
                 shuffle_labels, labels_text, labels_int, max_labels
             )
-            labels_text = list(labels_text)
 
         # Tokenize the example
         tokenized: dict[str, torch.Tensor] = tokenizer(
