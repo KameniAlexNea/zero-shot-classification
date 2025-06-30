@@ -47,8 +47,8 @@ def load_imdb_dataset():
 
 def load_amazon_massive_intent():
     test_ds = datasets.load_dataset("mteb/amazon_massive_intent", "en")["test"]
-    all_labels = list(set(test_ds["label"]))
-    mapping = {label: f"intent_{i}" for i, label in enumerate(all_labels)}
+    all_labels: list[str] = list(set(test_ds["label"]))
+    mapping = {i: f"{i}" for i in all_labels}
 
     def convert_labels(label: str):
         return {

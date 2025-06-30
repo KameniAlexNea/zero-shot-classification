@@ -220,10 +220,6 @@ def main():
     logger.info("Using IMDB dataset for evaluation." + args.data)
     data = ds_mapping[args.data]()
 
-    # Load test dataset
-    logger.info("Loading test dataset...")
-    data = load_agnews_dataset()
-
     # Run evaluation
     results = evaluator.evaluate_dataset(data)
 

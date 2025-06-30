@@ -136,13 +136,10 @@ if __name__ == "__main__":
         logits = [np.argmax(i) for i in logits]
         labels = [np.argmax(i) for sublist in labels for i in sublist]
         print(logits[:10], labels[:10])  # Print first 10 for debugging
-    if isinstance(logits[0], list):
+
+    while isinstance(logits[0], list):
         logits = [item for sublist in logits for item in sublist]
-    if isinstance(logits[0], list):
-        logits = [item for sublist in logits for item in sublist]
-    if isinstance(labels[0], list):
-        labels = [item for sublist in labels for item in sublist]
-    if isinstance(labels[0], list):
+    while isinstance(labels[0], list):
         labels = [item for sublist in labels for item in sublist]
 
     metrics = compute_best_metrics(logits, labels, multi=args.multi)

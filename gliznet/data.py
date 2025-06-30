@@ -93,8 +93,6 @@ def add_tokenized_function(
         tokenized: dict[str, torch.Tensor] = tokenizer(
             text,
             labels_text,
-            return_tensors="pt",
-            pad=True,
         )
 
         # Convert labels to tensor
