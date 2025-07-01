@@ -3,9 +3,34 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from loguru import logger
 from transformers import AutoModel, BertConfig, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
+
+
+class GliZNetConfig(BertConfig):
+    """
+    Configuration class for GliZNet model.
+
+    Args:
+        projected_dim: Dimension of the projected representations (default: None)
+        similarity_metric: Similarity metric to use ('dot' or 'bilinear', default: 'dot')
+        temperature: Temperature scaling factor for similarity (default: 1.0)
+        dropout_rate: Dropout rate for the model (default: 0.1)
+    """
+
+    def __init__(
+        self,
+        projected_dim: Optional[int] = None,
+        similarity_metric: str = "dot",
+        temperature: float = 1.0,
+        dropout_rate: float = 0.1,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.projected_dim = projected_dim
+        self.similarity_metric = similarity_metric
+        self.temperature = temperature
+        self.dropout_rate = dropout_rate
 
 
 @dataclass
@@ -28,7 +53,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
     class GliZNetForSequenceClassification(base_class):
         def __init__(
             self,
-            config: BertConfig,
+            config: base_class.config_class,  # type: ignore
             projected_dim: Optional[int] = None,
             similarity_metric: str = "dot",
             temperature: float = 1.0,
@@ -58,7 +83,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def _initialize_config(
             self,
-            config: BertConfig,
+            config: GliZNetConfig,
             projected_dim: Optional[int],
             similarity_metric: str,
             temperature: float,
@@ -177,80 +202,39 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
         def _compute_batch_logits(
             self, hidden_states: torch.Tensor, lmask: torch.Tensor
         ) -> List[torch.Tensor]:
-            """Compute logits for all samples in the batch efficiently."""
-            device = hidden_states.device
-            batch_size = hidden_states.size(0)
+            """Compute logits for all samples in the batch with vectorized operations."""
+            # Only project CLS and label tokens to save memory
+            mask = lmask.bool()
+            counts = mask.sum(dim=1)
 
-            # Get positions of label tokens more efficiently
-            batch_indices, token_indices = torch.where(lmask)
+            # Project CLS representations only
+            cls_proj: torch.Tensor = self.proj(
+                hidden_states[:, 0, :]
+            )  # (batch_size, proj_dim)
 
-            if len(batch_indices) == 0:
-                return [torch.zeros((1, 0), device=device) for _ in range(batch_size)]
+            # Project label token representations only
+            lab_proj: torch.Tensor = self.proj(
+                hidden_states[mask]
+            )  # (total_labels, proj_dim)
 
-            # Project representations
-            text_repr = self.proj(hidden_states[batch_indices, 0])  # CLS tokens
-            label_repr = self.proj(
-                hidden_states[batch_indices, token_indices]
-            )  # Label tokens
+            # Compute similarity
+            cls_flat = cls_proj.repeat_interleave(counts, dim=0)
+            if self.config.similarity_metric == "dot":
+                sims = (cls_flat * lab_proj).mean(dim=1)
+            else:
+                sims = self.classifier(cls_flat, lab_proj).view(-1)
 
-            # Compute similarities
-            logits = self.compute_similarity(text_repr, label_repr)
-
-            # Group logits by batch index efficiently
-            return self._group_logits_by_batch(
-                logits, batch_indices, batch_size, device
-            )
-
-        def _group_logits_by_batch(
-            self,
-            logits: torch.Tensor,
-            batch_indices: torch.Tensor,
-            batch_size: int,
-            device: torch.device,
-        ) -> List[torch.Tensor]:
-            """Group logits by batch index using efficient tensor operations."""
-            outputs_logits = []
-
-            for i in range(batch_size):
-                mask = batch_indices == i
-                if mask.any():
-                    sample_logits = logits[mask]
-                    outputs_logits.append(sample_logits.reshape(1, -1))
-                else:
-                    outputs_logits.append(torch.zeros((1, 0), device=device))
-
-            return outputs_logits
+            # Split sims per sample and return list of (1, num_labels) tensors
+            splits = torch.split(sims, counts.tolist())
+            return [i.view(-1, 1) for i in splits]
 
         def _compute_loss(
             self, outputs_logits: List[torch.Tensor], labels: List[torch.Tensor]
         ) -> Optional[torch.Tensor]:
             """Compute loss efficiently by batching valid samples."""
-            valid_logits = []
-            valid_labels = []
-
-            for i, (sample_logits, sample_labels) in enumerate(
-                zip(outputs_logits, labels)
-            ):
-                if (
-                    sample_logits.numel() > 0
-                    and sample_labels.numel() == sample_logits.numel()
-                ):
-                    valid_logits.append(sample_logits.view(-1, 1))
-                    valid_labels.append(sample_labels.view(-1, 1))
-                elif sample_logits.numel() > 0:  # Size mismatch
-                    logger.warning(
-                        f"Sample {i}: logits size {sample_logits.numel()} != labels size {sample_labels.numel()}"
-                    )
-
-            if not valid_logits:
-                if self.training:
-                    logger.warning("No valid labels found in batch during training")
-                return None
-
-            # Compute loss efficiently
-            total_logits = torch.cat(valid_logits)
-            total_labels = torch.cat(valid_labels)
-            loss_values = self.loss_fn(total_logits, total_labels)
+            total_logits = torch.cat(outputs_logits)
+            total_labels = torch.cat([lab.view(-1, 1) for lab in labels])
+            loss_values: torch.Tensor = self.loss_fn(total_logits, total_labels)
             return loss_values.mean() * self.scale_loss
 
         @torch.inference_mode()
@@ -259,14 +243,16 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             input_ids: torch.Tensor,
             attention_mask: torch.Tensor,
             lmask: torch.Tensor,
+            activation_fn: Optional[str] = "sigmoid",
         ) -> List[List[float]]:
             """
-            Efficient prediction method for inference.
+            Prediction method for inference.
 
             Args:
                 input_ids: Input token IDs
                 attention_mask: Attention mask
                 lmask: Label mask for identifying label positions
+                activation_fn: Activation function ('sigmoid' or 'softmax')
 
             Returns:
                 List of probability scores for each sample
@@ -282,16 +268,26 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
             )
 
-            # Vectorized sigmoid computation for efficiency
-            results = []
-            for logits in logits_list:
-                if logits.numel() > 0:
-                    probs = torch.sigmoid(logits).cpu().flatten().tolist()
-                else:
-                    probs = []
-                results.append(probs)
+            if not logits_list:
+                return []
 
-            return results
+            # Apply activation function to each tensor in the list
+            probs_list = []
+
+            def activate(x):
+                return (
+                    torch.sigmoid(x)
+                    if activation_fn == "sigmoid"
+                    else torch.softmax(x, dim=0)
+                )
+
+            probs_list = [
+                activate(logits.squeeze(-1))
+                .cpu()
+                .tolist()  # logits shape: (num_labels, 1) -> squeeze to (num_labels,)
+                for logits in logits_list
+            ]
+            return probs_list
 
     return GliZNetForSequenceClassification
 

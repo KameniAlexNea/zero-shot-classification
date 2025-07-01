@@ -1,0 +1,79 @@
+{
+    "media_playback_and_control": [
+        "play_music",
+        "music_settings",
+        "music_query",
+        "music_likeness",
+        "music_dislikeness",
+        "play_podcasts",
+        "play_audiobook",
+        "play_radio",
+        "play_game",
+        "audio_volume_up",
+        "audio_volume_down",
+        "audio_volume_mute",
+        "audio_volume_other"
+    ],
+    "smart_home_control": [
+        "iot_hue_lightup",
+        "iot_hue_lightchange",
+        "iot_hue_lightdim",
+        "iot_hue_lighton",
+        "iot_hue_lightoff",
+        "iot_cleaning",
+        "iot_coffee",
+        "iot_wemo_on",
+        "iot_wemo_off"
+    ],
+    "calendar_and_time": [
+        "calendar_set",
+        "calendar_query",
+        "calendar_remove",
+        "alarm_set",
+        "alarm_query",
+        "alarm_remove",
+        "datetime_convert",
+        "datetime_query"
+    ],
+    "communication_and_social": [
+        "email_sendemail",
+        "email_addcontact",
+        "email_query",
+        "email_querycontact",
+        "social_post",
+        "social_query"
+    ],
+    "recommendations_and_queries": [
+        "recommendation_events",
+        "recommendation_movies",
+        "recommendation_locations",
+        "takeaway_order",
+        "takeaway_query",
+        "cooking_recipe",
+        "news_query",
+        "weather_query"
+    ],
+    "transportation": [
+        "transport_ticket",
+        "transport_query",
+        "transport_taxi",
+        "transport_traffic"
+    ],
+    "question_answering": [
+        "qa_factoid",
+        "qa_definition",
+        "qa_maths",
+        "qa_stock",
+        "qa_currency"
+    ],
+    "list_and_task_management": [
+        "lists_createoradd",
+        "lists_remove",
+        "lists_query"
+    ],
+    "general_misc": [
+        "general_greet",
+        "general_joke",
+        "general_quirky"
+    ]
+}

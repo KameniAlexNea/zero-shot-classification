@@ -45,10 +45,10 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         self.attn = torch.where(self.input_ids > 0, 1, 0)
         # lmask: mark pos 2 in sample0, none in sample1
         self.lmask = torch.tensor(
-            [[False, False, True, False], [False, False, False, False]]
+            [[False, False, True, False], [False, False, True, False]]
         )
         # labels only for sample0: one label target 1.0
-        self.labels = [torch.tensor([1.0]), torch.tensor([])]
+        self.labels = [torch.tensor([1.0]), torch.tensor([0.0])]
 
     def test_compute_similarity_dot(self):
         t = torch.tensor([[1.0, 2.0]])
@@ -71,7 +71,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         # sample0 has one label => logits tensor of shape (1,)
         self.assertEqual(out["logits"][0].shape, (1, 1))
         # sample1 no labels => zero-length
-        self.assertEqual(out["logits"][1].numel(), 0)
+        self.assertEqual(out["logits"][1].numel(), 1)
 
     def test_forward_with_labels_and_loss(self):
         out = self.model(

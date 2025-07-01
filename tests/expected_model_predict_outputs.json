@@ -1,0 +1,73 @@
+{
+  "greeting_question": {
+    "text": "Good morning! How are you doing today?",
+    "labels": [
+      "greeting",
+      "question"
+    ],
+    "pred": [
+      [
+        0.5714534521102905,
+        0.5713590383529663
+      ]
+    ]
+  },
+  "animal_proverb": {
+    "text": "The quick brown fox jumps over the lazy dog.",
+    "labels": [
+      "animal",
+      "action",
+      "proverb"
+    ],
+    "pred": [
+      [
+        0.5665944814682007,
+        0.5665717720985413,
+        0.566532552242279
+      ]
+    ]
+  },
+  "space_news": {
+    "text": "NASA launches a new satellite to study Earth's atmosphere.",
+    "labels": [
+      "science",
+      "space",
+      "environment"
+    ],
+    "pred": [
+      [
+        0.5720636248588562,
+        0.572083592414856,
+        0.5720182657241821
+      ]
+    ]
+  },
+  "cooking_instruction": {
+    "text": "To bake a cake, preheat the oven to 350\u00b0F and mix flour, sugar, and eggs.",
+    "labels": [
+      "cooking",
+      "instruction",
+      "recipe"
+    ],
+    "pred": [
+      [
+        0.5693578124046326,
+        0.5689049959182739,
+        0.5690023303031921
+      ]
+    ]
+  },
+  "long_repetition": {
+    "text": "inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable inconceivable",
+    "labels": [
+      "long",
+      "repetition"
+    ],
+    "pred": [
+      [
+        0.5752346515655518,
+        0.5750174522399902
+      ]
+    ]
+  }
+}
