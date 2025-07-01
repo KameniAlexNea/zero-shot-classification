@@ -63,7 +63,6 @@ class TestDataModule(unittest.TestCase):
 
     def test_getitem_shapes(self):
         item = self.dataset[0]
-        print(item)
         # after unsqueeze in __getitem__
         self.assertIn("input_ids", item)
         self.assertEqual(len(item), 4)  # input_ids, attention_mask, lmask, labels
