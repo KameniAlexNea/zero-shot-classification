@@ -20,24 +20,20 @@ class DatasetGenerator:
             + " topics loaded"
         )
 
-    def _create_prompt(self, num_samples: int, min_labels: int, max_labels: int) -> str:
+    def _create_prompt(self, num_samples: int) -> str:
         """Create the prompt for generating synthetic data."""
         topics = "\n".join(random.choices(self.all_topics, k=3))
         return (
             generate_prompt(
                 num_samples=num_samples,
-                min_labels=min_labels,
-                max_labels=max_labels,
                 topics=topics,
             ),
             topics,
         )
 
-    def generate_dataset(
-        self, num_samples: int, min_labels: int = 1, max_labels: int = 5
-    ) -> List[Dict[str, List[str]]]:
+    def generate_dataset(self, num_samples: int) -> List[Dict[str, List[str]]]:
         """Generate a single batch of synthetic data."""
-        prompt, topics = self._create_prompt(num_samples, min_labels, max_labels)
+        prompt, topics = self._create_prompt(num_samples)
 
         # LLM call - clearly separated
         raw_response = self.llm_client.generate_text(prompt)
@@ -130,18 +126,6 @@ def main():
         help="Batch size for large dataset generation (default: 50)",
     )
     parser.add_argument(
-        "--min-labels",
-        type=int,
-        default=1,
-        help="Minimum number of labels per sentence (default: 1)",
-    )
-    parser.add_argument(
-        "--max-labels",
-        type=int,
-        default=5,
-        help="Maximum number of labels per sentence (default: 5)",
-    )
-    parser.add_argument(
         "--output",
         type=str,
         default="data/synthetic_data.json",
@@ -178,9 +162,7 @@ def main():
         )
     else:
         logger.info("Generating small dataset in single batch")
-        dataset = generator.generate_dataset(
-            args.num_samples, args.min_labels, args.max_labels
-        )
+        dataset = generator.generate_dataset(args.num_samples)
 
     # Save final dataset
     with open(args.output, "w") as f:

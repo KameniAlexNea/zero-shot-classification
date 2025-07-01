@@ -84,9 +84,7 @@ def random_labels():
     return random_domain, random_industry, random_tone
 
 
-def generate_prompt(
-    num_samples: int, min_labels: int, max_labels: int, topics: str = None
-) -> str:
+def generate_prompt(num_samples: int, topics: str = None) -> str:
     output_example = base_output_example()
 
     # Simple, controlled random elements
@@ -96,6 +94,8 @@ def generate_prompt(
         topics = get_subjects(5)
 
     return f"""**You are an expert data generator for machine learning classification tasks.**
+
+**IMPORTANT**: Focus on generating **long, high-quality sentences** for text samples.
 
 **TASK**: Generate **exactly {num_samples}** diverse text examples for zero-shot classification training. Each example must include a **text sample**, a list of **descriptive labels**, and a list of **hard negative labels**. The text and labels will be used to train or evaluate classifiers.
 
@@ -111,8 +111,10 @@ You **MUST** create text samples that relate to the following topics. Distribute
 There is **no predefined list of labels** or topics beyond those listed above. You must create descriptive labels based on the content of each generated text.
 The **examples below are illustrative only** and must not be reused or replicated.
 
-**TEXT LENGTH DIVERSITY**:
-Generate a **diverse mix of text lengths** to ensure comprehensive training data: Short sentences, medium sentences, and longer paragraphs.
+**TEXT LENGTH AND QUALITY REQUIREMENTS**:
+**PRIORITIZE LONG, HIGH-QUALITY SENTENCES**: Focus primarily on generating **detailed, well-structured, and informative longer sentences and paragraphs**. These should contain rich context, multiple clauses, and substantial content that provides ample material for nuanced classification.
+
+While you may include some medium-length sentences for variety, **avoid short or simple sentences**. Each text sample should be substantial enough to demonstrate complex linguistic patterns and require sophisticated understanding for proper classification.
 
 **WHAT IS A LABEL**:
 A **label** is a category that describes some aspect of the text. This can relate to its **topic**, **domain**, **intent**, **tone**, **format**, **style**... Labels help a model understand what the text is about or how it is written.
@@ -161,23 +163,25 @@ A **not_label** is a label that could plausibly apply to similar texts but does 
 
 * Generate **{num_samples}** text entries, each relating to the provided topics
 * **Follow the topic list above** - ensure your text samples connect to these subjects
-* **Vary text length**: Include short sentences, medium sentences, and longer paragraphs
+* **PRIORITIZE LONG, HIGH-QUALITY SENTENCES**: Focus on detailed, well-structured, informative content with rich context
+* **Avoid short or simple sentences** - each text should be substantial and contain multiple ideas or clauses
 * To reduce bias, ensure diversity in both the **content** and the **labels** while staying within the topic scope
 * Vary the **text type**: include statements, instructions, questions, reviews, announcements, complaints, etc.
 * Use different **writing styles**: technical, conversational, promotional, formal, casual, etc.
-* Assign **{min_labels} to {max_labels}** relevant and informative labels to each entry that require **deep understanding**
-* Assign **{min_labels} to {max_labels}** hard negative labels that are plausible but incorrect and require **contextual analysis** to distinguish
+* For each entry, generate as many descriptive labels as possible that require **deep understanding** of the text
+* For each entry, generate as many challenging hard negative labels as possible that require **deep contextual analysis** to distinguish
 * Labels must be tailored to the content; do not repeat generic sets across examples
 * **Both positive and negative labels must be complex and nuanced** - avoid obvious classifications
 * **not_labels must be challenging distractors** that require deep text understanding to reject
-* Ensure **maximum diversity** in both the **content**, **text length**, and the **labels** while adhering to the topic requirements
+* Ensure **maximum diversity** in both the **content** and the **labels** while adhering to the topic requirements
+* **Focus on creating substantial, well-crafted text samples** that demonstrate sophisticated language use and complex meaning
 
 **OUTPUT FORMAT**:
 Return only a **valid JSON array** of size **{num_samples}**, with each object containing:
 
 * "sentence": the generated text (can be a sentence or paragraph) that relates to the provided topics
-* "labels": a list of {min_labels}-{max_labels} descriptive strings that DO apply (requiring deep understanding)
-* "not_labels": a list of {min_labels}-{max_labels} hard negative labels that do NOT apply but could be plausible (requiring contextual analysis to reject)
+* "labels": a list of descriptive strings (generate as many as possible) that DO apply (requiring deep understanding)
+* "not_labels": a list of hard negative labels (generate as many as possible) that do NOT apply but could be plausible (requiring deep contextual analysis to reject)
 
 **Example (for illustration only)**:
 
