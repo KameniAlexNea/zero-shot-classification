@@ -180,8 +180,8 @@ A **not_label** is a label that could plausibly apply to similar texts but does 
 Return only a **valid JSON array** of size **{num_samples}**, with each object containing:
 
 * "sentence": the generated text (can be a sentence or paragraph) that relates to the provided topics
-* "labels": a list of descriptive strings (generate as many as possible) that DO apply (requiring deep understanding)
-* "not_labels": a list of hard negative labels (generate as many as possible) that do NOT apply but could be plausible (requiring deep contextual analysis to reject)
+* "labels": a list of descriptive strings (generate as many as possible, expecting 5 to 20 labels) that DO apply (requiring deep understanding)
+* "not_labels": a list of hard negative labels (generate as many as possible, expecting 5 to 20 labels) that do NOT apply but could be plausible (requiring deep contextual analysis to reject)
 
 **Example (for illustration only)**:
 
