@@ -10,7 +10,9 @@ class TestTokenizerIntegration(unittest.TestCase):
         # Initialize tokenizer and load expected outputs
         self.tokenizer = GliZNETTokenizer.from_pretrained("bert-base-uncased")
         tests_dir = os.path.dirname(__file__)
-        expected_file = os.path.join(tests_dir, "testing_data/expected_tokenizer_outputs.json")
+        expected_file = os.path.join(
+            tests_dir, "testing_data/expected_tokenizer_outputs.json"
+        )
         with open(expected_file, "r") as f:
             self.expected: dict = json.load(f)
 

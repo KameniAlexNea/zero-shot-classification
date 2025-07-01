@@ -11,7 +11,7 @@ from typing import Dict, List, Union
 import datasets
 import torch
 
-from .config import LabelName
+from . import LabelName
 from .tokenizer import GliZNETTokenizer
 
 

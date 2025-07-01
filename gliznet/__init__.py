@@ -11,3 +11,8 @@ Built the model, which will:
 The focus now is implementing the model, ensuring clear code, while leveraging the tokenizer for zero-shot classification.
 
 """
+
+
+class LabelName:
+    ltext = "ltext"
+    lint = "lint"

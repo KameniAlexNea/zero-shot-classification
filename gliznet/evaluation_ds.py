@@ -3,7 +3,7 @@ import json
 import datasets
 from loguru import logger
 
-from .config import LabelName
+from . import LabelName
 
 
 def load_agnews_dataset():

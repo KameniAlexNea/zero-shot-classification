@@ -18,7 +18,7 @@ from loguru import logger
 from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
-from gliznet.config import LabelName
+from gliznet import LabelName
 from gliznet.data import load_dataset
 from gliznet.metrics import compute_metrics
 
