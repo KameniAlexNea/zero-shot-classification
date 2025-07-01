@@ -12,20 +12,10 @@ from loguru import logger
 from tqdm import tqdm
 
 from gliznet.data import add_tokenized_function
-from gliznet.evaluation_ds import (
-    load_agnews_dataset,
-    load_amazon_massive_intent,
-    load_imdb_dataset,
-)
+from gliznet.evaluation_ds import ds_mapping
 from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
-
-ds_mapping = {
-    "agnews": load_agnews_dataset,
-    "imdb": load_imdb_dataset,
-    "amazon_massive_intent": load_amazon_massive_intent,
-}
 
 
 def get_transformers_class(class_name):

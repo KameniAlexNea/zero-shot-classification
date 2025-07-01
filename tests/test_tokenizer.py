@@ -210,7 +210,8 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.tokenizer._batch_tokenize = mock_batch_tokenize_raw
 
         result = self.tokenizer.tokenize_example(
-            text, labels, return_tensors="pt", pad=True
+            text,
+            labels,
         )
 
         self.tokenizer._batch_tokenize = original_batch_tokenize  # Restore
@@ -231,7 +232,8 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.assertEqual(result["lmask"].dtype, torch.bool)
 
         result_no_pad = self.tokenizer.tokenize_example(
-            text, labels, return_tensors=None, pad=False
+            text,
+            labels,
         )
         self.assertLessEqual(len(result_no_pad["input_ids"]), self.tokenizer.max_length)
         self.assertEqual(len(result_no_pad["lmask"]), len(result_no_pad["input_ids"]))
@@ -261,7 +263,8 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.tokenizer._batch_tokenize = mock_batch_tokenize_raw_batch
 
         result = self.tokenizer.tokenize_batch(
-            texts, all_labels, return_tensors="pt", pad=True
+            texts,
+            all_labels,
         )
         self.tokenizer._batch_tokenize = original_batch_tokenize  # Restore
 
@@ -275,33 +278,21 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.assertEqual(result["lmask"].shape, (len(texts), expected_label_mask_len))
         self.assertEqual(result["lmask"].dtype, torch.bool)
 
-        with self.assertRaises(ValueError):
-            self.tokenizer.tokenize_batch(
-                texts, all_labels, return_tensors="pt", pad=False
-            )
-
-        result_no_pad_no_pt = self.tokenizer.tokenize_batch(
-            texts, all_labels, return_tensors=None, pad=False
-        )
-        self.assertEqual(len(result_no_pad_no_pt["input_ids"]), len(texts))
-        for i in range(len(texts)):
-            self.assertLessEqual(
-                len(result_no_pad_no_pt["input_ids"][i]), self.tokenizer.max_length
-            )
-            self.assertEqual(
-                len(result_no_pad_no_pt["lmask"][i]),
-                len(result_no_pad_no_pt["input_ids"][i]),
-            )
-
     def test_call_method(self):
         text = "A single call."
         labels = ["l1", "l2"]
         original_tokenize_example = self.tokenizer.tokenize_example
         called_example = {"called": False}
 
-        def mock_ex(t, lab, return_tensors, pad):
+        def mock_ex(
+            t,
+            lab,
+        ):
             called_example["called"] = True
-            return original_tokenize_example(t, lab, return_tensors, pad)
+            return original_tokenize_example(
+                t,
+                lab,
+            )
 
         self.tokenizer.tokenize_example = mock_ex
         self.tokenizer(text, labels)
@@ -313,9 +304,15 @@ class TestGliZNETTokenizer(unittest.TestCase):
         original_tokenize_batch = self.tokenizer.tokenize_batch
         called_batch = {"called": False}
 
-        def mock_batch(t, lab, return_tensors, pad):
+        def mock_batch(
+            t,
+            lab,
+        ):
             called_batch["called"] = True
-            return original_tokenize_batch(t, lab, return_tensors, pad)
+            return original_tokenize_batch(
+                t,
+                lab,
+            )
 
         self.tokenizer.tokenize_batch = mock_batch
         self.tokenizer(texts, all_labels)

@@ -89,9 +89,9 @@ class GliZNETTokenizer:
                 + self.decode_sequence(input_ids)
             )
         return {
-            "input_ids": input_ids[: self.max_length],
-            "attention_mask": attention_mask[: self.max_length],
-            "lmask": lmask[: self.max_length],
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "lmask": lmask,
         }
 
     def _batch_tokenize(

@@ -1,4 +1,7 @@
+import json
+
 import datasets
+from loguru import logger
 
 from .config import LabelName
 
@@ -45,15 +48,28 @@ def load_imdb_dataset():
     return test_ds
 
 
-def load_amazon_massive_intent():
+def load_amazon_massive_intent(grouped: bool = True):
+    intent_groups: dict[str, list[str]] = json.load(
+        open("gliznet/intent_data.json", "r")
+    )
     test_ds = datasets.load_dataset("mteb/amazon_massive_intent", "en")["test"]
     all_labels: list[str] = list(set(test_ds["label"]))
-    mapping = {i: f"{i}" for i in all_labels}
+    mapping = (
+        {
+            i: intent_group
+            for intent_group, intents in intent_groups.items()
+            for i in intents
+        }
+        if grouped
+        else {i: i for i in all_labels}
+    )
+
+    labels = list(set(mapping.values()))
 
     def convert_labels(label: str):
         return {
-            LabelName.ltext: list(mapping.values()),
-            LabelName.lint: [i == mapping[label] for i in mapping.values()],
+            LabelName.ltext: [i for i in labels],
+            LabelName.lint: [i == mapping[label] for i in labels],
         }
 
     test_ds = test_ds.map(
@@ -63,4 +79,14 @@ def load_amazon_massive_intent():
         },
         remove_columns=test_ds.column_names,
     )
+    logger.info(f"Loaded {len(test_ds)} samples with {len(labels)} labels.")
+    logger.info(f"Labels: {labels}")
+    logger.info(str(test_ds[0]))
     return test_ds
+
+
+ds_mapping = {
+    "agnews": load_agnews_dataset,
+    "imdb": load_imdb_dataset,
+    "amazon_massive_intent": load_amazon_massive_intent,
+}

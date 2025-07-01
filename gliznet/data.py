@@ -70,33 +70,23 @@ def add_tokenized_function(
 
     def tokenize_function(examples):
         text = examples[text_column]
-        labels_text = examples[labels_text_column]
-        labels_int = examples[labels_int_column]
 
-        # randomly shuffle labels if they are more than max_labels
-        if labels_text and isinstance(labels_text[0], list):
-            all_labels = [
-                limit_labels(shuffle_labels, ltext, lint, max_labels)
-                for ltext, lint in zip(labels_text, labels_int)
-            ]
-            labels_text = [list(i) for i, _ in all_labels]
-            labels_int = [list(i) for _, i in all_labels]
-        else:
-            labels_text, labels_int = limit_labels(
-                shuffle_labels, labels_text, labels_int, max_labels
-            )
-
-        # Tokenize the example
-        tokenized: dict[str, torch.Tensor] = tokenizer(
-            text,
-            labels_text,
+        # normalize and limit labels in one pass
+        raw_texts = examples[labels_text_column]
+        raw_ints = examples[labels_int_column]
+        # ensure list of lists for unified processing
+        if not raw_texts or not isinstance(raw_texts[0], list):
+            raw_texts, raw_ints = [raw_texts], [raw_ints]
+        processed_texts, processed_labels = [], []
+        for lt, li in zip(raw_texts, raw_ints):
+            txts, ints = limit_labels(shuffle_labels, lt, li, max_labels)
+            processed_texts.append(txts)
+            processed_labels.append(torch.tensor(ints, dtype=torch.float32))
+        labels_input = (
+            processed_texts[0] if len(processed_texts) == 1 else processed_texts
         )
-
-        # Convert labels to tensor
-        if isinstance(labels_int[0], list):
-            labels = [torch.tensor([lint], dtype=torch.float32) for lint in labels_int]
-        else:
-            labels = torch.tensor([labels_int], dtype=torch.float32)
+        tokenized: dict[str, torch.Tensor] = tokenizer(text, labels_input)
+        labels = processed_labels[0] if len(processed_labels) == 1 else processed_labels
 
         # Return without adding batch dimension (DataLoader will handle batching)
         result: dict[str, Union[torch.Tensor, list[torch.Tensor]]] = {

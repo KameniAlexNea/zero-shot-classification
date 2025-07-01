@@ -19,18 +19,8 @@ from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
 from gliznet.config import LabelName
-from gliznet.evaluation_ds import (
-    load_agnews_dataset,
-    load_amazon_massive_intent,
-    load_imdb_dataset,
-)
+from gliznet.evaluation_ds import ds_mapping
 from gliznet.metrics import compute_metrics
-
-ds_mapping = {
-    "agnews": load_agnews_dataset,
-    "imdb": load_imdb_dataset,
-    "amazon_massive_intent": load_amazon_massive_intent,
-}
 
 
 @dataclass
