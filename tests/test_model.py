@@ -50,12 +50,193 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         # labels only for sample0: one label target 1.0
         self.labels = [torch.tensor([1.0]), torch.tensor([0.0])]
 
+    def _create_model_with_metric(self, similarity_metric):
+        """Helper method to create a model with a specific similarity metric"""
+        model = GliZNetForSequenceClassification.from_pretrained(
+            "bert-base-uncased",
+            projected_dim=self.hidden_size,
+            similarity_metric=similarity_metric,
+        )
+        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+        model.config.hidden_size = self.hidden_size
+        model.hidden_size = self.hidden_size
+        model.proj = nn.Identity()
+        return model
+
     def test_compute_similarity_dot(self):
         t = torch.tensor([[1.0, 2.0]])
         lab = torch.tensor([[3.0, 4.0]])
         sim = self.model.compute_similarity(t, lab)  # dot / temp
         self.assertTrue(torch.allclose(sim, torch.tensor([[5.5]])))
 
+    # Test similarity metric: dot
+    def test_similarity_metric_dot(self):
+        """Test dot product similarity metric"""
+        model = self._create_model_with_metric("dot")
+
+        # Test configuration
+        self.assertEqual(model.config.similarity_metric, "dot")
+
+        # Test compute_similarity method
+        t = torch.tensor([[1.0, 2.0, 3.0]])
+        lab = torch.tensor([[2.0, 1.0, 1.0]])
+        expected = torch.tensor([[2.33333]])
+        sim = model.compute_similarity(t, lab)
+        self.assertTrue(torch.allclose(sim, expected))
+
+        # Test forward pass
+        out = model(
+            input_ids=self.input_ids,
+            attention_mask=self.attn,
+            lmask=self.lmask,
+            labels=None,
+        )
+        self.assertIn("logits", out)
+        self.assertEqual(out["logits"].shape, (2, 1))
+
+    # Test similarity metric: bilinear
+    def test_similarity_metric_bilinear(self):
+        """Test bilinear similarity metric"""
+        model = self._create_model_with_metric("bilinear")
+
+        # Test configuration
+        self.assertEqual(model.config.similarity_metric, "bilinear")
+
+        # Test that bilinear layer is created
+        self.assertTrue(hasattr(model, "classifier"))
+        self.assertIsInstance(model.classifier, nn.Bilinear)
+
+        # Test forward pass
+        out = model(
+            input_ids=self.input_ids,
+            attention_mask=self.attn,
+            lmask=self.lmask,
+            labels=None,
+        )
+        self.assertIn("logits", out)
+        self.assertEqual(out["logits"].shape, (2, 1))
+
+    # Test similarity metric: dot_learning
+    def test_similarity_metric_dot_learning(self):
+        """Test dot_learning similarity metric"""
+        model = self._create_model_with_metric("dot_learning")
+
+        # Test configuration
+        self.assertEqual(model.config.similarity_metric, "dot_learning")
+
+        # Test that linear layer is created
+        self.assertTrue(hasattr(model, "classifier"))
+        self.assertIsInstance(model.classifier, nn.Linear)
+        self.assertEqual(model.classifier.out_features, 1)
+        self.assertIsNone(model.classifier.bias)  # Should be bias=False
+
+        # Test forward pass
+        out = model(
+            input_ids=self.input_ids,
+            attention_mask=self.attn,
+            lmask=self.lmask,
+            labels=None,
+        )
+        self.assertIn("logits", out)
+        self.assertEqual(out["logits"].shape, (2, 1))
+
+    def test_all_similarity_metrics_with_labels(self):
+        """Test all similarity metrics with labels and loss computation"""
+        metrics = ["dot", "bilinear", "dot_learning"]
+
+        for metric in metrics:
+            with self.subTest(similarity_metric=metric):
+                model = self._create_model_with_metric(metric)
+
+                out = model(
+                    input_ids=self.input_ids,
+                    attention_mask=self.attn,
+                    lmask=self.lmask,
+                    labels=self.labels,
+                )
+
+                # Check that loss is computed
+                self.assertIn("loss", out)
+                self.assertIsInstance(out["loss"], torch.Tensor)
+                self.assertGreaterEqual(out["loss"].item(), 0.0)
+
+                # Check logits shape
+                self.assertIn("logits", out)
+                self.assertEqual(out["logits"].shape, (2, 1))
+
+    def test_all_similarity_metrics_predict(self):
+        """Test prediction method for all similarity metrics"""
+        metrics = ["dot", "bilinear", "dot_learning"]
+
+        for metric in metrics:
+            with self.subTest(similarity_metric=metric):
+                model = self._create_model_with_metric(metric)
+
+                results = model.predict(
+                    input_ids=self.input_ids,
+                    attention_mask=self.attn,
+                    lmask=self.lmask,
+                )
+
+                # Check results structure
+                self.assertEqual(len(results), 2)  # Two samples
+                for idx, res in enumerate(results):
+                    self.assertIsInstance(res, list)
+                    self.assertEqual(len(res), 1)  # One label per sample
+                    self.assertIsInstance(res[0], float)
+                    self.assertGreaterEqual(res[0], 0.0)
+                    self.assertLessEqual(res[0], 1.0)  # Should be sigmoid output
+
+    def test_similarity_metric_consistency(self):
+        """Test that similarity computations are consistent within each metric"""
+        # Test with fixed inputs to ensure deterministic behavior
+        fixed_input_ids = torch.tensor([[101, 1000, 2000, 3000], [101, 4000, 5000, 0]])
+        fixed_attn = torch.where(fixed_input_ids > 0, 1, 0)
+        fixed_lmask = torch.tensor(
+            [[False, False, True, False], [False, False, True, False]]
+        )
+
+        metrics = ["dot", "bilinear", "dot_learning"]
+
+        for metric in metrics:
+            with self.subTest(similarity_metric=metric):
+                model1 = self._create_model_with_metric(metric)
+                model2 = self._create_model_with_metric(metric)
+
+                # Copy weights from model1 to model2 to ensure identical parameters
+                if hasattr(model1, "classifier"):
+                    model2.classifier.load_state_dict(model1.classifier.state_dict())
+
+                # Forward pass on both models
+                out1 = model1(
+                    input_ids=fixed_input_ids,
+                    attention_mask=fixed_attn,
+                    lmask=fixed_lmask,
+                    labels=None,
+                )
+
+                out2 = model2(
+                    input_ids=fixed_input_ids,
+                    attention_mask=fixed_attn,
+                    lmask=fixed_lmask,
+                    labels=None,
+                )
+
+                # Results should be identical
+                self.assertTrue(
+                    torch.allclose(out1["logits"], out2["logits"], atol=1e-6)
+                )
+
+    def test_invalid_similarity_metric(self):
+        """Test that invalid similarity metrics raise appropriate errors"""
+        with self.assertRaises(ValueError):
+            GliZNetForSequenceClassification.from_pretrained(
+                "bert-base-uncased",
+                projected_dim=self.hidden_size,
+                similarity_metric="invalid_metric",
+            )
+
+    # Original tests
     def test_forward_without_labels(self):
         out = self.model(
             input_ids=self.input_ids,
