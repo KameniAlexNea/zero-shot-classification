@@ -47,15 +47,14 @@ class GliZNETTokenizer:
     def _build_sequence(
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> tuple[List[int], List[int]]:
-        # Pre-calculate total sequence length to avoid multiple list extensions
+        # Pre-calculate total sequence length
         total_label_tokens = sum(len(tokens) for tokens in label_tokens)
         total_length = 1 + len(text_tokens) + 1 + total_label_tokens + len(label_tokens)
 
-        # Pre-allocate lists with known size
+        # Pre-allocate lists
         sequence = [0] * total_length
         labels_mask = [0] * total_length
 
-        # Fill the sequence efficiently
         idx = 0
         sequence[idx] = self.cls_token_id
         idx += 1
@@ -68,16 +67,17 @@ class GliZNETTokenizer:
         sequence[idx] = self.sep_token_id
         idx += 1
 
-        # Add label tokens and separators
+        # Add label tokens and mark SEP for label representation
         for tokens in label_tokens:
-            if tokens:  # Only process non-empty token lists
-                labels_mask[idx] = 1  # Mark first token of each label
+            if tokens:
                 sequence[idx : idx + len(tokens)] = tokens
                 idx += len(tokens)
                 sequence[idx] = self.sep_token_id
+                labels_mask[idx] = 1  # Use this SEP as label embedding position
                 idx += 1
 
         return sequence, labels_mask
+
 
     def _truncate_text_tokens(
         self, text_tokens: List[int], label_tokens: List[List[int]]
