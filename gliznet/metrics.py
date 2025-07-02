@@ -11,15 +11,19 @@ from sklearn.metrics import (
 )
 
 
-def compute_metrics(eval_pred, activated: bool = False, threshold: float = 0.5):
+def compute_metrics(
+    eval_pred: tuple[list[np.ndarray], list[np.ndarray]],
+    activated: bool = False,
+    threshold: float = 0.5,
+):
     """Compute metrics for evaluation."""
     logits, labels = eval_pred
-    logits: list[np.ndarray] = (
-        [i.reshape(-1) for j in logits for i in j]
-        if isinstance(logits[0], list)
-        else [i.reshape(-1) for i in logits]
-    )
-    labels: list[np.ndarray] = [i.reshape(-1) for j in labels for i in j]
+    while isinstance(logits[0], list):
+        logits = [item for sublist in logits for item in sublist]
+    while isinstance(labels[0], list):
+        labels = [item for sublist in labels for item in sublist]
+    logits = [j.reshape(-1) for j in logits]
+    labels = [j.reshape(-1) for j in labels]
 
     logits = np.concatenate(logits)
     labels = np.concatenate(labels)

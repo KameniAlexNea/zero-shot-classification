@@ -42,7 +42,7 @@ def main():
             "attention_mask": res["attention_mask"].tolist(),
             "lmask": res["lmask"].tolist(),
         }
-    with open("tests/expected_tokenizer_outputs.json", "w") as f:
+    with open("tests/testing_data/expected_tokenizer_outputs.json", "w") as f:
         json.dump(expected, f, indent=2)
 
 

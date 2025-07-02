@@ -45,7 +45,7 @@ class GliZNetOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    logits: Optional[List[torch.FloatTensor]] = None
+    logits: Optional[Union[List[torch.FloatTensor], torch.Tensor]] = None
     hidden_states: Optional[torch.FloatTensor] = None
 
 
@@ -61,6 +61,11 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             scale_loss: float = 10.0,
         ):
             super().__init__(config)
+            if similarity_metric not in ["dot", "bilinear", "dot_learning"]:
+                raise ValueError(
+                    f"Unsupported similarity metric: {similarity_metric}. "
+                    "Supported metrics are: 'dot', 'bilinear', 'dot_learning'."
+                )
             # Load any pretrained transformer model and alias for backward compatibility
             setattr(self, self.base_model_prefix, AutoModel.from_config(config=config))
 
@@ -112,18 +117,8 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             if self.config.similarity_metric == "bilinear":
                 self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
 
-        def compute_similarity(
-            self, text_repr: torch.Tensor, label_repr: torch.Tensor
-        ) -> torch.Tensor:
-            """Compute similarity between text and label representations."""
-            if self.config.similarity_metric == "dot":
-                return (text_repr * label_repr).mean(dim=1, keepdim=True)
-            elif self.config.similarity_metric == "bilinear":
-                return self.classifier(text_repr, label_repr)
-            else:
-                raise ValueError(
-                    f"Unsupported similarity metric: {self.config.similarity_metric}"
-                )
+            elif self.config.similarity_metric == "dot_learning":
+                self.classifier = nn.Linear(projected_dim, 1, bias=False)
 
         def backbone_forward(self, *args, **kwargs):
             return getattr(self, self.base_model_prefix)(*args, **kwargs)
@@ -180,6 +175,16 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
             return GliZNetOutput(loss=loss, logits=outputs_logits, hidden_states=None)
 
+        def compute_similarity(
+            self, text_repr: torch.Tensor, label_repr: torch.Tensor
+        ) -> torch.Tensor:
+            """Compute similarity between text and label representations."""
+            if self.config.similarity_metric == "dot":
+                return (text_repr * label_repr).mean(dim=1, keepdim=True)
+            elif self.config.similarity_metric == "bilinear":
+                return self.classifier(text_repr, label_repr)
+            return self.classifier(text_repr * label_repr)
+
         def _get_hidden_states(
             self,
             input_ids: torch.Tensor,
@@ -201,7 +206,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def _compute_batch_logits(
             self, hidden_states: torch.Tensor, lmask: torch.Tensor
-        ) -> List[torch.Tensor]:
+        ) -> tuple[torch.Tensor, torch.Tensor]:
             """Compute logits for all samples in the batch with vectorized operations."""
             # Only project CLS and label tokens to save memory
             mask = lmask.bool()
@@ -219,22 +224,15 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
             # Compute similarity
             cls_flat = cls_proj.repeat_interleave(counts, dim=0)
-            if self.config.similarity_metric == "dot":
-                sims = (cls_flat * lab_proj).mean(dim=1)
-            else:
-                sims = self.classifier(cls_flat, lab_proj).view(-1)
-
-            # Split sims per sample and return list of (1, num_labels) tensors
-            splits = torch.split(sims, counts.tolist())
-            return [i.view(-1, 1) for i in splits]
+            sims = self.compute_similarity(cls_flat, lab_proj)
+            return sims
 
         def _compute_loss(
-            self, outputs_logits: List[torch.Tensor], labels: List[torch.Tensor]
+            self, outputs_logits: torch.Tensor, labels: List[torch.Tensor]
         ) -> Optional[torch.Tensor]:
             """Compute loss efficiently by batching valid samples."""
-            total_logits = torch.cat(outputs_logits)
             total_labels = torch.cat([lab.view(-1, 1) for lab in labels])
-            loss_values: torch.Tensor = self.loss_fn(total_logits, total_labels)
+            loss_values: torch.Tensor = self.loss_fn(outputs_logits, total_labels)
             return loss_values.mean() * self.scale_loss
 
         @torch.inference_mode()
@@ -267,9 +265,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             logits_list = (
                 outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
             )
-
-            if not logits_list:
-                return []
+            logits_list = torch.split(logits_list, lmask.sum(dim=1).tolist())
 
             # Apply activation function to each tensor in the list
             probs_list = []

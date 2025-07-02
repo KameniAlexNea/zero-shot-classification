@@ -1,5 +1,4 @@
 import json
-import os
 import unittest
 
 import torch
@@ -29,10 +28,7 @@ class TestModelPredictIntegration(unittest.TestCase):
         cls.tokenizer = GliZNETTokenizer.from_pretrained(model_name)
         cls.model = GliZNetForSequenceClassification.from_pretrained(model_name)
         cls.model.eval()
-        tests_dir = os.path.dirname(__file__)
-        expected_file = os.path.join(
-            tests_dir, "testing_data/expected_model_predict_outputs.json"
-        )
+        expected_file = "tests/testing_data/expected_model_predict_outputs.json"
         with open(expected_file, "r") as f:
             cls.expected = json.load(f)
 

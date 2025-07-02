@@ -6,7 +6,7 @@ compared to the original HuggingFace datasets approach.
 """
 
 import random
-from typing import Dict, List, Union
+from typing import Dict, List
 
 import datasets
 import torch
@@ -46,7 +46,7 @@ def load_dataset(
 
 
 def limit_labels(
-    shuffle_labels: bool, labels_text: List[str], labels_int: List[int], max_labels: int
+    labels_text: List[str], labels_int: List[int], shuffle_labels: bool, max_labels: int
 ):
     combined = list(zip(labels_text, labels_int))
     if shuffle_labels:
@@ -69,39 +69,29 @@ def add_tokenized_function(
     """
 
     def tokenize_function(examples):
-        text = examples[text_column]
+        # Handle batched input format: text=['hello'], ltext=[[...]], lint=[[...]]
+        texts = examples[text_column]
+        raw_texts_batch = examples[labels_text_column]
+        raw_ints_batch = examples[labels_int_column]
 
-        # normalize and limit labels in one pass
-        raw_texts = examples[labels_text_column]
-        raw_ints = examples[labels_int_column]
-        # ensure list of lists for unified processing
-        if not raw_texts or not isinstance(raw_texts[0], list):
-            raw_texts, raw_ints = [raw_texts], [raw_ints]
-        processed_texts, processed_labels = [], []
-        for lt, li in zip(raw_texts, raw_ints):
-            txts, ints = limit_labels(shuffle_labels, lt, li, max_labels)
-            processed_texts.append(txts)
-            processed_labels.append(torch.tensor(ints, dtype=torch.float32))
-        labels_input = (
-            processed_texts[0] if len(processed_texts) == 1 else processed_texts
-        )
-        tokenized: dict[str, torch.Tensor] = tokenizer(text, labels_input)
-        labels = processed_labels[0] if len(processed_labels) == 1 else processed_labels
+        # First step: prepare all labels data
+        processed_lints_batch = []
+        processed_ltexts_batch = []
 
-        # Return without adding batch dimension (DataLoader will handle batching)
-        result: dict[str, Union[torch.Tensor, list[torch.Tensor]]] = {
-            "input_ids": tokenized["input_ids"],
-            "attention_mask": tokenized["attention_mask"],
-            "lmask": tokenized["lmask"],
-            "labels": labels,
+        for raw_texts, raw_ints in zip(raw_texts_batch, raw_ints_batch):
+            # Process labels for this example
+            txts, ints = limit_labels(raw_texts, raw_ints, shuffle_labels, max_labels)
+            processed_ltexts_batch.append(txts)
+            processed_lints_batch.append(torch.tensor(ints, dtype=torch.float32))
+
+        # Second step: batch tokenize everything at once
+        tokenized = tokenizer(texts, processed_ltexts_batch)
+
+        # Return the results
+        return {
+            **tokenized,
+            "labels": processed_lints_batch,
         }
-        if len(tokenized["input_ids"].shape) == 1:
-            # If the input is a single string, we need to add a batch dimension
-            result["input_ids"] = result["input_ids"].unsqueeze(0)
-            result["attention_mask"] = result["attention_mask"].unsqueeze(0)
-            result["lmask"] = result["lmask"].unsqueeze(0)
-
-        return result
 
     return hf_dataset.with_transform(
         tokenize_function,

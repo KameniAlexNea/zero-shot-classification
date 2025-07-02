@@ -69,9 +69,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         loss = out.loss
         self.assertIsNone(loss)
         # sample0 has one label => logits tensor of shape (1,)
-        self.assertEqual(out["logits"][0].shape, (1, 1))
-        # sample1 no labels => zero-length
-        self.assertEqual(out["logits"][1].numel(), 1)
+        self.assertEqual(out["logits"].shape, (2, 1))
 
     def test_forward_with_labels_and_loss(self):
         out = self.model(
