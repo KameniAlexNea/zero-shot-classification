@@ -78,7 +78,6 @@ class GliZNETTokenizer:
 
         return sequence, labels_mask
 
-
     def _truncate_text_tokens(
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> List[int]:

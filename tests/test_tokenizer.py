@@ -119,7 +119,7 @@ class TestGliZNETTokenizer(unittest.TestCase):
         ]
         self.assertEqual(sequence, expected_sequence)
 
-        expected_label_mask = [0, 0, 0, 0, 1, 0, 1, 0, 0]
+        expected_label_mask = [0, 0, 0, 0, 0, 1, 0, 0, 1]
         self.assertEqual(lmask, expected_label_mask)
         self.assertEqual(
             len(lmask),
