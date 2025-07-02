@@ -66,7 +66,7 @@ class DatasetGenerator:
             total=batches, desc="Generating batches", unit="batch"
         ) as pbar:
             save_futures = []
-            
+
             for batch_num in range(batches):
                 current_batch_size = min(batch_size, total_samples - total_generated)
                 batch_file = os.path.join(output_dir, f"batch_{batch_num + 1:06d}.json")
@@ -80,7 +80,9 @@ class DatasetGenerator:
                 batch_data = self.generate_dataset(current_batch_size)
 
                 # Submit save task to thread pool (non-blocking)
-                save_future = executor.submit(self._save_batch_file, batch_data, batch_file)
+                save_future = executor.submit(
+                    self._save_batch_file, batch_data, batch_file
+                )
                 save_futures.append(save_future)
 
                 total_generated += len(batch_data["data"])
@@ -99,7 +101,9 @@ class DatasetGenerator:
             for future in save_futures:
                 future.result()  # This will raise any exceptions that occurred
 
-        logger.success(f"Generated {total_generated} samples across {batches} batches in {output_dir}")
+        logger.success(
+            f"Generated {total_generated} samples across {batches} batches in {output_dir}"
+        )
 
 
 def main():
@@ -171,14 +175,16 @@ def main():
     else:
         logger.info("Generating small dataset in single batch")
         batch_data = generator.generate_dataset(args.num_samples)
-        
+
         # Save single batch file
         os.makedirs(args.batch_dir, exist_ok=True)
         batch_file = os.path.join(args.batch_dir, "batch_000001.json")
         with open(batch_file, "w") as f:
             json.dump(batch_data, f, indent=2)
-        
-        logger.success(f"Generated {len(batch_data['data'])} samples and saved to {batch_file}")
+
+        logger.success(
+            f"Generated {len(batch_data['data'])} samples and saved to {batch_file}"
+        )
 
     logger.success(f"All data saved to batch files in {args.batch_dir}")
 
