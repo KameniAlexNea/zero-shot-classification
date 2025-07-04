@@ -21,7 +21,7 @@ class DatasetGenerator:
             + " topics loaded"
         )
 
-    def _create_prompt(self, num_samples: int) -> str:
+    def _create_prompt(self, num_samples: int) -> tuple[str, str]:
         """Create the prompt for generating synthetic data."""
         topics = "\n".join(random.choices(self.all_topics, k=3))
         return (
