@@ -1,18 +1,18 @@
+# --projected_dim 256 \
 nohup uv run train_gliznet.py \
-    --model_name microsoft/deberta-v3-large \
+    --model_name microsoft/deberta-v3-base \
     --model_class DebertaV2PreTrainedModel \
     --run_name "gliznet_training" \
     --use_fast_tokenizer false \
-    --projected_dim 256 \
-    --similarity_metric dot \
+    --similarity_metric dot_learning \
     --max_labels 20 \
     --per_device_train_batch_size 64 \
     --per_device_eval_batch_size 128 \
-    --num_train_epochs 50 \
+    --num_train_epochs 5 \
     --output_dir results \
-    --learning_rate 2e-4 \
+    --learning_rate 1e-4 \
     --logging_steps 100 \
-    --warmup_ratio 0.1 \
+    --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
     --eval_steps 100 \
     --save_steps 100 \

@@ -1,3 +1,8 @@
+import os
+
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 import importlib
 import json
 from argparse import ArgumentParser
@@ -30,7 +35,7 @@ class EvaluationConfig:
     model_class: str = "BertPreTrainedModel"
     device: str = "auto"
     batch_size: int = 64
-    max_labels: int = 20
+    max_labels: int = 50
     threshold: float = 0.5
     results_dir: str = "results/evaluation_test"
     use_fast_tokenizer: bool = True

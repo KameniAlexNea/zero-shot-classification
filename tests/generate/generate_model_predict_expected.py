@@ -65,7 +65,7 @@ def main():
             "labels": ex["labels"],
             "pred": pred,
         }
-    with open("tests/expected_model_predict_outputs.json", "w") as f:
+    with open("tests/testing_data/expected_model_predict_outputs.json", "w") as f:
         json.dump(expected, f, indent=2)
 
 

@@ -3,7 +3,7 @@ import json
 import datasets
 from loguru import logger
 
-from .config import LabelName
+from . import LabelName
 
 
 def load_agnews_dataset():
@@ -50,13 +50,13 @@ def load_imdb_dataset():
 
 def load_amazon_massive_intent(grouped: bool = True):
     intent_groups: dict[str, list[str]] = json.load(
-        open("gliznet/intent_data.json", "r")
+        open("gliznet/eval_data/intent_data.json", "r")
     )
     test_ds = datasets.load_dataset("mteb/amazon_massive_intent", "en")["test"]
     all_labels: list[str] = list(set(test_ds["label"]))
     mapping = (
         {
-            i: intent_group
+            i: intent_group + "_intent"
             for intent_group, intents in intent_groups.items()
             for i in intents
         }

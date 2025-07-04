@@ -3,6 +3,13 @@ from typing import Any, Dict, List, Union
 import torch
 from transformers import AutoTokenizer, BertTokenizerFast
 
+tokenizer_config = dict(
+    return_attention_mask=False,
+    return_token_type_ids=False,
+    truncation=True,
+    add_special_tokens=False,
+)
+
 
 class GliZNETTokenizer:
     def __init__(
@@ -40,14 +47,35 @@ class GliZNETTokenizer:
     def _build_sequence(
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> tuple[List[int], List[int]]:
-        sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
-        labels_mask = [0] * len(sequence)
-        for i, tokens in enumerate(label_tokens):
-            sequence += tokens
-            labels_mask += [1] + [0] * (len(tokens) - 1)
-            if i < len(label_tokens) - 1:
-                sequence.append(self.sep_token_id)  # Adding SEP between labels
-                labels_mask.append(0)
+        # Pre-calculate total sequence length
+        total_label_tokens = sum(len(tokens) for tokens in label_tokens)
+        total_length = 1 + len(text_tokens) + 1 + total_label_tokens + len(label_tokens)
+
+        # Pre-allocate lists
+        sequence = [0] * total_length
+        labels_mask = [0] * total_length
+
+        idx = 0
+        sequence[idx] = self.cls_token_id
+        idx += 1
+
+        # Add text tokens
+        sequence[idx : idx + len(text_tokens)] = text_tokens
+        idx += len(text_tokens)
+
+        # Add separator after text
+        sequence[idx] = self.sep_token_id
+        idx += 1
+
+        # Add label tokens and mark SEP for label representation
+        for tokens in label_tokens:
+            if tokens:
+                sequence[idx : idx + len(tokens)] = tokens
+                idx += len(tokens)
+                sequence[idx] = self.sep_token_id
+                labels_mask[idx] = 1  # Use this SEP as label embedding position
+                idx += 1
+
         return sequence, labels_mask
 
     def _truncate_text_tokens(
@@ -101,32 +129,14 @@ class GliZNETTokenizer:
     ):
         if isinstance(texts, str):
             return (
-                self.tokenizer(
-                    texts,
-                    return_attention_mask=False,
-                    return_token_type_ids=False,
-                    max_length=self.max_length,
-                    truncation=True,
-                )["input_ids"],
-                self.tokenizer(
-                    all_labels,
-                    return_attention_mask=False,
-                    return_token_type_ids=False,
-                )["input_ids"],
+                self.tokenizer(texts, **tokenizer_config)["input_ids"],
+                self.tokenizer(all_labels, **tokenizer_config)["input_ids"],
             )
-        text_ids = self.tokenizer(
-            texts,
-            return_attention_mask=False,
-            return_token_type_ids=False,
-            max_length=self.max_length,
-            truncation=True,
-        )["input_ids"]
+        text_ids = self.tokenizer(texts, **tokenizer_config)["input_ids"]
         merged_labels = sum(all_labels, start=[])
-        merged_labels_ids = self.tokenizer(
-            merged_labels,
-            return_attention_mask=False,
-            return_token_type_ids=False,
-        )["input_ids"]
+        merged_labels_ids = self.tokenizer(merged_labels, **tokenizer_config)[
+            "input_ids"
+        ]
         labels_ids = []
         idx = 0
         for label_group in all_labels:

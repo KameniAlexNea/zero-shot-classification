@@ -54,7 +54,7 @@ class ModelArgs:
         metadata={"help": "Model class to use"},
     )
     projected_dim: int = field(
-        default=256, metadata={"help": "Hidden size for projection layer"}
+        default=None, metadata={"help": "Hidden size for projection layer"}
     )
     similarity_metric: str = field(
         default="dot",

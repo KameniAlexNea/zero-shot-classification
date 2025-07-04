@@ -44,27 +44,28 @@ class TestGliZNETTokenizer(unittest.TestCase):
     def test_batch_tokenize_special_tokens_issue(self):
         text = "hello"
         labels = ["labelA", "labelB"]
-        expected_text_tokens = self.hf_tokenizer.encode(text, add_special_tokens=True)
+        expected_text_tokens = self.hf_tokenizer.encode(text, add_special_tokens=False)
         expected_label_tokens = [
-            self.hf_tokenizer.encode(label, add_special_tokens=True) for label in labels
+            self.hf_tokenizer.encode(label, add_special_tokens=False)
+            for label in labels
         ]
         text_tokens, label_tokens_list = self.tokenizer._batch_tokenize(text, labels)
         self.assertEqual(text_tokens, expected_text_tokens)
         self.assertListEqual(label_tokens_list, expected_label_tokens)
         expected_labels_tokenized_as_batch = self.hf_tokenizer(
-            labels, add_special_tokens=True
+            labels, add_special_tokens=False
         )["input_ids"]
         self.assertEqual(label_tokens_list, expected_labels_tokenized_as_batch)
 
         texts_list = ["hello", "world"]
         all_labels_list = [["labelA"], ["labelB", "labelC"]]
         expected_texts_tokens_list = [
-            self.hf_tokenizer.encode(t, add_special_tokens=True) for t in texts_list
+            self.hf_tokenizer.encode(t, add_special_tokens=False) for t in texts_list
         ]
         expected_all_labels_tokens_list = []
         for label_group in all_labels_list:
             expected_all_labels_tokens_list.append(
-                self.hf_tokenizer(label_group, add_special_tokens=True)["input_ids"]
+                self.hf_tokenizer(label_group, add_special_tokens=False)["input_ids"]
             )
         texts_tokens, labels_tokens_outer_list = self.tokenizer._batch_tokenize(
             texts_list, all_labels_list
@@ -114,17 +115,17 @@ class TestGliZNETTokenizer(unittest.TestCase):
             self.sep_token_id,  # SEP between L1 and L2
             3002,
             3003,  # L2a L2b
+            self.sep_token_id,  # SEP after L2
         ]
         self.assertEqual(sequence, expected_sequence)
 
-        expected_label_mask = [0, 0, 0, 0, 1, 0, 1, 0]
+        expected_label_mask = [0, 0, 0, 0, 0, 1, 0, 0, 1]
         self.assertEqual(lmask, expected_label_mask)
         self.assertEqual(
             len(lmask),
             len(text_tokens)
             + sum(len(lab) for lab in label_tokens_list)
             + len(label_tokens_list)
-            - 1
             + 2,
         )
         self.assertEqual(
