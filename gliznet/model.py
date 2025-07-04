@@ -46,9 +46,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 raise ValueError(
                     f"Unsupported similarity metric: {similarity_metric}. Supported: 'dot', 'bilinear', 'dot_learning'."
                 )
-
-            # Use eager attention implementation to avoid warnings with output_attentions=True
-            config.attn_implementation = "eager"
             setattr(self, self.base_model_prefix, AutoModel.from_config(config=config))
             self._initialize_config(
                 config, projected_dim, similarity_metric, temperature, dropout_rate
@@ -145,30 +142,33 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             token_type_ids,
             output_attentions,
             output_hidden_states,
-        ) -> Tuple[torch.Tensor, torch.Tensor]:
-            output_attentions = output_attentions is None or output_attentions
+        ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+            # Only compute attention weights if explicitly requested
+            compute_attention = output_attentions is not None and output_attentions
             encoder_outputs = self.backbone_forward(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,
-                output_attentions=output_attentions,
+                output_attentions=compute_attention,
                 output_hidden_states=output_hidden_states,
                 return_dict=True,
             )
-            cls_attn_weights = encoder_outputs.attentions[-1].mean(dim=1)[:, 0, :]
+            cls_attn_weights = None
+            if compute_attention and encoder_outputs.attentions is not None:
+                cls_attn_weights = encoder_outputs.attentions[-1].mean(dim=1)[:, 0, :]
             return self.dropout(encoder_outputs.last_hidden_state), cls_attn_weights
 
         def _compute_batch_logits(
             self,
             hidden_states: torch.Tensor,  # (B, L, H)
             lmask: torch.Tensor,  # (B, L), values: 0 = text, 1... = label groups
-            cls_attn_weights: torch.Tensor,  # (B, L)
+            cls_attn_weights: Optional[torch.Tensor],  # (B, L)
         ) -> torch.Tensor:
             """
             Compute logits between [CLS] and averaged label embeddings per sample.
             """
 
-            def compute(
+            def compute_weighted(
                 hidden_proj_raw: torch.Tensor,
                 lmask_raw: torch.Tensor,
                 cls_attn_weights_raw: torch.Tensor,
@@ -180,26 +180,55 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                     * attention_score.unsqueeze(1)
                 ).sum(dim=0) / (attention_score.sum() + 1e-8)
 
+            def compute_average(
+                hidden_proj_raw: torch.Tensor,
+                lmask_raw: torch.Tensor,
+                label_id,
+            ):
+                label_tokens = hidden_proj_raw[lmask_raw == label_id]
+                return label_tokens.mean(dim=0)
+
             hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)
-            all_logits = [
-                self.compute_similarity(
-                    hidden_proj_raw[0],
-                    torch.stack(
-                        [
-                            compute(
-                                hidden_proj_raw,
-                                lmask_raw,
-                                cls_attn_weights_raw,
-                                label_id,
-                            )
-                            for label_id in range(1, lmask_raw.max().item() + 1)
-                        ]
-                    ),
-                )
-                for hidden_proj_raw, lmask_raw, cls_attn_weights_raw in zip(
-                    hidden_proj, lmask, cls_attn_weights
-                )
-            ]
+
+            if cls_attn_weights is not None:
+                # Use attention-weighted averaging
+                all_logits = [
+                    self.compute_similarity(
+                        hidden_proj_raw[0],
+                        torch.stack(
+                            [
+                                compute_weighted(
+                                    hidden_proj_raw,
+                                    lmask_raw,
+                                    cls_attn_weights_raw,
+                                    label_id,
+                                )
+                                for label_id in range(1, lmask_raw.max().item() + 1)
+                            ]
+                        ),
+                    )
+                    for hidden_proj_raw, lmask_raw, cls_attn_weights_raw in zip(
+                        hidden_proj, lmask, cls_attn_weights
+                    )
+                ]
+            else:
+                # Use simple averaging
+                all_logits = [
+                    self.compute_similarity(
+                        hidden_proj_raw[0],
+                        torch.stack(
+                            [
+                                compute_average(
+                                    hidden_proj_raw,
+                                    lmask_raw,
+                                    label_id,
+                                )
+                                for label_id in range(1, lmask_raw.max().item() + 1)
+                            ]
+                        ),
+                    )
+                    for hidden_proj_raw, lmask_raw in zip(hidden_proj, lmask)
+                ]
 
             return torch.cat(all_logits)
 
