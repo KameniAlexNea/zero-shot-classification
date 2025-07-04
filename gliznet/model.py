@@ -118,7 +118,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
 
             elif self.config.similarity_metric == "dot_learning":
-                self.classifier = nn.Linear(projected_dim, 1, bias=False)
+                self.classifier = nn.Linear(projected_dim, 1)
 
         def backbone_forward(self, *args, **kwargs):
             return getattr(self, self.base_model_prefix)(*args, **kwargs)

@@ -23,10 +23,17 @@ def load_dataset(
     positive_column: str = "labels",
     negative_column: str = "not_labels",
     shuffle_labels: bool = True,
+    min_label_length: int = 2,
 ):
-    def mapper(x):
-        labels = x[positive_column] + x[negative_column]
-        labels_int = [1] * len(x[positive_column]) + [0] * len(x[negative_column])
+    def mapper(x: dict[str, list[str]]):
+        pos = [
+            i.strip() for i in x[positive_column] if len(i.strip()) > min_label_length
+        ]
+        neg = [
+            i.strip() for i in x[negative_column] if len(i.strip()) > min_label_length
+        ]
+        labels = pos + x[negative_column]
+        labels_int = [1] * len(pos) + [0] * len(neg)
         if shuffle_labels:
             combined = list(zip(labels, labels_int))
             random.shuffle(combined)
