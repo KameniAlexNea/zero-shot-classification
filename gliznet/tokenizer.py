@@ -22,12 +22,18 @@ class GliZNETTokenizer:
         self.tokenizer: BertTokenizerFast = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
+
+        # Add [LAB] token for label separation
+        special_tokens_dict = {"additional_special_tokens": ["[LAB]"]}
+        self.tokenizer.add_special_tokens(special_tokens_dict)
+
         self.min_text_token = min_text_token
 
         self.max_length = self.tokenizer.model_max_length
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
+        self.lab_token_id = self.tokenizer.convert_tokens_to_ids("[LAB]")
 
     @classmethod
     def from_pretrained(
@@ -47,13 +53,18 @@ class GliZNETTokenizer:
     def _build_sequence(
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> tuple[List[int], List[int]]:
-        # [CLS] + text + [SEP] + label1 + [SEP] + label2 + [SEP] + ...
+        # [CLS] + text + [SEP] + label1 + [LAB] + label2 + [LAB] + ...
         sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
         lmask = [0] * (1 + len(text_tokens) + 1)
 
         for i, label in enumerate(label_tokens, start=1):
-            sequence += label + [self.sep_token_id]
-            lmask += [i] * len(label) + [0]  # SEP not included in label group
+            sequence += label
+            lmask += [i] * len(label)
+
+            # Add [LAB] separator after each label (except the last one)
+            if i < len(label_tokens):
+                sequence += [self.lab_token_id]
+                lmask += [0]  # [LAB] token not included in label group
 
         return sequence, lmask
 
@@ -61,8 +72,9 @@ class GliZNETTokenizer:
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> List[int]:
         label_flat_count = sum(len(lab) for lab in label_tokens)
-        sep_count = 1 + len(label_tokens)  # 1 for after text, 1 after each label
-        reserve = 1 + label_flat_count + sep_count  # CLS + labels + SEPs
+        # 1 SEP after text + (len(label_tokens) - 1) LAB tokens between labels
+        separator_count = 1 + max(0, len(label_tokens) - 1)
+        reserve = 1 + label_flat_count + separator_count  # CLS + labels + separators
 
         allowed_text = (
             self.max_length - reserve

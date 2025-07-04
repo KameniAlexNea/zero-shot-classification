@@ -65,6 +65,7 @@ class ModelEvaluator:
                 get_transformers_class(self.config.model_class)
             ).from_pretrained(
                 self.config.model_path,
+                resized_embeddings=tokenizer.get_vocab_size()
             )
             model.to(self.device)
             model.eval()
