@@ -47,6 +47,8 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                     f"Unsupported similarity metric: {similarity_metric}. Supported: 'dot', 'bilinear', 'dot_learning'."
                 )
 
+            # Use eager attention implementation to avoid warnings with output_attentions=True
+            config.attn_implementation = "eager"
             setattr(self, self.base_model_prefix, AutoModel.from_config(config=config))
             self._initialize_config(
                 config, projected_dim, similarity_metric, temperature, dropout_rate
