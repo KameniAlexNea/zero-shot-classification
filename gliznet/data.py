@@ -32,7 +32,7 @@ def load_dataset(
         neg = [
             i.strip() for i in x[negative_column] if len(i.strip()) > min_label_length
         ]
-        labels = pos + x[negative_column]
+        labels = pos + neg
         labels_int = [1] * len(pos) + [0] * len(neg)
         if shuffle_labels:
             combined = list(zip(labels, labels_int))

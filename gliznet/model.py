@@ -206,7 +206,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def _compute_batch_logits(
             self, hidden_states: torch.Tensor, lmask: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        ) -> torch.Tensor:
             """Compute logits for all samples in the batch with vectorized operations."""
             # Only project CLS and label tokens to save memory
             mask = lmask.bool()
