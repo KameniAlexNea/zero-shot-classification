@@ -99,7 +99,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             attention_mask: Optional[torch.Tensor] = None,
             token_type_ids: Optional[torch.Tensor] = None,
             lmask: Optional[torch.Tensor] = None,
-            labels: Optional[List[torch.Tensor]] = None,
+            labels: Optional[torch.Tensor] = None,
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
@@ -175,77 +175,110 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
         ) -> torch.Tensor:
             """
             Compute logits between [CLS] and averaged label embeddings per sample.
+            Fully vectorized implementation - computes similarity only once!
             """
-
-            def compute_weighted(
-                hidden_proj_raw: torch.Tensor,
-                lmask_raw: torch.Tensor,
-                cls_attn_weights_raw: torch.Tensor,
-                label_id,
-            ):
-                attention_score = cls_attn_weights_raw[lmask_raw == label_id]
-                return (
-                    hidden_proj_raw[lmask_raw == label_id]
-                    * attention_score.unsqueeze(1)
-                ).sum(dim=0) / (attention_score.sum() + 1e-8)
-
-            def compute_average(
-                hidden_proj_raw: torch.Tensor,
-                lmask_raw: torch.Tensor,
-                label_id,
-            ):
-                label_tokens = hidden_proj_raw[lmask_raw == label_id]
-                return label_tokens.mean(dim=0)
-
             hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)
+            projected_dim = hidden_proj.shape[-1]
+
+            # Get [CLS] tokens (first token in each sequence)
+            cls_tokens = hidden_proj[:, 0]  # (B, D)
+
+            # Create mask for non-text tokens (label tokens have lmask > 0)
+            label_mask = lmask > 0  # (B, L)
+
+            # Get all label tokens and their metadata
+            label_positions = (
+                label_mask.nonzero()
+            )  # (num_label_tokens, 2) - [batch_idx, seq_idx]
+            label_hidden = hidden_proj[label_mask]  # (num_label_tokens, D)
+            label_ids = lmask[label_mask]  # (num_label_tokens,)
+            label_batch_indices = label_positions[:, 0]  # (num_label_tokens,)
+
+            # Create unique identifier for each (batch, label_id) pair
+            max_label_id = lmask.max().item()
+            unique_label_keys = (
+                label_batch_indices * (max_label_id + 1) + label_ids
+            )  # (num_label_tokens,)
+            unique_keys, inverse_indices = torch.unique(
+                unique_label_keys, return_inverse=True
+            )
+
+            # Compute label representations using scatter operations
+            num_unique_labels = len(unique_keys)
 
             if cls_attn_weights is not None:
-                # Use attention-weighted averaging
-                all_logits = [
-                    self.compute_similarity(
-                        hidden_proj_raw[0],
-                        torch.stack(
-                            [
-                                compute_weighted(
-                                    hidden_proj_raw,
-                                    lmask_raw,
-                                    cls_attn_weights_raw,
-                                    label_id,
-                                )
-                                for label_id in range(1, lmask_raw.max().item() + 1)
-                            ]
-                        ),
-                    )
-                    for hidden_proj_raw, lmask_raw, cls_attn_weights_raw in zip(
-                        hidden_proj, lmask, cls_attn_weights
-                    )
-                ]
-            else:
-                # Use simple averaging
-                all_logits = [
-                    self.compute_similarity(
-                        hidden_proj_raw[0],
-                        torch.stack(
-                            [
-                                compute_average(
-                                    hidden_proj_raw,
-                                    lmask_raw,
-                                    label_id,
-                                )
-                                for label_id in range(1, lmask_raw.max().item() + 1)
-                            ]
-                        ),
-                    )
-                    for hidden_proj_raw, lmask_raw in zip(hidden_proj, lmask)
-                ]
+                # Attention-weighted averaging
+                attn_weights = cls_attn_weights[label_mask]  # (num_label_tokens,)
 
-            return torch.cat(all_logits)
+                # Sum attention weights for normalization
+                attn_sums = torch.zeros(num_unique_labels, device=hidden_states.device)
+                attn_sums.scatter_add_(0, inverse_indices, attn_weights)
+                attn_sums = attn_sums.clamp_min(1e-8)  # Avoid division by zero
+
+                # Compute weighted sum of hidden states
+                weighted_hidden = label_hidden * attn_weights.unsqueeze(
+                    -1
+                )  # (num_label_tokens, D)
+                label_representations = torch.zeros(
+                    num_unique_labels, projected_dim, device=hidden_states.device
+                )
+                label_representations.scatter_add_(
+                    0,
+                    inverse_indices.unsqueeze(-1).expand(-1, projected_dim),
+                    weighted_hidden,
+                )
+
+                # Normalize by attention sums
+                label_representations = label_representations / attn_sums.unsqueeze(-1)
+            else:
+                # Simple averaging
+                # Count tokens per unique label
+                counts = torch.zeros(num_unique_labels, device=hidden_states.device)
+                counts.scatter_add_(
+                    0,
+                    inverse_indices,
+                    torch.ones_like(inverse_indices, dtype=torch.float),
+                )
+
+                # Sum hidden states
+                label_representations = torch.zeros(
+                    num_unique_labels, projected_dim, device=hidden_states.device
+                )
+                label_representations.scatter_add_(
+                    0,
+                    inverse_indices.unsqueeze(-1).expand(-1, projected_dim),
+                    label_hidden,
+                )
+
+                # Average
+                label_representations = label_representations / counts.unsqueeze(
+                    -1
+                ).clamp_min(1)
+
+            # Extract batch indices for each unique label
+            label_batch_ids = unique_keys // (max_label_id + 1)  # (num_unique_labels,)
+
+            # Get corresponding CLS tokens
+            cls_for_labels = cls_tokens[label_batch_ids]  # (num_unique_labels, D)
+
+            # Compute all similarities at once - SINGLE CALL TO compute_similarity!
+            all_logits = self.compute_similarity(
+                cls_for_labels, label_representations
+            )  # (num_unique_labels, 1)
+
+            return all_logits
 
         def _compute_loss(
-            self, outputs_logits: torch.Tensor, labels: List[torch.Tensor]
+            self, outputs_logits: torch.Tensor, labels: torch.Tensor
         ) -> Optional[torch.Tensor]:
-            total_labels = torch.cat([lab.view(-1, 1) for lab in labels])
-            loss_values: torch.Tensor = self.loss_fn(outputs_logits, total_labels)
+            # Filter out padding values (-100) from labels
+            valid_mask = labels != -100
+            valid_labels = labels[valid_mask].float().view(-1, 1)
+
+            if valid_labels.numel() == 0:
+                return torch.tensor(0.0, device=labels.device, requires_grad=True)
+
+            loss_values: torch.Tensor = self.loss_fn(outputs_logits, valid_labels)
             return loss_values.mean() * self.scale_loss
 
         @torch.inference_mode()
@@ -260,19 +293,35 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             outputs = self.forward(
                 input_ids=input_ids, attention_mask=attention_mask, lmask=lmask
             )
-            logits_list = (
+            logits_tensor = (
                 outputs.logits if isinstance(outputs, GliZNetOutput) else outputs[0]
             )
-            logits_list = torch.split(logits_list, lmask.max(dim=1)[0].tolist())
 
-            activate = (
-                torch.sigmoid
-                if activation_fn == "sigmoid"
-                else lambda x: torch.softmax(x, dim=0)
-            )
-            return [
-                activate(logits.squeeze(-1)).cpu().tolist() for logits in logits_list
-            ]
+            # Split logits based on number of labels per sample
+            batch_size = lmask.shape[0]
+            results = []
+            logit_idx = 0
+
+            for batch_idx in range(batch_size):
+                sample_lmask = lmask[batch_idx]
+                num_labels = len(
+                    torch.unique(sample_lmask)[torch.unique(sample_lmask) > 0]
+                )
+
+                if num_labels > 0:
+                    sample_logits = logits_tensor[logit_idx : logit_idx + num_labels]
+                    logit_idx += num_labels
+
+                    activate = (
+                        torch.sigmoid
+                        if activation_fn == "sigmoid"
+                        else lambda x: torch.softmax(x, dim=0)
+                    )
+                    results.append(activate(sample_logits.squeeze(-1)).cpu().tolist())
+                else:
+                    results.append([])
+
+            return results
 
     return GliZNetForSequenceClassification
 
