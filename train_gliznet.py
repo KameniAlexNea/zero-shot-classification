@@ -139,7 +139,6 @@ def main():
         model_args.model_name,
         projected_dim=model_args.projected_dim,
         similarity_metric=model_args.similarity_metric,
-        resized_embeddings=len(tokenizer.get_vocab_size()),
     )
 
     # Create output directory

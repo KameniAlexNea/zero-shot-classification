@@ -40,7 +40,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             temperature: float = 1.0,
             dropout_rate: float = 0.1,
             scale_loss: float = 10.0,
-            resized_embeddings: int = None,
         ):
             super().__init__(config)
             if similarity_metric not in ["dot", "bilinear", "dot_learning"]:
@@ -54,7 +53,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 similarity_metric,
                 temperature,
                 dropout_rate,
-                resized_embeddings,
             )
 
             self.scale_loss = scale_loss
@@ -70,7 +68,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             similarity_metric,
             temperature,
             dropout_rate,
-            resized_embeddings,
         ):
             config.projected_dim = getattr(config, "projected_dim", projected_dim)
             config.similarity_metric = getattr(
@@ -78,9 +75,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             )
             config.temperature = getattr(config, "temperature", temperature)
             config.dropout_rate = getattr(config, "dropout_rate", dropout_rate)
-            config.resized_embeddings = getattr(
-                config, "resized_embeddings", resized_embeddings
-            )
             self.config = config
 
         def _setup_layers(self):
@@ -95,19 +89,6 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
             elif self.config.similarity_metric == "dot_learning":
                 self.classifier = nn.Linear(projected_dim, 1)
-
-            if self.config.resized_embeddings is not None and self.config.resized_embeddings != self.config.vocab_size:
-                self.resize_token_embeddings(self.config.resized_embeddings)
-
-        def resize_token_embeddings(self, new_num_tokens: int):
-            print(new_num_tokens)
-            base_model = getattr(self, self.base_model_prefix)
-            if not hasattr(base_model, "resize_token_embeddings"):
-                raise AttributeError(
-                    f"{self.base_model_prefix} does not have a resize_token_embeddings method."
-                )
-            if hasattr(base_model, "resize_token_embeddings"):
-                base_model.resize_token_embeddings(new_num_tokens)
 
         def backbone_forward(self, *args, **kwargs):
             return getattr(self, self.base_model_prefix)(*args, **kwargs)

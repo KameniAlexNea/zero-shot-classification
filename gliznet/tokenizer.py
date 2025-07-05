@@ -16,6 +16,7 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token: int = 5,
+        cls_seperator_token: str = ";",
         *args,
         **kwargs,
     ):
@@ -23,29 +24,29 @@ class GliZNETTokenizer:
             pretrained_model_name_or_path, *args, **kwargs
         )
 
-        # Add [LAB] token for label separation
-        special_tokens_dict = {"additional_special_tokens": ["[LAB]"]}
-        self.tokenizer.add_special_tokens(special_tokens_dict)
-
         self.min_text_token = min_text_token
 
         self.max_length = self.tokenizer.model_max_length
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
-        self.lab_token_id = self.tokenizer.convert_tokens_to_ids("[LAB]")
+        self.label_sep_id = self.tokenizer.convert_tokens_to_ids(
+            cls_seperator_token
+        )  # ';' is used as label separator. Try [SEP] if you want to use it as label separator.
 
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token=5,
+        cls_seperator_token: str = ";",
         *args,
         **kwargs,
     ) -> "GliZNETTokenizer":
         return cls(
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             min_text_token=min_text_token,
+            cls_seperator_token=cls_seperator_token,
             *args,
             **kwargs,
         )
@@ -63,7 +64,7 @@ class GliZNETTokenizer:
 
             # Add [LAB] separator after each label (except the last one)
             if i < len(label_tokens):
-                sequence += [self.lab_token_id]
+                sequence += [self.label_sep_id]
                 lmask += [0]  # [LAB] token not included in label group
 
         return sequence, lmask
