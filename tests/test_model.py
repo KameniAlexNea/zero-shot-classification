@@ -78,12 +78,10 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         # sample inputs: batch=2, seq_len=4
         self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
-        # lmask: mark pos 2 in sample0, none in sample1
-        self.lmask = torch.tensor(
-            [[False, False, True, False], [False, False, True, False]]
-        )
-        # labels only for sample0: one label target 1.0
-        self.labels = [torch.tensor([1.0]), torch.tensor([0.0])]
+        # lmask: mark pos 2 as label group 1 in both samples
+        self.lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
+        # labels: padded tensor with -100 for padding
+        self.labels = torch.tensor([[1.0, -100], [0.0, -100]])
 
     def _create_model_with_metric(self, similarity_metric):
         """Helper method to create a model with a specific similarity metric"""
@@ -227,9 +225,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         # Test with fixed inputs to ensure deterministic behavior
         fixed_input_ids = torch.tensor([[101, 1000, 2000, 3000], [101, 4000, 5000, 0]])
         fixed_attn = torch.where(fixed_input_ids > 0, 1, 0)
-        fixed_lmask = torch.tensor(
-            [[False, False, True, False], [False, False, True, False]]
-        )
+        fixed_lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
 
         metrics = ["dot", "bilinear", "dot_learning"]
 

@@ -1,5 +1,6 @@
 import unittest
 
+import torch
 from datasets import Dataset
 from torch.utils.data import DataLoader
 
@@ -22,6 +23,7 @@ class TestDataModule(unittest.TestCase):
         self.dataset = add_tokenized_function(
             hf_dataset=self.hf_data,
             tokenizer=self.tokenizer,
+            shuffle_labels=False,  # Disable shuffling for deterministic tests
         )
 
     def test_len(self):
@@ -63,11 +65,18 @@ class TestDataModule(unittest.TestCase):
         self.assertEqual(item["input_ids"].shape, (2, 512))
         self.assertEqual(item["attention_mask"].shape, (2, 512))
         self.assertEqual(item["lmask"].shape, (2, 512))
-        # labels_int was [1] for sample0
-        self.assertIsInstance(item["labels"], list)
-        self.assertEqual(len(item["labels"]), 2)
-        self.assertEqual(item["labels"][0].shape, (1,))
-        self.assertEqual(item["labels"][1].shape, (2,))
+        # labels are now padded with -100
+        self.assertIsInstance(item["labels"], torch.Tensor)
+        self.assertEqual(item["labels"].shape, (2, 2))  # batch_size x max_labels
+        # Check padding values based on the actual data:
+        # Sample 0: labels_int=[1] -> [1.0, -100]
+        # Sample 1: labels_int=[0, 1] -> [0.0, 1.0]
+        self.assertEqual(item["labels"][0, 0].item(), 1.0)  # first sample, first label
+        self.assertEqual(item["labels"][0, 1].item(), -100)  # first sample, padding
+        self.assertEqual(item["labels"][1, 0].item(), 0.0)  # second sample, first label
+        self.assertEqual(
+            item["labels"][1, 1].item(), 1.0
+        )  # second sample, second label
 
     def test_dataloader_with_collate(self):
         loader = DataLoader(self.dataset, batch_size=2, collate_fn=collate_fn)
@@ -76,11 +85,9 @@ class TestDataModule(unittest.TestCase):
         self.assertEqual(item["input_ids"].shape, (2, 512))
         self.assertEqual(item["attention_mask"].shape, (2, 512))
         self.assertEqual(item["lmask"].shape, (2, 512))
-        # labels_int was [1] for sample0
-        self.assertIsInstance(item["labels"], list)
-        self.assertEqual(len(item["labels"]), 2)
-        self.assertEqual(item["labels"][0].shape, (1,))
-        self.assertEqual(item["labels"][1].shape, (2,))
+        # labels are now padded tensor
+        self.assertIsInstance(item["labels"], torch.Tensor)
+        self.assertEqual(item["labels"].shape, (2, 2))  # batch_size x max_labels
 
 
 if __name__ == "__main__":
