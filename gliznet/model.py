@@ -3,6 +3,7 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 from transformers import AutoModel, BertConfig, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
@@ -40,6 +41,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             temperature: float = 1.0,
             dropout_rate: float = 0.1,
             scale_loss: float = 10.0,
+            margin: float = 0.1,
         ):
             super().__init__(config)
             if similarity_metric not in ["dot", "bilinear", "dot_learning"]:
@@ -56,6 +58,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             )
 
             self.scale_loss = scale_loss
+            self.margin = margin
             self.dropout = nn.Dropout(self.config.dropout_rate)
             self._setup_layers()
             self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
@@ -291,34 +294,29 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             logits_splits = torch.split(sigmoid_logits, split_sizes)
             labels_splits = torch.split(valid_labels_flat, split_sizes)
 
-            contrastive_losses = [
-                self._compute_contrastive_loss(batch_logits, batch_labels)
-                for batch_logits, batch_labels in zip(logits_splits, labels_splits)
-            ]
-            total_contrastive_loss = sum(contrastive_losses) * temperature
+            total_contrastive_loss = (
+                sum(map(self._compute_contrastive_loss, logits_splits, labels_splits))
+                * temperature
+            )
 
             return bce_loss + total_contrastive_loss
 
         def _compute_contrastive_loss(
             self, logits: torch.Tensor, labels: torch.Tensor
         ) -> torch.Tensor:
-            # Separate positive (1) and negative (not 1) labels
-            positive_mask = labels == 1.0
-            negative_mask = labels != 1.0
+            positive_logits = logits[labels == 1.0]
+            negative_logits = logits[labels != 1.0]
 
-            # Compute averages
-            if positive_mask.any():
-                avg_positive = logits[positive_mask].mean()
-            else:
-                avg_positive = logits.new_tensor(1.0)
+            # If no valid comparisons, skip
+            if positive_logits.numel() == 0 or negative_logits.numel() == 0:
+                return torch.tensor(0.0, device=logits.device)
 
-            if negative_mask.any():
-                avg_negative = logits[negative_mask].mean()
-            else:
-                avg_negative = logits.new_tensor(0.0)
+            # Get hardest cases
+            min_pos = positive_logits.min()
+            max_neg = negative_logits.max()
 
-            # Contrastive loss: encourage positive high, negative low
-            return 1 - avg_positive + avg_negative  # avg_positive - avg_negative == 1
+            # Loss: we want min(pos) > max(neg)
+            return F.relu(self.margin + max_neg - min_pos)
 
         @torch.inference_mode()
         def predict(
