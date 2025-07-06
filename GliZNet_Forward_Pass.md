@@ -1,29 +1,41 @@
 
 ```mermaid
 graph TD
-    subgraph "Forward Pass"
-        A["input_ids, attention_mask, lmask, labels"] --> B["_get_hidden_states()"];
-        B --> C["hidden_states"];
-        C & lmask --> D["_compute_batch_logits()"];
-        D --> E["outputs_logits"];
-        E & labels --> F["_compute_loss()"];
-        F --> G["loss"];
-        E & G --> H["GliZNetOutput(loss, logits)"];
+    subgraph "Data Preprocessing"
+        A["Raw Input<br/>text, labels"] --> B["GliZNETTokenizer<br/>sequence building"];
+        B --> C["Token Processing<br/>truncation & padding"];
+        C --> D["Tensor Creation<br/>input_ids, attention_mask, lmask"];
     end
 
-    subgraph "Detailed Steps"
-        B --> B1["backbone_forward()"];
-        B1 --> B2["encoder_outputs.last_hidden_state"];
-        B2 --> C;
-
-        D --> D1["torch.where(lmask) to get label positions"];
-        C & D1 --> D2["Project CLS & label representations"];
-        D2 --> D3["compute_similarity()"];
-        D3 --> D4["_group_logits_by_batch()"];
-        D4 --> E;
-
-        F --> F1["Prepare valid logits & labels"];
-        F1 --> F2["BCEWithLogitsLoss"];
-        F2 --> G;
+    subgraph "GliZNet Forward Pass"
+        D --> E["Backbone Encoding<br/>Transformer layers"];
+        E --> F["Hidden States<br/>contextual embeddings"];
+        F --> G["Representation Computing<br/>CLS & label projections"];
+        G --> H["Similarity Computing<br/>dot/bilinear/dot_learning"];
+        H --> I["Logits<br/>similarity scores"];
+        I --> J{"Training Mode?"};
+        J -->|Yes| K["Loss Computation<br/>BCEWithLogitsLoss"];
+        J -->|No| L["GliZNetOutput<br/>logits only"];
+        K --> M["GliZNetOutput<br/>loss + logits"];
     end
+
+    subgraph "Tokenizer Details"
+        N["Sequence Building<br/>[CLS] + text + [SEP] + lab1 + [;] + lab2 + [;]..."] --> B;
+        O["Label Masking<br/>0=text, 1,2,3...=label groups"] --> C;
+        P["Length Management<br/>truncation & padding to max_length"] --> C;
+    end
+
+    subgraph "Model Components"
+        Q["Backbone<br/>BERT/RoBERTa/etc"] --> E;
+        R["Projection Layer<br/>Linear/Identity"] --> G;
+        S["Similarity Function<br/>configurable metric"] --> H;
+        T["Loss Function<br/>scaled BCE"] --> K;
+    end
+
+    style A fill:#ffecb3
+    style D fill:#e1f5fe
+    style M fill:#c8e6c9
+    style L fill:#c8e6c9
+    style J fill:#fff3e0
+    style B fill:#f3e5f5
 ```

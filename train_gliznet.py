@@ -80,6 +80,12 @@ class ModelArgs:
         default=512,
         metadata={"help": "Maximum sequence length for the model"},
     )
+    token_dropout: float = field(
+        default=0.1,
+        metadata={
+            "help": "Token dropout probability for token masking during training"
+        },
+    )
 
 
 def main():
@@ -115,7 +121,10 @@ def main():
     )
     # Create datasets
     train_dataset = add_tokenized_function(
-        hf_dataset=train_data, tokenizer=tokenizer, max_labels=model_args.max_labels
+        hf_dataset=train_data,
+        tokenizer=tokenizer,
+        max_labels=model_args.max_labels,
+        token_dropout=model_args.token_dropout,
     )
 
     val_dataset = add_tokenized_function(

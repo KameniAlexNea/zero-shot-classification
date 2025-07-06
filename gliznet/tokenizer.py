@@ -1,7 +1,15 @@
+import random
 from typing import Any, Dict, List, Union
 
 import torch
 from transformers import AutoTokenizer, BertTokenizerFast
+
+
+def apply_token_dropout(
+    tokens: List[int], dropout_prob: float, mask_token_id: int
+) -> List[int]:
+    return [tok if random.random() > dropout_prob else mask_token_id for tok in tokens]
+
 
 tokenizer_config = dict(
     return_attention_mask=False,
@@ -30,6 +38,7 @@ class GliZNETTokenizer:
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
+        self.mask_token_id = self.tokenizer.mask_token_id or self.tokenizer.unk_token_id
         self.label_sep_id = self.tokenizer.convert_tokens_to_ids(
             cls_seperator_token
         )  # ';' is used as label separator. Try [SEP] if you want to use it as label separator.
@@ -131,8 +140,13 @@ class GliZNETTokenizer:
         self,
         text: str,
         all_labels: List[str],
+        token_dropout: float = 0.0,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
+        if token_dropout > 0.0:
+            text_tokens = apply_token_dropout(
+                text_tokens, token_dropout, self.mask_token_id
+            )
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
         token_ids, lmask = self._build_sequence(text_tokens, label_tokens)
         result = self._pad_and_mask(token_ids, lmask)
@@ -143,8 +157,14 @@ class GliZNETTokenizer:
         self,
         texts: List[str],
         all_labels: List[List[str]],
+        token_dropout: float = 0.0,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
+        if token_dropout > 0.0:
+            text_tokens = [
+                apply_token_dropout(txt, token_dropout, self.mask_token_id)
+                for txt in text_tokens
+            ]
         text_tokens = [
             self._truncate_text_tokens(txt, lbls)
             for txt, lbls in zip(text_tokens, label_tokens)
@@ -170,10 +190,11 @@ class GliZNETTokenizer:
         self,
         texts: Union[List[str], str],
         labels: List[Union[List[str], str]],
+        token_dropout: float = 0.0,
     ):
         if isinstance(texts, str):
-            return self.tokenize_example(texts, labels)
-        return self.tokenize_batch(texts, labels)
+            return self.tokenize_example(texts, labels, token_dropout)
+        return self.tokenize_batch(texts, labels, token_dropout)
 
     def decode_sequence(self, input_ids: List[int]) -> str:
         return self.tokenizer.decode(
