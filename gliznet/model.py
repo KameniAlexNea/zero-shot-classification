@@ -272,14 +272,53 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             self, outputs_logits: torch.Tensor, labels: torch.Tensor
         ) -> Optional[torch.Tensor]:
             # Filter out padding values (-100) from labels
+            temperature = 10 / len(labels)
             valid_mask = labels != -100
             valid_labels = labels[valid_mask].float().view(-1, 1)
 
-            if valid_labels.numel() == 0:
-                return torch.tensor(0.0, device=labels.device, requires_grad=True)
-
+            # Original BCE loss
             loss_values: torch.Tensor = self.loss_fn(outputs_logits, valid_labels)
-            return loss_values.mean() * self.scale_loss
+            bce_loss = loss_values.mean() * self.scale_loss
+
+            # Contrastive loss component - using torch.split
+            valid_labels_flat = valid_labels.squeeze(-1)
+            sigmoid_logits = torch.sigmoid(outputs_logits.squeeze(-1)).clamp(
+                min=1e-6, max=1 - 1e-6
+            )
+
+            # Get split sizes for each batch (number of valid labels per sample)
+            split_sizes = valid_mask.sum(dim=1).tolist()
+            logits_splits = torch.split(sigmoid_logits, split_sizes)
+            labels_splits = torch.split(valid_labels_flat, split_sizes)
+
+            contrastive_losses = [
+                self._compute_contrastive_loss(batch_logits, batch_labels)
+                for batch_logits, batch_labels in zip(logits_splits, labels_splits)
+            ]
+            total_contrastive_loss = sum(contrastive_losses) * temperature
+
+            return bce_loss + total_contrastive_loss
+
+        def _compute_contrastive_loss(
+            self, logits: torch.Tensor, labels: torch.Tensor
+        ) -> torch.Tensor:
+            # Separate positive (1) and negative (not 1) labels
+            positive_mask = labels == 1.0
+            negative_mask = labels != 1.0
+
+            # Compute averages
+            if positive_mask.any():
+                avg_positive = logits[positive_mask].mean()
+            else:
+                avg_positive = logits.new_tensor(1.0)
+
+            if negative_mask.any():
+                avg_negative = logits[negative_mask].mean()
+            else:
+                avg_negative = logits.new_tensor(0.0)
+
+            # Contrastive loss: encourage positive high, negative low
+            return 1 - avg_positive + avg_negative  # avg_positive - avg_negative == 1
 
         @torch.inference_mode()
         def predict(
