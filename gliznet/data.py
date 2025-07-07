@@ -10,6 +10,7 @@ from typing import Dict, List
 
 import datasets
 import torch
+from torch.nn.utils.rnn import pad_sequence
 
 from . import LabelName
 from .tokenizer import GliZNETTokenizer
@@ -70,6 +71,7 @@ def add_tokenized_function(
     labels_int_column: str = LabelName.lint,
     max_labels=50,
     shuffle_labels: bool = True,
+    token_dropout: float = 0.0,
 ) -> datasets.Dataset:
     """
     Tokenizes the HuggingFace dataset using the GliZNETTokenizer.
@@ -92,7 +94,9 @@ def add_tokenized_function(
             processed_lints_batch.append(torch.tensor(ints, dtype=torch.float32))
 
         # Second step: batch tokenize everything at once
-        tokenized = tokenizer(texts, processed_ltexts_batch)
+        tokenized = tokenizer(
+            texts, processed_ltexts_batch, token_dropout=token_dropout
+        )
 
         # Return the results
         return {
@@ -112,7 +116,9 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     lmask = torch.stack([item["lmask"] for item in batch])
 
     # Handle labels which can have different lengths per sample
-    labels = [item["labels"] for item in batch]
+    labels = pad_sequence(
+        [item["labels"] for item in batch], batch_first=True, padding_value=-100
+    )
 
     return {
         "input_ids": input_ids,

@@ -6,7 +6,7 @@ nohup uv run train_gliznet.py \
     --use_fast_tokenizer false \
     --similarity_metric dot_learning \
     --max_labels 20 \
-    --per_device_train_batch_size 64 \
+    --per_device_train_batch_size 128 \
     --per_device_eval_batch_size 128 \
     --num_train_epochs 5 \
     --output_dir results \

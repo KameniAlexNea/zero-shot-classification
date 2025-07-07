@@ -27,6 +27,7 @@ def compute_metrics(
 
     logits = np.concatenate(logits)
     labels = np.concatenate(labels)
+    labels = labels[labels != -100]  # Remove -100 labels if present
 
     if not activated:
         logits = 1 / (1 + np.exp(-logits))

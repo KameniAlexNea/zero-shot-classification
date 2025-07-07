@@ -1,7 +1,15 @@
+import random
 from typing import Any, Dict, List, Union
 
 import torch
 from transformers import AutoTokenizer, BertTokenizerFast
+
+
+def apply_token_dropout(
+    tokens: List[int], dropout_prob: float, mask_token_id: int
+) -> List[int]:
+    return [tok if random.random() > dropout_prob else mask_token_id for tok in tokens]
+
 
 tokenizer_config = dict(
     return_attention_mask=False,
@@ -16,30 +24,38 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token: int = 5,
+        cls_separator_token: str = ";",
         *args,
         **kwargs,
     ):
         self.tokenizer: BertTokenizerFast = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
+
         self.min_text_token = min_text_token
 
         self.max_length = self.tokenizer.model_max_length
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
+        self.mask_token_id = self.tokenizer.mask_token_id or self.tokenizer.unk_token_id
+        self.label_sep_id = self.tokenizer.convert_tokens_to_ids(
+            cls_separator_token
+        )  # ';' is used as label separator. Try [SEP] if you want to use it as label separator.
 
     @classmethod
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token=5,
+        cls_separator_token: str = ";",
         *args,
         **kwargs,
     ) -> "GliZNETTokenizer":
         return cls(
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             min_text_token=min_text_token,
+            cls_separator_token=cls_separator_token,
             *args,
             **kwargs,
         )
@@ -47,75 +63,48 @@ class GliZNETTokenizer:
     def _build_sequence(
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> tuple[List[int], List[int]]:
-        # Pre-calculate total sequence length
-        total_label_tokens = sum(len(tokens) for tokens in label_tokens)
-        total_length = 1 + len(text_tokens) + 1 + total_label_tokens + len(label_tokens)
+        # [CLS] + text + [SEP] + label1 + [LAB] + label2 + [LAB] + ...
+        sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
+        lmask = [0] * (1 + len(text_tokens) + 1)
 
-        # Pre-allocate lists
-        sequence = [0] * total_length
-        labels_mask = [0] * total_length
+        for i, label in enumerate(label_tokens, start=1):
+            sequence += label
+            lmask += [i] * len(label)
 
-        idx = 0
-        sequence[idx] = self.cls_token_id
-        idx += 1
+            # Add [LAB] separator after each label (except the last one)
+            if i < len(label_tokens):
+                sequence += [self.label_sep_id]
+                lmask += [0]  # [LAB] token not included in label group
 
-        # Add text tokens
-        sequence[idx : idx + len(text_tokens)] = text_tokens
-        idx += len(text_tokens)
-
-        # Add separator after text
-        sequence[idx] = self.sep_token_id
-        idx += 1
-
-        # Add label tokens and mark SEP for label representation
-        for tokens in label_tokens:
-            if tokens:
-                sequence[idx : idx + len(tokens)] = tokens
-                idx += len(tokens)
-                sequence[idx] = self.sep_token_id
-                labels_mask[idx] = 1  # Use this SEP as label embedding position
-                idx += 1
-
-        return sequence, labels_mask
+        return sequence, lmask
 
     def _truncate_text_tokens(
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> List[int]:
-        label_flat_count = sum([len(sub) for sub in label_tokens])
-        # Ensure sep_count is not negative if label_tokens is empty
-        sep_count = max(0, len(label_tokens) - 1)
-        reserve = (
-            2 + label_flat_count + sep_count
-        )  # CLS + SEP_after_text + labels_tokens + SEPs_between_labels
+        label_flat_count = sum(len(lab) for lab in label_tokens)
+        # 1 SEP after text + (len(label_tokens) - 1) LAB tokens between labels
+        separator_count = 1 + max(0, len(label_tokens) - 1)
+        reserve = 1 + label_flat_count + separator_count  # CLS + labels + separators
 
         allowed_text = (
             self.max_length - reserve
             if reserve < self.max_length
             else self.min_text_token
         )
-
-        # Ensure we don't go below minimum text tokens but also don't exceed what's available
         max_allowed_text = max(self.min_text_token, allowed_text)
-        truncated_length = min(len(text_tokens), max_allowed_text)
+        return text_tokens[: min(len(text_tokens), max_allowed_text)]
 
-        return text_tokens[:truncated_length]
-
-    def _pad_and_mask(self, token_ids: List[int], lmask: List[bool]) -> Dict[str, Any]:
-        side = getattr(self.tokenizer, "padding_side", "right")
+    def _pad_and_mask(self, token_ids: List[int], lmask: List[int]) -> Dict[str, Any]:
         pad_len = self.max_length - len(token_ids)
-        if side == "left":
-            input_ids = [self.pad_token_id] * pad_len + token_ids
-            attention_mask = [0] * pad_len + [1] * len(token_ids)
-            lmask = [False] * pad_len + lmask
-        else:
-            input_ids = token_ids + [self.pad_token_id] * pad_len
-            attention_mask = [1] * len(token_ids) + [0] * pad_len
-            lmask = lmask + [False] * pad_len
+        input_ids = token_ids + [self.pad_token_id] * pad_len
+        attention_mask = [1] * len(token_ids) + [0] * pad_len
+        lmask = lmask + [0] * pad_len
+
         if len(lmask) > self.max_length:
             raise ValueError(
-                f"Label mask length {len(lmask)} exceeds max length {self.max_length}. Please check your input."
-                + self.decode_sequence(input_ids)
+                f"Label mask too long: {len(lmask)} > max_length {self.max_length}"
             )
+
         return {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -132,11 +121,13 @@ class GliZNETTokenizer:
                 self.tokenizer(texts, **tokenizer_config)["input_ids"],
                 self.tokenizer(all_labels, **tokenizer_config)["input_ids"],
             )
+
         text_ids = self.tokenizer(texts, **tokenizer_config)["input_ids"]
         merged_labels = sum(all_labels, start=[])
         merged_labels_ids = self.tokenizer(merged_labels, **tokenizer_config)[
             "input_ids"
         ]
+
         labels_ids = []
         idx = 0
         for label_group in all_labels:
@@ -149,11 +140,15 @@ class GliZNETTokenizer:
         self,
         text: str,
         all_labels: List[str],
+        token_dropout: float = 0.0,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
+        if token_dropout > 0.0:
+            text_tokens = apply_token_dropout(
+                text_tokens, token_dropout, self.mask_token_id
+            )
         text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
         token_ids, lmask = self._build_sequence(text_tokens, label_tokens)
-
         result = self._pad_and_mask(token_ids, lmask)
         result.update(self._to_tensors(result))
         return result
@@ -162,25 +157,31 @@ class GliZNETTokenizer:
         self,
         texts: List[str],
         all_labels: List[List[str]],
+        token_dropout: float = 0.0,
     ) -> Dict[str, Any]:
         text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
+        if token_dropout > 0.0:
+            text_tokens = [
+                apply_token_dropout(txt, token_dropout, self.mask_token_id)
+                for txt in text_tokens
+            ]
         text_tokens = [
-            self._truncate_text_tokens(text, labels)
-            for text, labels in zip(text_tokens, label_tokens)
+            self._truncate_text_tokens(txt, lbls)
+            for txt, lbls in zip(text_tokens, label_tokens)
         ]
         token_ids, label_masks = zip(
             *[
-                self._build_sequence(text, labels)
-                for text, labels in zip(text_tokens, label_tokens)
+                self._build_sequence(txt, lbls)
+                for txt, lbls in zip(text_tokens, label_tokens)
             ]
         )
-        padded_results = [
+        padded = [
             self._pad_and_mask(ids, mask) for ids, mask in zip(token_ids, label_masks)
         ]
         result = {
-            "input_ids": [r["input_ids"] for r in padded_results],
-            "attention_mask": [r["attention_mask"] for r in padded_results],
-            "lmask": [r["lmask"] for r in padded_results],
+            "input_ids": [p["input_ids"] for p in padded],
+            "attention_mask": [p["attention_mask"] for p in padded],
+            "lmask": [p["lmask"] for p in padded],
         }
         result.update(self._to_tensors(result))
         return result
@@ -189,10 +190,11 @@ class GliZNETTokenizer:
         self,
         texts: Union[List[str], str],
         labels: List[Union[List[str], str]],
+        token_dropout: float = 0.0,
     ):
         if isinstance(texts, str):
-            return self.tokenize_example(texts, labels)
-        return self.tokenize_batch(texts, labels)
+            return self.tokenize_example(texts, labels, token_dropout)
+        return self.tokenize_batch(texts, labels, token_dropout)
 
     def decode_sequence(self, input_ids: List[int]) -> str:
         return self.tokenizer.decode(
@@ -203,14 +205,10 @@ class GliZNETTokenizer:
         return len(self.tokenizer)
 
     def _to_tensors(self, results: Dict[str, Any]) -> Dict[str, torch.Tensor]:
-        """
-        Convert the lists in results to torch tensors:
-        input_ids, attention_mask -> long; lmask -> bool.
-        """
         return {
             k: torch.tensor(
                 results[k],
-                dtype=torch.bool if k == "lmask" else torch.long,
+                dtype=torch.long,
             )
             for k in ("input_ids", "attention_mask", "lmask")
         }
