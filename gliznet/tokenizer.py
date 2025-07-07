@@ -24,7 +24,7 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token: int = 5,
-        cls_seperator_token: str = ";",
+        cls_separator_token: str = ";",
         *args,
         **kwargs,
     ):
@@ -40,7 +40,7 @@ class GliZNETTokenizer:
         self.pad_token_id = self.tokenizer.pad_token_id
         self.mask_token_id = self.tokenizer.mask_token_id or self.tokenizer.unk_token_id
         self.label_sep_id = self.tokenizer.convert_tokens_to_ids(
-            cls_seperator_token
+            cls_separator_token
         )  # ';' is used as label separator. Try [SEP] if you want to use it as label separator.
 
     @classmethod
@@ -48,14 +48,14 @@ class GliZNETTokenizer:
         cls,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token=5,
-        cls_seperator_token: str = ";",
+        cls_separator_token: str = ";",
         *args,
         **kwargs,
     ) -> "GliZNETTokenizer":
         return cls(
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             min_text_token=min_text_token,
-            cls_seperator_token=cls_seperator_token,
+            cls_separator_token=cls_separator_token,
             *args,
             **kwargs,
         )
