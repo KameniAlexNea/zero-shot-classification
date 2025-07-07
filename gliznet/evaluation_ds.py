@@ -1,9 +1,76 @@
 import json
+import re
 
 import datasets
 from loguru import logger
 
 from . import LabelName
+
+
+def split_by_uppercase(text):
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", text)
+
+
+def load_dbpedia_dataset():
+    test_ds = datasets.load_dataset("fancyzhx/dbpedia_14")["test"]
+    all_labels = test_ds.features["label"].names
+    ds_mapping = {i: split_by_uppercase(i).lower() for i in all_labels}
+
+    def convert_labels(label: str):
+        return {
+            LabelName.ltext: [ds_mapping.values()],
+            LabelName.lint: [label == i for i in ds_mapping],
+        }
+
+    def format_text(title: str, content: str):
+        return f"{title}\n{content}"
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": format_text(
+                x["title"],
+                x["content"],
+            ),
+            **convert_labels(x["label"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_events_classification_biotech():
+    test_ds = datasets.load_dataset(
+        "knowledgator/events_classification_biotech", trust_remote_code=True
+    )["test"]
+
+    def clean_label(label: str):
+        return label.lower().replace(" ", "_").replace("-", "and").replace("&", "and")
+
+    def format_text(title: str, content: str, target_organism: str):
+        return f"{title}\n{content}\nTarget Organism: {target_organism}"
+
+    test_labels = sum(test_ds["all_labels"], start=[])
+    test_labels = list(set(test_labels))
+    mapping = {i: clean_label(i) for i in test_labels}
+
+    def convert_labels(labels: list[str]):
+        return {
+            LabelName.ltext: list(mapping.values()),
+            LabelName.lint: [i in labels for i in mapping],
+        }
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": format_text(
+                x["title"],
+                x["content"],
+                x["target organization"],
+            ),
+            **convert_labels(set(x["all_labels"])),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
 
 
 def load_agnews_dataset():
