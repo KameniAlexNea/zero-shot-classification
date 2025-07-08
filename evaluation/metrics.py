@@ -11,10 +11,170 @@ from sklearn.metrics import (
 )
 
 
+def hamming_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    scores = []
+    for true, pred in zip(y_true, y_pred):
+        if np.sum(true) == 0 and np.sum(pred) == 0:
+            scores.append(1)
+        else:
+            scores.append(
+                np.sum(np.logical_and(true, pred)) / np.sum(np.logical_or(true, pred))
+            )
+    return np.mean(scores)
+
+
 def compute_metrics(
     eval_pred: tuple[list[np.ndarray], list[np.ndarray]],
     activated: bool = False,
     threshold: float = 0.5,
+):
+    """Compute evaluation metrics including hamming score and partial match ratio."""
+    logits, labels = eval_pred
+
+    # Flatten nested lists
+    while isinstance(logits[0], list):
+        logits = [item for sublist in logits for item in sublist]
+    while isinstance(labels[0], list):
+        labels = [item for sublist in labels for item in sublist]
+
+    # Convert to arrays
+    logits = np.concatenate([j.reshape(1, -1) for j in logits])
+    labels = np.concatenate([j.reshape(1, -1) for j in labels])
+
+    # Sigmoid activation if not applied
+    if not activated:
+        logits = 1 / (1 + np.exp(-logits))
+
+    predictions = (logits > threshold).astype(int)
+
+    metrics = {}
+
+    # Multi-label classification
+    if labels.ndim > 1 and labels.shape[1] > 1:
+        metrics["accuracy"] = accuracy_score(labels, predictions)
+        metrics["precision"] = precision_score(
+            labels, predictions, average="micro", zero_division=0
+        )
+        metrics["recall"] = recall_score(
+            labels, predictions, average="micro", zero_division=0
+        )
+        metrics["f1"] = f1_score(labels, predictions, average="micro", zero_division=0)
+        metrics["hamming_score"] = hamming_score(labels, predictions)
+
+        # Partial match ratio (mean Jaccard similarity per sample)
+        partial_matches = []
+        for i in range(len(labels)):
+            union = np.sum(np.logical_or(labels[i], predictions[i]))
+            if union == 0:
+                partial_matches.append(1)
+            else:
+                intersect = np.sum(np.logical_and(labels[i], predictions[i]))
+                partial_matches.append(intersect / union)
+        metrics["partial_match_mean"] = np.mean(partial_matches)
+        metrics["partial_match_std"] = np.std(partial_matches)
+
+        # Optional ROC-AUC / Average Precision
+        try:
+            metrics["roc_auc"] = roc_auc_score(labels, logits, average="macro")
+            metrics["avg_precision"] = average_precision_score(
+                labels, logits, average="macro"
+            )
+        except ValueError:
+            pass
+
+    else:
+        # Binary case
+        metrics["accuracy"] = accuracy_score(labels, predictions)
+        metrics["precision"] = precision_score(labels, predictions, zero_division=0)
+        metrics["recall"] = recall_score(labels, predictions, zero_division=0)
+        metrics["f1"] = f1_score(labels, predictions, zero_division=0)
+        try:
+            metrics["roc_auc"] = roc_auc_score(labels, logits)
+            metrics["avg_precision"] = average_precision_score(labels, logits)
+            metrics["matthews_corrcoef"] = matthews_corrcoef(labels, predictions)
+        except ValueError:
+            pass
+
+    # Diagnostic stats
+    if activated:
+        metrics.update(
+            {
+                "support": labels.size,
+                "threshold": threshold,
+                "num_positive": int(np.sum(labels)),
+                "avg_probability": float(np.mean(logits)),
+            }
+        )
+
+    return metrics
+
+
+def hit_rate_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
+    hits = []
+    for labels, logits in zip(labels_list, logits_list):
+        labels = labels.flatten()
+        topk = np.argsort(logits.flatten())[-k:]
+        true_idxs = np.where(labels == 1)[0]
+        hits.append(int(len(set(topk) & set(true_idxs)) > 0))
+    return np.mean(hits)
+
+
+def mean_reciprocal_rank_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
+    scores = []
+    for labels, logits in zip(labels_list, logits_list):
+        labels = labels.flatten()
+        topk = np.argsort(logits.flatten())[-k:]
+        true_idxs = np.where(labels == 1)[0]
+        rank_lookup = {idx: rank for rank, idx in enumerate(topk)}
+        candidate_ranks = [rank_lookup[t] for t in true_idxs if t in rank_lookup]
+        scores.append(1.0 / (min(candidate_ranks) + 1) if candidate_ranks else 0.0)
+    return np.mean(scores)
+
+
+def ndcg_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
+    scores = []
+    for labels, logits in zip(labels_list, logits_list):
+        labels = labels.flatten()
+        if not labels.sum():
+            continue
+        ideal_order = np.argsort(labels)[::-1]
+        ideal_gains = labels[ideal_order][:k]
+        ideal_dcg = (ideal_gains / np.log2(np.arange(2, ideal_gains.size + 2))).sum()
+
+        pred_order = np.argsort(logits.flatten())[::-1][:k]
+        gains = labels[pred_order]
+        dcg = (gains / np.log2(np.arange(2, gains.size + 2))).sum()
+
+        scores.append(dcg / ideal_dcg if ideal_dcg > 0 else 0.0)
+    return np.mean(scores) if scores else 0.0
+
+
+def precision_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
+    precisions = []
+    for lab, logit in zip(labels_list, logits_list):
+        true_idxs = set(np.where(lab.flatten() == 1)[0])
+        denom = min(k, len(true_idxs))
+        topk = np.argsort(logit.flatten())[::-1][:k]
+        if denom == 0:
+            continue
+        hits = sum(1 for i in topk if i in true_idxs)
+        precisions.append(hits / denom)
+    return np.mean(precisions) if precisions else 0.0
+
+
+def compute_topk_metrics(
+    eval_pred: tuple[list[np.ndarray], list[np.ndarray]],
+    activated: bool = True,
+    threshold: float = 0.5,
+    top_k: list[int] = [1, 3, 5, 10],
 ):
     """Compute metrics for evaluation."""
     logits, labels = eval_pred
@@ -24,119 +184,20 @@ def compute_metrics(
         labels = [item for sublist in labels for item in sublist]
     logits = [j.reshape(-1) for j in logits]
     labels = [j.reshape(-1) for j in labels]
-
-    logits = np.concatenate(logits)
-    labels = np.concatenate(labels)
-    labels = labels[labels != -100]  # Remove -100 labels if present
-
-    if not activated:
-        logits = 1 / (1 + np.exp(-logits))
-
-    # Calculate accuracy, precision, recall and f1-score
-    predictions = (logits > threshold).astype(int)
-
-    # Basic metrics
-    accuracy = accuracy_score(labels, predictions)
-    precision = precision_score(labels, predictions, zero_division=0)
-    recall = recall_score(labels, predictions, zero_division=0)
-    f1 = f1_score(labels, predictions, zero_division=0)
-
-    # Advanced metrics
-    metrics = {
-        "accuracy": accuracy,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-    }
-    if activated:
-        stats = {
-            "support": len(labels),
-            "threshold": threshold,
-            "num_positive": np.sum(labels),
-            "avg_probability": np.mean(logits),
-        }
-        metrics.update(stats)
-
-    # Only calculate ROC AUC when both classes are present
-    if len(np.unique(labels)) > 1:
-        try:
-            metrics["roc_auc"] = roc_auc_score(labels, logits)
-            metrics["avg_precision"] = average_precision_score(labels, logits)
-            metrics["matthews_corrcoef"] = matthews_corrcoef(labels, predictions)
-        except ValueError:
-            # In case of error, skip these metrics
-            pass
-
-    return metrics
-
-
-def hit_rate_at_k(labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int) -> float:
-    topk = [np.argsort(lb.flatten())[-k:] for lb in logits_list]
-    hits = []
-    for lab, inds in zip(labels_list, topk):
-        true_idxs = np.where(lab.flatten() == 1)[0]
-        hits.append(int(bool(true_idxs.size and any(i in inds for i in true_idxs))))
-    return np.mean(hits)
-
-
-def mean_reciprocal_rank_at_k(labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int) -> float:
-    topk = [np.argsort(lb.flatten())[-k:] for lb in logits_list]
-    scores = []
-    for lab, inds in zip(labels_list, topk):
-        true_idxs = np.where(lab.flatten() == 1)[0]
-        if not true_idxs.size:
-            continue
-        # pick best (smallest) rank among true labels
-        ranks = [np.where(inds == t)[0][0] for t in true_idxs if t in inds]
-        scores.append(1.0 / (min(ranks) + 1) if ranks else 0.0)
-    return np.mean(scores) if scores else 0.0
-
-
-def ndcg_at_k(labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int) -> float:
-    scores = []
-    for lab, lb in zip(labels_list, logits_list):
-        flat_lab = lab.flatten()
-        if not flat_lab.sum():
-            continue
-        # ideal DCG
-        ideal_order = np.argsort(flat_lab)[::-1]
-        gains = flat_lab[ideal_order]
-        discounts = np.log2(np.arange(2, gains.size + 2))
-        ideal_dcg = (gains / discounts).sum()
-        # actual DCG@k
-        pred_order = np.argsort(lb.flatten())[::-1][:k]
-        actual_gains = flat_lab[pred_order]
-        actual_dcg = (actual_gains / np.log2(np.arange(2, k + 2))).sum()
-        scores.append(actual_dcg / ideal_dcg if ideal_dcg > 0 else 0.0)
-    return np.mean(scores) if scores else 0.0
-
-
-def compute_topk_metrics(
-    eval_pred: tuple[list[np.ndarray], list[np.ndarray]],
-    threshold: float = 0.5,
-    top_k: list[int] = [1, 3, 5, 10],
-):
-    """Compute metrics for evaluation."""
-    logits, labels = eval_pred
-    while isinstance(logits[0], list) and not isinstance(logits[0][0], list):
-        logits = [item for sublist in logits for item in sublist]
-    while isinstance(labels[0], list) and not isinstance(labels[0][0], list):
-        labels = [item for sublist in labels for item in sublist]
-    logits = [j.reshape(1, -1) for j in logits]
-    labels = [j.reshape(1, -1) for j in labels]
-    n_labels = max(i.shape[1] for i in labels)
+    n_labels = labels[0].shape[0] if labels else 0
     top_k = [i for i in top_k if i < n_labels]
 
     metrics = {}
-    base = compute_metrics((logits, labels), activated=True, threshold=threshold)
+    base = compute_metrics((logits, labels), activated=activated, threshold=threshold)
     metrics.update(base)
 
-    labels = [j[j != -100].reshape(1, -1) for j in labels]
+    labels = [j for j in labels]
 
     for k in top_k:
         metrics[f"HR@{k}"] = hit_rate_at_k(labels, logits, k)
         metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(labels, logits, k)
         metrics[f"NDCG@{k}"] = ndcg_at_k(labels, logits, k)
+        metrics[f"Precision@{k}"] = precision_at_k(labels, logits, k)
 
     return metrics
 
