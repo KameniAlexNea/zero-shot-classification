@@ -14,11 +14,11 @@ def split_by_uppercase(text):
 def load_dbpedia_dataset():
     test_ds = datasets.load_dataset("fancyzhx/dbpedia_14")["test"]
     all_labels = test_ds.features["label"].names
-    ds_mapping = {i: split_by_uppercase(i).lower() for i in all_labels}
+    ds_mapping = {i: split_by_uppercase(j).lower() for i, j in enumerate(all_labels)}
 
     def convert_labels(label: str):
         return {
-            LabelName.ltext: [ds_mapping.values()],
+            LabelName.ltext: list(ds_mapping.values()),
             LabelName.lint: [label == i for i in ds_mapping],
         }
 
@@ -156,4 +156,6 @@ ds_mapping = {
     "agnews": load_agnews_dataset,
     "imdb": load_imdb_dataset,
     "amazon_massive_intent": load_amazon_massive_intent,
+    "dbpedia": load_dbpedia_dataset,
+    "events_biotech": load_events_classification_biotech,
 }

@@ -223,7 +223,7 @@ def main():
     logger.info("Loading test dataset...")
     if args.data not in ds_mapping:
         raise ValueError("Invalid dataset specified. Choose " + str(ds_mapping.keys()))
-    logger.info("Using IMDB dataset for evaluation." + args.data)
+    logger.info(f"Using {args.data} dataset for evaluation.")
     data = ds_mapping[args.data]()
 
     data = add_tokenized_function(
