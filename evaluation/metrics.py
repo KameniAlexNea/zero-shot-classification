@@ -3,8 +3,13 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     classification_report,
+    coverage_error,
     f1_score,
+    hamming_loss,
+    jaccard_score,
+    label_ranking_average_precision_score,
     matthews_corrcoef,
+    ndcg_score,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -51,7 +56,9 @@ def compute_metrics(
 
     # Multi-label classification
     if labels.ndim > 1 and labels.shape[1] > 1:
-        metrics["accuracy"] = accuracy_score(labels, predictions)
+        if labels.sum(axis=1).max() == 1:
+            metrics["match_accuracy"] = (labels.argmax(axis=1) == predictions.argmax(axis=1)).mean(axis=0)
+        metrics["accuracy"] = (labels == predictions).mean()
         metrics["precision"] = precision_score(
             labels, predictions, average="micro", zero_division=0
         )
@@ -61,17 +68,19 @@ def compute_metrics(
         metrics["f1"] = f1_score(labels, predictions, average="micro", zero_division=0)
         metrics["hamming_score"] = hamming_score(labels, predictions)
 
-        # Partial match ratio (mean Jaccard similarity per sample)
-        partial_matches = []
-        for i in range(len(labels)):
-            union = np.sum(np.logical_or(labels[i], predictions[i]))
-            if union == 0:
-                partial_matches.append(1)
-            else:
-                intersect = np.sum(np.logical_and(labels[i], predictions[i]))
-                partial_matches.append(intersect / union)
-        metrics["partial_match_mean"] = np.mean(partial_matches)
-        metrics["partial_match_std"] = np.std(partial_matches)
+        # Jaccard and Hamming metrics
+        metrics["jaccard_micro"] = jaccard_score(
+            labels, predictions, average="micro", zero_division=0
+        )
+        metrics["jaccard_samples"] = jaccard_score(
+            labels, predictions, average="samples", zero_division=0
+        )
+        metrics["hamming_loss"] = hamming_loss(labels, predictions)
+        # Ranking-based metrics
+        metrics["coverage_error"] = coverage_error(labels, logits)
+        metrics["label_ranking_avg_precision"] = label_ranking_average_precision_score(
+            labels, logits
+        )
 
         # Optional ROC-AUC / Average Precision
         try:
@@ -94,6 +103,9 @@ def compute_metrics(
             metrics["matthews_corrcoef"] = matthews_corrcoef(labels, predictions)
         except ValueError:
             pass
+        # Additional single-label metrics
+        metrics["jaccard"] = jaccard_score(labels, predictions, zero_division=0)
+        metrics["hamming_loss"] = hamming_loss(labels, predictions)
 
     # Diagnostic stats
     if activated:
@@ -135,26 +147,6 @@ def mean_reciprocal_rank_at_k(
     return np.mean(scores)
 
 
-def ndcg_at_k(
-    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
-) -> float:
-    scores = []
-    for labels, logits in zip(labels_list, logits_list):
-        labels = labels.flatten()
-        if not labels.sum():
-            continue
-        ideal_order = np.argsort(labels)[::-1]
-        ideal_gains = labels[ideal_order][:k]
-        ideal_dcg = (ideal_gains / np.log2(np.arange(2, ideal_gains.size + 2))).sum()
-
-        pred_order = np.argsort(logits.flatten())[::-1][:k]
-        gains = labels[pred_order]
-        dcg = (gains / np.log2(np.arange(2, gains.size + 2))).sum()
-
-        scores.append(dcg / ideal_dcg if ideal_dcg > 0 else 0.0)
-    return np.mean(scores) if scores else 0.0
-
-
 def precision_at_k(
     labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
 ) -> float:
@@ -191,12 +183,13 @@ def compute_topk_metrics(
     base = compute_metrics((logits, labels), activated=activated, threshold=threshold)
     metrics.update(base)
 
-    labels = [j for j in labels]
-
+    # Prepare arrays for scikit-learn top-k and NDCG metrics
+    y_true = np.vstack(labels)
+    y_score = np.vstack(logits)
     for k in top_k:
         metrics[f"HR@{k}"] = hit_rate_at_k(labels, logits, k)
         metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(labels, logits, k)
-        metrics[f"NDCG@{k}"] = ndcg_at_k(labels, logits, k)
+        metrics[f"NDCG@{k}"] = ndcg_score(y_true, y_score, k=k)
         metrics[f"Precision@{k}"] = precision_at_k(labels, logits, k)
 
     return metrics

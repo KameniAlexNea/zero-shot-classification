@@ -159,7 +159,6 @@ def get_args():
     args.add_argument(
         "--model_path",
         type=str,
-        default="results/experiments/gliznet/gliznet-small/clip-gliner/checkpoint-3932",
         help="Path to the trained model directory.",
     )
     args.add_argument(
