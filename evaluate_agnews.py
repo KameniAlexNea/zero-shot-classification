@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from gliznet.data import add_tokenized_function
 from gliznet.evaluation_ds import ds_mapping
-from gliznet.metrics import compute_metrics
+from evaluation.metrics import compute_topk_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
 
@@ -109,7 +109,7 @@ class ModelEvaluator:
                 raise e
 
         # Calculate comprehensive metrics
-        metrics = compute_metrics((all_predictions, all_true_labels), True)
+        metrics = compute_topk_metrics((all_predictions, all_true_labels), True)
 
         return {
             "metrics": metrics,
