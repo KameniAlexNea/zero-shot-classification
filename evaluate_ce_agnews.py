@@ -18,9 +18,9 @@ from loguru import logger
 from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
+from evaluation.metrics import compute_topk_metrics as compute_metrics
 from gliznet import LabelName
 from gliznet.evaluation_ds import ds_mapping
-from gliznet.metrics import compute_metrics
 
 
 @dataclass
@@ -85,7 +85,15 @@ class ModelEvaluator:
             pos = 0
             while i < len(predictions):
                 all_predictions.append(
-                    activate(predictions[i : i + len(labels[pos])]).cpu().numpy()
+                    (
+                        activate(predictions[i : i + len(labels[pos])])
+                        if predictions.ndim == 1 or predictions.shape[1] == 1
+                        else predictions[i : i + len(labels[pos]), [0, -1]].softmax(
+                            dim=-1
+                        )[:, -1]
+                    )
+                    .cpu()
+                    .numpy()
                 )
                 i += len(labels[pos])
                 pos += 1
@@ -159,37 +167,42 @@ class ModelEvaluator:
                 logger.info(f"{metric.upper()}: {value}")
 
 
-args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
-args.add_argument(
-    "--model_path",
-    type=str,
-    help="Path to the trained model directory.",
-)
-args.add_argument(
-    "--threshold",
-    type=float,
-    default=0.5,
-    help="Threshold for binary classification.",
-)
-args.add_argument(
-    "--results_dir",
-    type=str,
-    default=None,
-    help="Directory to save evaluation results.",
-)
-args.add_argument(
-    "--activation",
-    type=str,
-    default="softmax",
-    help="Activation function to use for model outputs.",
-)
-args.add_argument(
-    "--data",
-    type=str,
-    default="agnews",
-    help="Dataset to evaluate on (agnews or imdb).",
-)
-args = args.parse_args()
+def get_args():
+    args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
+    args.add_argument(
+        "--model_path",
+        type=str,
+        help="Path to the trained model directory.",
+    )
+    args.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for binary classification.",
+    )
+    args.add_argument(
+        "--results_dir",
+        type=str,
+        default=None,
+        help="Directory to save evaluation results.",
+    )
+    args.add_argument(
+        "--activation",
+        type=str,
+        default="softmax",
+        help="Activation function to use for model outputs.",
+    )
+    args.add_argument(
+        "--data",
+        type=str,
+        default="agnews",
+        help="Dataset to evaluate on (agnews or imdb).",
+    )
+    args = args.parse_args()
+    return args
+
+
+args = get_args()
 
 
 def main():

@@ -57,7 +57,9 @@ def compute_metrics(
     # Multi-label classification
     if labels.ndim > 1 and labels.shape[1] > 1:
         if labels.sum(axis=1).max() == 1:
-            metrics["match_accuracy"] = (labels.argmax(axis=1) == predictions.argmax(axis=1)).mean(axis=0)
+            metrics["match_accuracy"] = (
+                labels.argmax(axis=1) == logits.argmax(axis=1)
+            ).mean(axis=0)
         metrics["accuracy"] = (labels == predictions).mean()
         metrics["precision"] = precision_score(
             labels, predictions, average="micro", zero_division=0

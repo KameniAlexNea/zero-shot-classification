@@ -11,6 +11,36 @@ def split_by_uppercase(text):
     return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", text)
 
 
+def load_yahoo_dataset():
+    test_ds = datasets.load_dataset("community-datasets/yahoo_answers_topics")["test"]
+    all_labels = test_ds.features["topic"].names
+    ds_mapping = {
+        i: str(j).replace("&", "and").replace(" ", "_").lower()
+        for i, j in enumerate(all_labels)
+    }
+
+    def convert_labels(label: str):
+        return {
+            LabelName.ltext: list(ds_mapping.values()),
+            LabelName.lint: [label == i for i in ds_mapping],
+        }
+
+    def format_text(title: str, content: str):
+        return f"{title}\n{content}"
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": format_text(
+                x["question_title"],
+                x["question_content"],
+            ),
+            **convert_labels(x["topic"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
 def load_dbpedia_dataset():
     test_ds = datasets.load_dataset("fancyzhx/dbpedia_14")["test"]
     all_labels = test_ds.features["label"].names
@@ -115,7 +145,7 @@ def load_imdb_dataset():
     return test_ds
 
 
-def load_amazon_massive_intent(grouped: bool = True):
+def load_amazon_massive_intent(grouped: bool = False):
     intent_groups: dict[str, list[str]] = json.load(
         open("gliznet/eval_data/intent_data.json", "r")
     )
@@ -158,4 +188,5 @@ ds_mapping = {
     "amazon_massive_intent": load_amazon_massive_intent,
     "dbpedia": load_dbpedia_dataset,
     "events_biotech": load_events_classification_biotech,
+    "yahoo": load_yahoo_dataset,
 }
