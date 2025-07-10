@@ -57,12 +57,16 @@ class ModelEvaluator:
     def predict_batch(self, inputs: dict[str, list[str]]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
-        def activate(logits: torch.Tensor) -> torch.Tensor:
+        def activate(logits: torch.Tensor, index: int) -> torch.Tensor:
             """Apply activation function to logits."""
             if self.config.activation == "softmax":
-                return logits.softmax(dim=-1)
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    return logits.softmax(dim=-1)
+                return logits.softmax(dim=0)[:, index]
             elif self.config.activation == "sigmoid":
-                return logits.sigmoid()
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    return logits.sigmoid()
+                return logits.softmax(dim=-1)[:, index]
             else:
                 raise ValueError(
                     f"Unsupported activation function: {self.config.activation}"
@@ -86,14 +90,8 @@ class ModelEvaluator:
             pos = 0
             while i < len(predictions):
                 all_predictions.append(
-                    (
-                        activate(predictions[i : i + len(labels[pos])])
-                        if predictions.ndim == 1 or predictions.shape[1] == 1
-                        else activate(
-                            predictions[
-                                i : i + len(labels[pos]), self.config.entailment
-                            ]
-                        )
+                    activate(
+                        predictions[i : i + len(labels[pos])], self.config.entailment
                     )
                     .cpu()
                     .numpy()
@@ -221,6 +219,7 @@ def get_args():
     )
     args = args.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
+    print("Process PID", os.getpid())
     return args
 
 

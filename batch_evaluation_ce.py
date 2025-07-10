@@ -4,6 +4,7 @@ Batch evaluation script for cross-encoder models using multiple GPUs.
 This script runs evaluations in parallel across available GPUs.
 """
 
+import os
 import queue
 import subprocess
 import threading
@@ -14,24 +15,24 @@ from typing import Dict, List, Tuple
 # Configuration for all models and datasets to evaluate
 MODELS_CONFIG = [
     {
-        "model_name": "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli",
-        "name": "mDeBERTa-v3-base-mnli-xnli",
-        "entailment": 0,
-    },
-    {
         "model_name": "cross-encoder/nli-deberta-v3-small",
         "name": "nli-deberta-v3-small",
-        "entailment": 1,
-    },
-    {
-        "model_name": "cross-encoder/nli-deberta-v3-base",
-        "name": "nli-deberta-v3-base",
         "entailment": 1,
     },
     {
         "model_name": "alexandrainst/scandi-nli-small",
         "name": "scandi-nli-small",
         "entailment": 0,
+    },
+    {
+        "model_name": "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli",
+        "name": "mDeBERTa-v3-base-mnli-xnli",
+        "entailment": 0,
+    },
+    {
+        "model_name": "cross-encoder/nli-deberta-v3-base",
+        "name": "nli-deberta-v3-base",
+        "entailment": 1,
     },
     {
         "model_name": "alexandrainst/scandi-nli-large-v2",
@@ -54,7 +55,7 @@ DATASETS = [
     "yahoo",
 ]
 
-SOFTMAX_DATA = [
+NO_SOFTMAX_DATA = [
     "events_biotech",
 ]
 # ACTIVATIONS = ["softmax", "sigmoid"]
@@ -115,7 +116,7 @@ def run_evaluation(
         # Run the command with shared stdout/stderr so we can see real-time output
         result = subprocess.run(
             cmd,
-            timeout=3600,  # 1 hour timeout
+            timeout=7200,  # 2 hour timeout
             # Don't capture output - let it go to the main process stdout/stderr
             stdout=None,  # Use parent's stdout
             stderr=None,  # Use parent's stderr
@@ -161,7 +162,7 @@ def create_task_queue() -> queue.Queue:
     task_queue = queue.Queue()
     for model_config in MODELS_CONFIG:
         for dataset in DATASETS:
-            activation = "softmax" if dataset in SOFTMAX_DATA else "sigmoid"
+            activation = "sigmoid" if dataset in NO_SOFTMAX_DATA else "softmax"
             task_queue.put((model_config, dataset, activation))
     return task_queue
 
@@ -276,7 +277,7 @@ def main():
     """
     Main function to run batch evaluation with dynamic task assignment.
     """
-    print("🚀 Starting batch evaluation for cross-encoder models")
+    print("🚀 Starting batch evaluation for cross-encoder models", os.getpid())
     print(f"📊 Total models: {len(MODELS_CONFIG)}")
     print(f"📊 Total datasets: {len(DATASETS)}")
     # print(f"📊 Total activations: {len(ACTIVATIONS)}")
