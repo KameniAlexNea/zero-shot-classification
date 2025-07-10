@@ -3,7 +3,7 @@ import os
 os.environ["WANDB_PROJECT"] = "zero-shot-classification"
 os.environ["WANDB_WATCH"] = "none"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import json
 from argparse import ArgumentParser
@@ -18,9 +18,9 @@ from loguru import logger
 from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
+from evaluation.metrics import compute_topk_metrics as compute_metrics
 from gliznet import LabelName
 from gliznet.evaluation_ds import ds_mapping
-from gliznet.metrics import compute_metrics
 
 
 @dataclass
@@ -34,6 +34,7 @@ class EvaluationConfig:
     threshold: float = 0.5
     results_dir: str = "results/evaluation"
     activation: str = "softmax"
+    entailment: int = -1
 
 
 class ModelEvaluator:
@@ -56,12 +57,16 @@ class ModelEvaluator:
     def predict_batch(self, inputs: dict[str, list[str]]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
-        def activate(logits: torch.Tensor) -> torch.Tensor:
+        def activate(logits: torch.Tensor, index: int) -> torch.Tensor:
             """Apply activation function to logits."""
             if self.config.activation == "softmax":
-                return logits.softmax(dim=-1)
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    return logits.softmax(dim=-1)
+                return logits.softmax(dim=0)[:, index]
             elif self.config.activation == "sigmoid":
-                return logits.sigmoid()
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    return logits.sigmoid()
+                return logits.softmax(dim=-1)[:, index]
             else:
                 raise ValueError(
                     f"Unsupported activation function: {self.config.activation}"
@@ -85,7 +90,11 @@ class ModelEvaluator:
             pos = 0
             while i < len(predictions):
                 all_predictions.append(
-                    activate(predictions[i : i + len(labels[pos])]).cpu().numpy()
+                    activate(
+                        predictions[i : i + len(labels[pos])], self.config.entailment
+                    )
+                    .cpu()
+                    .numpy()
                 )
                 i += len(labels[pos])
                 pos += 1
@@ -159,37 +168,62 @@ class ModelEvaluator:
                 logger.info(f"{metric.upper()}: {value}")
 
 
-args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
-args.add_argument(
-    "--model_path",
-    type=str,
-    help="Path to the trained model directory.",
-)
-args.add_argument(
-    "--threshold",
-    type=float,
-    default=0.5,
-    help="Threshold for binary classification.",
-)
-args.add_argument(
-    "--results_dir",
-    type=str,
-    default=None,
-    help="Directory to save evaluation results.",
-)
-args.add_argument(
-    "--activation",
-    type=str,
-    default="softmax",
-    help="Activation function to use for model outputs.",
-)
-args.add_argument(
-    "--data",
-    type=str,
-    default="agnews",
-    help="Dataset to evaluate on (agnews or imdb).",
-)
-args = args.parse_args()
+def get_args():
+    args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
+    args.add_argument(
+        "--model_path",
+        type=str,
+        help="Path to the trained model directory.",
+    )
+    args.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for binary classification.",
+    )
+    args.add_argument(
+        "--results_dir",
+        type=str,
+        default=None,
+        help="Directory to save evaluation results.",
+    )
+    args.add_argument(
+        "--activation",
+        type=str,
+        default="softmax",
+        help="Activation function to use for model outputs.",
+    )
+    args.add_argument(
+        "--data",
+        type=str,
+        default="agnews",
+        help="Dataset to evaluate on (agnews or imdb).",
+    )
+    args.add_argument(
+        "--entailment",
+        type=int,
+        default=-1,
+        help="Use entailment labels (1) or not (0). Default is -1",
+    )
+    args.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Batch size for evaluation.",
+    )
+    args.add_argument(
+        "--device_pos",
+        type=int,
+        default=0,
+        help="Batch size for evaluation.",
+    )
+    args = args.parse_args()
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
+    print("Process PID", os.getpid())
+    return args
+
+
+args = get_args()
 
 
 def main():
@@ -199,6 +233,8 @@ def main():
         threshold=args.threshold,
         results_dir=args.results_dir,
         activation=args.activation,
+        entailment=args.entailment,
+        batch_size=args.batch_size,
     )
 
     # Initialize evaluator
@@ -207,7 +243,7 @@ def main():
     logger.info("Loading test dataset...")
     if args.data not in ds_mapping:
         raise ValueError("Invalid dataset specified. Choose " + str(ds_mapping.keys()))
-    logger.info("Using IMDB dataset for evaluation." + args.data)
+    logger.info(f"Using {args.data} dataset for evaluation.")
     data = ds_mapping[args.data]()
 
     # Run evaluation

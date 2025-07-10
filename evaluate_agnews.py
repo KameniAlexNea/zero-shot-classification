@@ -11,9 +11,9 @@ from datasets import Dataset
 from loguru import logger
 from tqdm import tqdm
 
+from evaluation.metrics import compute_topk_metrics
 from gliznet.data import add_tokenized_function
 from gliznet.evaluation_ds import ds_mapping
-from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
 
@@ -109,7 +109,7 @@ class ModelEvaluator:
                 raise e
 
         # Calculate comprehensive metrics
-        metrics = compute_metrics((all_predictions, all_true_labels), True)
+        metrics = compute_topk_metrics((all_predictions, all_true_labels), True)
 
         return {
             "metrics": metrics,
@@ -154,54 +154,58 @@ class ModelEvaluator:
                 logger.info(f"{metric.upper()}: {value}")
 
 
-args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
-args.add_argument(
-    "--model_path",
-    type=str,
-    help="Path to the trained model directory.",
-)
-args.add_argument(
-    "--threshold",
-    type=float,
-    default=0.5,
-    help="Threshold for binary classification.",
-)
-args.add_argument(
-    "--results_dir",
-    type=str,
-    default=None,
-    help="Directory to save evaluation results.",
-)
-args.add_argument(
-    "--model_class",
-    type=str,
-    default="BertPreTrainedModel",
-    help="Model class to use",
-)
-args.add_argument(
-    "--use_fast_tokenizer",
-    action="store_true",
-    help="Use fast tokenizer if available.",
-)
-args.add_argument(
-    "--activation",
-    type=str,
-    default="softmax",
-    help="Activation function to use for model outputs.",
-)
-args.add_argument(
-    "--data",
-    type=str,
-    default="agnews",
-    help="Dataset to evaluate on (agnews or imdb).",
-)
-args.add_argument(
-    "--max_labels",
-    type=int,
-    default=100,
-    help="Maximum number of labels to consider for each example.",
-)
-args = args.parse_args()
+def get_args():
+    args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
+    args.add_argument(
+        "--model_path",
+        type=str,
+        help="Path to the trained model directory.",
+    )
+    args.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Threshold for binary classification.",
+    )
+    args.add_argument(
+        "--results_dir",
+        type=str,
+        default=None,
+        help="Directory to save evaluation results.",
+    )
+    args.add_argument(
+        "--model_class",
+        type=str,
+        default="DebertaV2PreTrainedModel",
+        help="Model class to use",
+    )
+    args.add_argument(
+        "--use_fast_tokenizer",
+        action="store_true",
+        help="Use fast tokenizer if available.",
+    )
+    args.add_argument(
+        "--activation",
+        type=str,
+        default="sigmoid",
+        help="Activation function to use for model outputs.",
+    )
+    args.add_argument(
+        "--data",
+        type=str,
+        default="events_biotech",
+        help="Dataset to evaluate on (agnews or imdb).",
+    )
+    args.add_argument(
+        "--max_labels",
+        type=int,
+        default=100,
+        help="Maximum number of labels to consider for each example.",
+    )
+    return args.parse_args()
+
+
+args = get_args()
 
 
 def main():
@@ -223,7 +227,7 @@ def main():
     logger.info("Loading test dataset...")
     if args.data not in ds_mapping:
         raise ValueError("Invalid dataset specified. Choose " + str(ds_mapping.keys()))
-    logger.info("Using IMDB dataset for evaluation." + args.data)
+    logger.info(f"Using {args.data} dataset for evaluation.")
     data = ds_mapping[args.data]()
 
     data = add_tokenized_function(
