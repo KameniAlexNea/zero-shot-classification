@@ -145,7 +145,7 @@ def load_imdb_dataset():
     return test_ds
 
 
-def load_amazon_massive_intent(grouped: bool = False):
+def load_amazon_massive_intent(grouped: bool = True):
     intent_groups: dict[str, list[str]] = json.load(
         open("gliznet/eval_data/intent_data.json", "r")
     )

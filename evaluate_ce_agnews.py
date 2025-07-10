@@ -3,7 +3,7 @@ import os
 os.environ["WANDB_PROJECT"] = "zero-shot-classification"
 os.environ["WANDB_WATCH"] = "none"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import json
 from argparse import ArgumentParser
@@ -34,6 +34,7 @@ class EvaluationConfig:
     threshold: float = 0.5
     results_dir: str = "results/evaluation"
     activation: str = "softmax"
+    entailment: int = -1
 
 
 class ModelEvaluator:
@@ -88,9 +89,11 @@ class ModelEvaluator:
                     (
                         activate(predictions[i : i + len(labels[pos])])
                         if predictions.ndim == 1 or predictions.shape[1] == 1
-                        else predictions[i : i + len(labels[pos]), [0, -1]].softmax(
-                            dim=-1
-                        )[:, -1]
+                        else activate(
+                            predictions[
+                                i : i + len(labels[pos]), self.config.entailment
+                            ]
+                        )
                     )
                     .cpu()
                     .numpy()
@@ -198,7 +201,26 @@ def get_args():
         default="agnews",
         help="Dataset to evaluate on (agnews or imdb).",
     )
+    args.add_argument(
+        "--entailment",
+        type=int,
+        default=-1,
+        help="Use entailment labels (1) or not (0). Default is -1",
+    )
+    args.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Batch size for evaluation.",
+    )
+    args.add_argument(
+        "--device_pos",
+        type=int,
+        default=0,
+        help="Batch size for evaluation.",
+    )
     args = args.parse_args()
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
     return args
 
 
@@ -212,6 +234,8 @@ def main():
         threshold=args.threshold,
         results_dir=args.results_dir,
         activation=args.activation,
+        entailment=args.entailment,
+        batch_size=args.batch_size,
     )
 
     # Initialize evaluator
@@ -220,7 +244,7 @@ def main():
     logger.info("Loading test dataset...")
     if args.data not in ds_mapping:
         raise ValueError("Invalid dataset specified. Choose " + str(ds_mapping.keys()))
-    logger.info("Using IMDB dataset for evaluation." + args.data)
+    logger.info(f"Using {args.data} dataset for evaluation.")
     data = ds_mapping[args.data]()
 
     # Run evaluation
