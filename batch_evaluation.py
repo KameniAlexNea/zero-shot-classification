@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
+
 MODELS = [
     {
         "model_name": "results/experiments/gliznet/gliznet-small/clip-gliner/checkpoint-3932",
@@ -23,18 +25,10 @@ MODELS = [
     },
 ]
 
-DATASETS = [
-    "agnews",
-    "imdb",
-    "amazon_massive_intent",
-    "dbpedia",
-    "events_biotech",
-    "yahoo",
-]
+DATASETS = list(mteb_ds_mapping.keys())
 
-NO_SOFTMAX_DATA = [
-    "events_biotech",
-]
+NO_SOFTMAX_DATA = ["poem_sentiment", "toxic_conversations", "movie_review_sentiment"]
+NO_SOFTMAX_DATA = list(mteb_ds_mapping.keys())
 # ACTIVATIONS = ["softmax", "sigmoid"]
 
 
@@ -56,7 +50,7 @@ def run_evaluation(
     name = model_config["name"]
     model_name = model_config["model_name"]
 
-    results_dir = f"results/evaluation/gliznet/{name}/{dataset}"
+    results_dir = f"results/evaluation/gliznet/mteb/{name}/{dataset}"
 
     # Create results directory if it doesn't exist
     Path(results_dir).mkdir(parents=True, exist_ok=True)

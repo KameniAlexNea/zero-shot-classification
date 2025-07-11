@@ -50,6 +50,12 @@ def compute_metrics(
     if not activated:
         logits = 1 / (1 + np.exp(-logits))
 
+    # if labels.sum(axis=1).max() == 1:
+    #     labels = labels.argmax(axis=1)
+    #     predictions = logits.argmax(axis=1)
+    # else:
+    #     # Multi-label case
+    #     predictions = (logits > threshold).astype(int)
     predictions = (logits > threshold).astype(int)
 
     metrics = {}
