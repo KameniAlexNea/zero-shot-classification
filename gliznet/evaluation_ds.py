@@ -11,6 +11,27 @@ def split_by_uppercase(text):
     return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", text)
 
 
+def load_toxic_comments_dataset():
+    test_ds = datasets.load_from_disk("results/jigsaw_toxicity_eval_local")["train"]
+    columns = [
+        "toxic",
+        "severe_toxic",
+        "obscene",
+        "threat",
+        "insult",
+        "identity_hate",
+    ]
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": x["comment_text"],
+            LabelName.ltext: columns,
+            LabelName.lint: [x[col] == 1 for col in columns],
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
 def load_yahoo_dataset():
     test_ds = datasets.load_dataset("community-datasets/yahoo_answers_topics")["test"]
     all_labels = test_ds.features["topic"].names
@@ -189,4 +210,5 @@ ds_mapping = {
     "dbpedia": load_dbpedia_dataset,
     "events_biotech": load_events_classification_biotech,
     "yahoo": load_yahoo_dataset,
+    "toxic_comments": load_toxic_comments_dataset,
 }

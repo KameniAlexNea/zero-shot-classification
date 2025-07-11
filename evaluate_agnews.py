@@ -1,3 +1,10 @@
+import os
+
+os.environ["WANDB_PROJECT"] = "zero-shot-classification"
+os.environ["WANDB_WATCH"] = "none"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 import importlib
 import json
 from argparse import ArgumentParser
@@ -202,7 +209,15 @@ def get_args():
         default=100,
         help="Maximum number of labels to consider for each example.",
     )
-    return args.parse_args()
+    args.add_argument(
+        "--device_pos",
+        type=int,
+        default=0,
+        help="Batch size for evaluation.",
+    )
+    args = args.parse_args()
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
+    return args
 
 
 args = get_args()
