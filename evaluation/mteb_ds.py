@@ -9,13 +9,14 @@ class LabelName:
 def load_toxic_conversations_dataset():
     test_ds = datasets.load_dataset("mteb/toxic_conversations", split="test")
     columns = [
+        "not_toxic",
         "toxic",
     ]
     test_ds = test_ds.map(
         lambda x: {
             "text": x["text"],
             LabelName.ltext: columns,
-            LabelName.lint: [x["label"]],
+            LabelName.lint: [x["label"] == 0, x["label"] == 1],
         },
         remove_columns=test_ds.column_names,
     )
@@ -38,7 +39,10 @@ def load_poem_sentiment_dataset():
 
 def load_movie_review_sentiment_dataset():
     test_ds = datasets.load_dataset("mteb/movie_review_sentiment", split="test")
-    columns = ["positive"]
+    columns = [
+        "negative",
+        "positive",
+    ]
     test_ds = test_ds.map(
         lambda x: {
             "text": x["text"],

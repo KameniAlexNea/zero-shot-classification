@@ -150,10 +150,10 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
         def _get_hidden_states(
             self,
             input_ids,
-            attention_mask,
-            token_type_ids,
-            output_attentions,
-            output_hidden_states,
+            attention_mask: Optional[torch.Tensor] = None,
+            token_type_ids: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
         ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
             # Only compute attention weights if explicitly requested
             compute_attention = output_attentions is not None and output_attentions
@@ -169,6 +169,19 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             if compute_attention and encoder_outputs.attentions is not None:
                 cls_attn_weights = encoder_outputs.attentions[-1].mean(dim=1)[:, 0, :]
             return self.dropout(encoder_outputs.last_hidden_state), cls_attn_weights
+
+        @torch.inference_mode()
+        def encode(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+            """
+            Encode input_ids using the backbone model.
+            Returns the last hidden state of the [CLS] token.
+            """
+            outputs = self.backbone_forward(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_dict=True,
+            )
+            return outputs.last_hidden_state[:, 0]
 
         def _compute_batch_logits(
             self,
