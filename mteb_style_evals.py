@@ -49,33 +49,23 @@ class MTEBEvaluationConfig:
 class MTEBModelWrapper:
     """Wrapper to make GliZNet compatible with MTEB-style encoding."""
     
-    def __init__(self, model, tokenizer, device, batch_size=32):
+    def __init__(self, model, device, batch_size=32):
         self.model = model
-        self.tokenizer = tokenizer
         self.device = device
         self.batch_size = batch_size
     
-    def encode(self, sentences: List[str], task_name: Optional[str] = None, **kwargs) -> np.ndarray:
-        """Encode sentences using the model's encode method."""
+    def encode_from_tokenized_dataset(self, dataset: Dataset, **kwargs) -> np.ndarray:
+        """Encode sentences from pre-tokenized dataset."""
         batch_size = kwargs.get("batch_size", self.batch_size)
         embeddings = []
         
         with torch.no_grad():
-            for i in tqdm(range(0, len(sentences), batch_size), desc="Encoding sentences"):
-                batch_sentences = sentences[i:i + batch_size]
+            for i in tqdm(range(0, len(dataset), batch_size), desc="Encoding sentences"):
+                batch = dataset[i:i + batch_size]
                 
-                # Tokenize the batch
-                encoded = self.tokenizer(
-                    batch_sentences,
-                    padding=True,
-                    truncation=True,
-                    return_tensors="pt",
-                    max_length=512
-                )
-                
-                # Move to device
-                input_ids = encoded["input_ids"].to(self.device)
-                attention_mask = encoded["attention_mask"].to(self.device)
+                # Get pre-tokenized data
+                input_ids = batch["input_ids"].to(self.device)
+                attention_mask = batch["attention_mask"].to(self.device)
                 
                 # Get embeddings using the model's encode method
                 batch_embeddings = self.model.encode(input_ids, attention_mask)
@@ -83,6 +73,11 @@ class MTEBModelWrapper:
                 embeddings.append(batch_embeddings.cpu().numpy())
         
         return np.vstack(embeddings)
+    
+    def encode(self, sentences: List[str], task_name: Optional[str] = None, **kwargs) -> np.ndarray:
+        """Encode sentences using the model's encode method. (For backward compatibility)"""
+        # This method is kept for compatibility but shouldn't be used with pre-tokenized data
+        raise NotImplementedError("Use encode_from_tokenized_dataset for pre-tokenized data")
 
 
 class kNNClassificationEvaluator:
@@ -90,10 +85,8 @@ class kNNClassificationEvaluator:
     
     def __init__(
         self,
-        sentences_train: List[str],
-        y_train: List[int],
-        sentences_test: List[str],
-        y_test: List[int],
+        train_dataset: Dataset,
+        test_dataset: Dataset,
         task_name: Optional[str] = None,
         k: int = 1,
         encode_kwargs: Dict[str, Any] = None,
@@ -107,21 +100,58 @@ class kNNClassificationEvaluator:
                 "Limiting the number of samples with `limit` for evaluation.",
                 UserWarning,
             )
-            sentences_train = sentences_train[:limit]
-            y_train = y_train[:limit]
-            sentences_test = sentences_test[:limit]
-            y_test = y_test[:limit]
+            train_dataset = train_dataset.select(range(min(limit, len(train_dataset))))
+            test_dataset = test_dataset.select(range(min(limit, len(test_dataset))))
             
-        self.sentences_train = sentences_train
-        self.y_train = y_train
-        self.sentences_test = sentences_test
-        self.y_test = y_test
+        self.train_dataset = train_dataset
+        self.test_dataset = test_dataset
         self.task_name = task_name
         self.encode_kwargs = encode_kwargs
         self.k = k
         
         if "batch_size" not in self.encode_kwargs:
             self.encode_kwargs["batch_size"] = 32
+            
+        # Create shared label mapping and extract labels
+        self.label_to_idx, self.y_train, self.y_test = self._create_shared_label_mapping()
+
+    def _create_shared_label_mapping(self) -> Tuple[Dict[str, int], List[int], List[int]]:
+        """Create shared label mapping for both train and test datasets."""
+        all_label_texts = set()
+        
+        # Collect all unique label texts from both datasets
+        for dataset in [self.train_dataset, self.test_dataset]:
+            for item in dataset:
+                label_texts = item["ltext"]
+                label_ints = item["lint"]
+                
+                # Find the positive label (first True in lint)
+                positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
+                label_text = label_texts[positive_idx]
+                all_label_texts.add(label_text)
+        
+        # Create label mapping
+        label_to_idx = {label: idx for idx, label in enumerate(sorted(all_label_texts))}
+        
+        # Extract labels for train dataset
+        y_train = []
+        for item in self.train_dataset:
+            label_texts = item["ltext"]
+            label_ints = item["lint"]
+            positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
+            label_text = label_texts[positive_idx]
+            y_train.append(label_to_idx[label_text])
+        
+        # Extract labels for test dataset
+        y_test = []
+        for item in self.test_dataset:
+            label_texts = item["ltext"]
+            label_ints = item["lint"]
+            positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
+            label_text = label_texts[positive_idx]
+            y_test.append(label_to_idx[label_text])
+        
+        return label_to_idx, y_train, y_test
 
     def __call__(self, model_wrapper: MTEBModelWrapper, test_cache=None) -> Tuple[Dict[str, float], np.ndarray]:
         """Run KNN evaluation."""
@@ -130,18 +160,16 @@ class kNNClassificationEvaluator:
         max_f1 = 0
         max_ap = 0
         
-        logger.info("Encoding training sentences...")
-        X_train = model_wrapper.encode(
-            self.sentences_train,
-            task_name=self.task_name,
+        logger.info("Encoding training dataset...")
+        X_train = model_wrapper.encode_from_tokenized_dataset(
+            self.train_dataset,
             **self.encode_kwargs,
         )
         
-        logger.info("Encoding test sentences...")
+        logger.info("Encoding test dataset...")
         if test_cache is None:
-            X_test = model_wrapper.encode(
-                self.sentences_test,
-                task_name=self.task_name,
+            X_test = model_wrapper.encode_from_tokenized_dataset(
+                self.test_dataset,
                 **self.encode_kwargs,
             )
             test_cache = X_test
@@ -183,10 +211,8 @@ class LogRegClassificationEvaluator:
     
     def __init__(
         self,
-        sentences_train: List[str],
-        y_train: List[int],
-        sentences_test: List[str],
-        y_test: List[int],
+        train_dataset: Dataset,
+        test_dataset: Dataset,
         task_name: Optional[str] = None,
         max_iter: int = 100,
         encode_kwargs: Dict[str, Any] = None,
@@ -200,21 +226,58 @@ class LogRegClassificationEvaluator:
                 "Limiting the number of samples with `limit` for evaluation.",
                 UserWarning,
             )
-            sentences_train = sentences_train[:limit]
-            y_train = y_train[:limit]
-            sentences_test = sentences_test[:limit]
-            y_test = y_test[:limit]
+            train_dataset = train_dataset.select(range(min(limit, len(train_dataset))))
+            test_dataset = test_dataset.select(range(min(limit, len(test_dataset))))
             
-        self.sentences_train = sentences_train
-        self.y_train = y_train
-        self.sentences_test = sentences_test
-        self.y_test = y_test
+        self.train_dataset = train_dataset
+        self.test_dataset = test_dataset
         self.task_name = task_name
         self.encode_kwargs = encode_kwargs
         self.max_iter = max_iter
         
         if "batch_size" not in self.encode_kwargs:
             self.encode_kwargs["batch_size"] = 32
+            
+        # Create shared label mapping and extract labels
+        self.label_to_idx, self.y_train, self.y_test = self._create_shared_label_mapping()
+
+    def _create_shared_label_mapping(self) -> Tuple[Dict[str, int], List[int], List[int]]:
+        """Create shared label mapping for both train and test datasets."""
+        all_label_texts = set()
+        
+        # Collect all unique label texts from both datasets
+        for dataset in [self.train_dataset, self.test_dataset]:
+            for item in dataset:
+                label_texts = item["ltext"]
+                label_ints = item["lint"]
+                
+                # Find the positive label (first True in lint)
+                positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
+                label_text = label_texts[positive_idx]
+                all_label_texts.add(label_text)
+        
+        # Create label mapping
+        label_to_idx = {label: idx for idx, label in enumerate(sorted(all_label_texts))}
+        
+        # Extract labels for train dataset
+        y_train = []
+        for item in self.train_dataset:
+            label_texts = item["ltext"]
+            label_ints = item["lint"]
+            positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
+            label_text = label_texts[positive_idx]
+            y_train.append(label_to_idx[label_text])
+        
+        # Extract labels for test dataset
+        y_test = []
+        for item in self.test_dataset:
+            label_texts = item["ltext"]
+            label_ints = item["lint"]
+            positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
+            label_text = label_texts[positive_idx]
+            y_test.append(label_to_idx[label_text])
+        
+        return label_to_idx, y_train, y_test
 
     def __call__(self, model_wrapper: MTEBModelWrapper, test_cache=None) -> Tuple[Dict[str, float], np.ndarray]:
         """Run logistic regression evaluation."""
@@ -226,18 +289,16 @@ class LogRegClassificationEvaluator:
             max_iter=self.max_iter,
         )
         
-        logger.info("Encoding training sentences...")
-        X_train = model_wrapper.encode(
-            self.sentences_train,
-            task_name=self.task_name,
+        logger.info("Encoding training dataset...")
+        X_train = model_wrapper.encode_from_tokenized_dataset(
+            self.train_dataset,
             **self.encode_kwargs,
         )
         
-        logger.info("Encoding test sentences...")
+        logger.info("Encoding test dataset...")
         if test_cache is None:
-            X_test = model_wrapper.encode(
-                self.sentences_test,
-                task_name=self.task_name,
+            X_test = model_wrapper.encode_from_tokenized_dataset(
+                self.test_dataset,
                 **self.encode_kwargs,
             )
             test_cache = X_test
@@ -270,7 +331,7 @@ class MTEBStyleEvaluator:
         self.device = self._get_device()
         self.model, self.tokenizer = self._load_models()
         self.model_wrapper = MTEBModelWrapper(
-            self.model, self.tokenizer, self.device, config.batch_size
+            self.model, self.device, config.batch_size
         )
 
     def _get_device(self) -> torch.device:
@@ -302,78 +363,64 @@ class MTEBStyleEvaluator:
             logger.error(f"Failed to load model: {e}")
             raise
 
-    def prepare_data_for_classification(self, dataset: Dataset) -> Tuple[List[str], List[str], List[int], List[int]]:
-        """Prepare the dataset for MTEB-style classification."""
-        sentences_train = []
-        sentences_test = []
-        y_train = []
-        y_test = []
+    def prepare_datasets(self, dataset_name: str) -> Tuple[Dataset, Dataset]:
+        """Prepare train and test datasets."""
+        logger.info(f"Loading train and test splits for {dataset_name}...")
         
-        # Convert dataset to classification format
-        texts = []
-        labels = []
+        # Load train and test datasets separately
+        if dataset_name not in ds_mapping:
+            raise ValueError(f"Dataset {dataset_name} not found in ds_mapping")
         
-        for item in dataset:
-            text = item["text"]
-            label_texts = item["ltext"]
-            label_ints = item["lint"]
-            
-            # Find the positive label (first True in lint)
-            positive_idx = next((i for i, val in enumerate(label_ints) if val), 0)
-            label_text = label_texts[positive_idx]
-            
-            texts.append(text)
-            labels.append(label_text)
+        dataset_loader = ds_mapping[dataset_name]
         
-        # Create label mapping
-        unique_labels = list(set(labels))
-        label_to_idx = {label: idx for idx, label in enumerate(unique_labels)}
-        y_numeric = [label_to_idx[label] for label in labels]
+        # Load both splits
+        train_dataset = dataset_loader(split='train')
+        test_dataset = dataset_loader(split='test')
         
-        # Split into train/test (using first 80% for train, rest for test)
-        split_idx = int(0.8 * len(texts))
+        # Apply tokenization to both datasets
+        train_dataset = add_tokenized_function(
+            hf_dataset=train_dataset,
+            tokenizer=self.tokenizer,
+            max_labels=100,
+            shuffle_labels=False,
+        )
         
-        sentences_train = texts[:split_idx]
-        sentences_test = texts[split_idx:]
-        y_train = y_numeric[:split_idx]
-        y_test = y_numeric[split_idx:]
+        test_dataset = add_tokenized_function(
+            hf_dataset=test_dataset,
+            tokenizer=self.tokenizer,
+            max_labels=100,
+            shuffle_labels=False,
+        )
         
-        logger.info(f"Prepared {len(sentences_train)} training samples and {len(sentences_test)} test samples")
-        logger.info(f"Number of unique labels: {len(unique_labels)}")
+        logger.info(f"Loaded {len(train_dataset)} training samples and {len(test_dataset)} test samples")
         
-        return sentences_train, sentences_test, y_train, y_test
+        return train_dataset, test_dataset
 
-    def evaluate_dataset(self, dataset: Dataset) -> Dict[str, Any]:
+    def evaluate_dataset(self, dataset_name: str) -> Dict[str, Any]:
         """Evaluate the model on the given dataset using MTEB-style evaluation."""
         logger.info("Starting MTEB-style evaluation...")
         
-        # Prepare data for classification
-        sentences_train, sentences_test, y_train, y_test = self.prepare_data_for_classification(dataset)
+        # Prepare train and test datasets
+        train_dataset, test_dataset = self.prepare_datasets(dataset_name)
         
         # Apply limit if specified
         if self.config.limit is not None:
-            sentences_train = sentences_train[:self.config.limit]
-            y_train = y_train[:self.config.limit]
-            sentences_test = sentences_test[:self.config.limit]
-            y_test = y_test[:self.config.limit]
+            train_dataset = train_dataset.select(range(min(self.config.limit, len(train_dataset))))
+            test_dataset = test_dataset.select(range(min(self.config.limit, len(test_dataset))))
         
         # Choose evaluator based on config
         if self.config.classifier_type == "knn":
             evaluator = kNNClassificationEvaluator(
-                sentences_train=sentences_train,
-                y_train=y_train,
-                sentences_test=sentences_test,
-                y_test=y_test,
+                train_dataset=train_dataset,
+                test_dataset=test_dataset,
                 k=self.config.k,
                 encode_kwargs={"batch_size": self.config.batch_size},
                 limit=None,  # Already applied above
             )
         else:  # logreg
             evaluator = LogRegClassificationEvaluator(
-                sentences_train=sentences_train,
-                y_train=y_train,
-                sentences_test=sentences_test,
-                y_test=y_test,
+                train_dataset=train_dataset,
+                test_dataset=test_dataset,
                 max_iter=self.config.max_iter,
                 encode_kwargs={"batch_size": self.config.batch_size},
                 limit=None,  # Already applied above
@@ -386,9 +433,9 @@ class MTEBStyleEvaluator:
             "metrics": metrics,
             "classifier_type": self.config.classifier_type,
             "summary": {
-                "num_train_samples": len(sentences_train),
-                "num_test_samples": len(sentences_test),
-                "num_labels": len(set(y_train + y_test)),
+                "num_train_samples": len(train_dataset),
+                "num_test_samples": len(test_dataset),
+                "num_labels": len(set(evaluator.y_train + evaluator.y_test)),
                 "k": self.config.k if self.config.classifier_type == "knn" else None,
             },
         }
@@ -436,7 +483,7 @@ def get_args():
     parser.add_argument(
         "--results_dir",
         type=str,
-        default="results/mteb_evaluation",
+        default=None,
         help="Directory to save evaluation results.",
     )
     parser.add_argument(
@@ -514,28 +561,19 @@ def main():
         batch_size=args.batch_size,
         max_iter=args.max_iter,
     )
+    print(config)
 
     # Initialize evaluator
     evaluator = MTEBStyleEvaluator(config)
 
-    # Load test dataset
-    logger.info("Loading dataset...")
+    # Check if dataset exists
     if args.data not in ds_mapping:
         raise ValueError(f"Invalid dataset specified. Choose from: {list(ds_mapping.keys())}")
     
     logger.info(f"Using {args.data} dataset for evaluation.")
-    dataset = ds_mapping[args.data]()
-
-    
-    dataset = add_tokenized_function(
-        hf_dataset=dataset,
-        tokenizer=evaluator.tokenizer,
-        max_labels=100,
-        shuffle_labels=False,
-    )
 
     # Run evaluation
-    results = evaluator.evaluate_dataset(dataset)
+    results = evaluator.evaluate_dataset(args.data)
 
     # Save results
     evaluator.save_results(results)

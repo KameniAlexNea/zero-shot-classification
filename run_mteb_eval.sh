@@ -1,11 +1,14 @@
 #!/bin/bash
 
-# Example usage of MTEB-style evaluation script
+# Example usage of updated MTEB-style evaluation script
 
 # Set environment variables
 export WANDB_PROJECT="zero-shot-classification"
 export WANDB_WATCH="none"
 export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+
+echo "Running Updated MTEB-style evaluation with separate train/test splits and pre-tokenized data..."
+echo "================================================================"
 
 # Run MTEB-style evaluation with KNN classifier
 echo "Running MTEB-style evaluation with KNN classifier..."
@@ -53,4 +56,15 @@ python mteb_style_evals.py \
 
 echo "Quick test completed!"
 
-echo "All MTEB-style evaluations completed! Check the results directories for detailed metrics."
+echo ""
+echo "================================================================"
+echo "All Updated MTEB-style evaluations completed!"
+echo "================================================================"
+echo ""
+echo "Key improvements in this version:"
+echo "✓ Uses proper train/test splits from dataset loaders"
+echo "✓ Leverages pre-tokenized data (no redundant tokenization)"
+echo "✓ Ensures consistent label mapping across train/test"
+echo "✓ More efficient encoding with batched operations"
+echo ""
+echo "Check the results directories for detailed metrics."
