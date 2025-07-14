@@ -15,10 +15,10 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
+
 
 def flatten_nested_lists(data: list) -> list:
     """Flatten nested lists recursively."""
@@ -31,10 +31,10 @@ def prepare_arrays(logits: list, labels: list) -> tuple[np.ndarray, np.ndarray]:
     """Convert lists to numpy arrays and ensure proper shape."""
     logits = flatten_nested_lists(logits)
     labels = flatten_nested_lists(labels)
-    
+
     logits = np.concatenate([j.reshape(1, -1) for j in logits])
     labels = np.concatenate([j.reshape(1, -1) for j in labels])
-    
+
     return logits, labels
 
 
@@ -62,6 +62,7 @@ def is_single_label_multiclass(labels: np.ndarray) -> bool:
 # CUSTOM METRICS
 # ============================================================================
 
+
 def hamming_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Compute Hamming score (Jaccard-like metric for multi-label)."""
     scores = []
@@ -79,70 +80,93 @@ def hamming_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 # CORE METRIC COMPUTATION
 # ============================================================================
 
-def compute_basic_metrics(labels: np.ndarray, predictions: np.ndarray, 
-                         average: str = "micro") -> dict:
+
+def compute_basic_metrics(
+    labels: np.ndarray, predictions: np.ndarray, average: str = "micro"
+) -> dict:
     """Compute basic classification metrics."""
     return {
         "accuracy": accuracy_score(labels, predictions),
-        "precision": precision_score(labels, predictions, average=average, zero_division=0),
+        "precision": precision_score(
+            labels, predictions, average=average, zero_division=0
+        ),
         "recall": recall_score(labels, predictions, average=average, zero_division=0),
         "f1": f1_score(labels, predictions, average=average, zero_division=0),
     }
 
 
-def compute_multilabel_metrics(labels: np.ndarray, predictions: np.ndarray, 
-                              logits: np.ndarray) -> dict:
+def compute_multilabel_metrics(
+    labels: np.ndarray, predictions: np.ndarray, logits: np.ndarray
+) -> dict:
     """Compute metrics specific to multi-label classification."""
     metrics = compute_basic_metrics(labels, predictions, average="micro")
-    
+
     # Multi-label specific metrics
-    metrics.update({
-        "hamming_score": hamming_score(labels, predictions),
-        "jaccard_micro": jaccard_score(labels, predictions, average="micro", zero_division=0),
-        "jaccard_samples": jaccard_score(labels, predictions, average="samples", zero_division=0),
-        "hamming_loss": hamming_loss(labels, predictions),
-        "coverage_error": coverage_error(labels, logits),
-        "label_ranking_avg_precision": label_ranking_average_precision_score(labels, logits),
-    })
-    
+    metrics.update(
+        {
+            "hamming_score": hamming_score(labels, predictions),
+            "jaccard_micro": jaccard_score(
+                labels, predictions, average="micro", zero_division=0
+            ),
+            "jaccard_samples": jaccard_score(
+                labels, predictions, average="samples", zero_division=0
+            ),
+            "hamming_loss": hamming_loss(labels, predictions),
+            "coverage_error": coverage_error(labels, logits),
+            "label_ranking_avg_precision": label_ranking_average_precision_score(
+                labels, logits
+            ),
+        }
+    )
+
     # Optional probabilistic metrics
     try:
-        metrics.update({
-            "roc_auc": roc_auc_score(labels, logits, average="macro"),
-            "avg_precision": average_precision_score(labels, logits, average="macro"),
-        })
+        metrics.update(
+            {
+                "roc_auc": roc_auc_score(labels, logits, average="macro"),
+                "avg_precision": average_precision_score(
+                    labels, logits, average="macro"
+                ),
+            }
+        )
     except ValueError:
         pass
-    
+
     return metrics
 
 
-def compute_binary_metrics(labels: np.ndarray, predictions: np.ndarray, 
-                          logits: np.ndarray) -> dict:
+def compute_binary_metrics(
+    labels: np.ndarray, predictions: np.ndarray, logits: np.ndarray
+) -> dict:
     """Compute metrics for binary classification."""
     metrics = compute_basic_metrics(labels, predictions, average="binary")
-    
+
     # Binary specific metrics
-    metrics.update({
-        "jaccard": jaccard_score(labels, predictions, zero_division=0),
-        "hamming_loss": hamming_loss(labels, predictions),
-    })
-    
+    metrics.update(
+        {
+            "jaccard": jaccard_score(labels, predictions, zero_division=0),
+            "hamming_loss": hamming_loss(labels, predictions),
+        }
+    )
+
     # Optional probabilistic metrics
     try:
-        metrics.update({
-            "roc_auc": roc_auc_score(labels, logits),
-            "avg_precision": average_precision_score(labels, logits),
-            "matthews_corrcoef": matthews_corrcoef(labels, predictions),
-        })
+        metrics.update(
+            {
+                "roc_auc": roc_auc_score(labels, logits),
+                "avg_precision": average_precision_score(labels, logits),
+                "matthews_corrcoef": matthews_corrcoef(labels, predictions),
+            }
+        )
     except ValueError:
         pass
-    
+
     return metrics
 
 
-def compute_diagnostic_stats(labels: np.ndarray, logits: np.ndarray, 
-                           threshold: float) -> dict:
+def compute_diagnostic_stats(
+    labels: np.ndarray, logits: np.ndarray, threshold: float
+) -> dict:
     """Compute diagnostic statistics."""
     return {
         "support": labels.size,
@@ -159,27 +183,27 @@ def compute_metrics(
 ) -> dict:
     """
     Compute comprehensive evaluation metrics for both single-label and multi-label classification.
-    
+
     Args:
         eval_pred: Tuple of (logits, labels)
         activated: Whether logits are already activated (sigmoid applied)
         threshold: Threshold for binary predictions
-        
+
     Returns:
         Dictionary of computed metrics
     """
     logits, labels = eval_pred
-    
+
     # Prepare data
     logits, labels = prepare_arrays(logits, labels)
-    
+
     # Apply sigmoid if needed
     if not activated:
         logits = apply_sigmoid(logits)
-    
+
     # Get predictions
     predictions = get_predictions(logits, threshold)
-    
+
     # Determine problem type and compute appropriate metrics
     if is_multilabel(labels):
         if is_single_label_multiclass(labels):
@@ -194,11 +218,11 @@ def compute_metrics(
     else:
         # Binary classification
         metrics = compute_binary_metrics(labels, predictions, logits)
-    
+
     # Add diagnostic stats if requested
     if activated:
         metrics.update(compute_diagnostic_stats(labels, logits, threshold))
-    
+
     return metrics
 
 
@@ -206,8 +230,10 @@ def compute_metrics(
 # TOP-K RANKING METRICS
 # ============================================================================
 
-def hit_rate_at_k(labels_list: list[np.ndarray], logits_list: list[np.ndarray], 
-                  k: int) -> float:
+
+def hit_rate_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
     """Compute Hit Rate at K (whether any true label is in top-k predictions)."""
     hits = []
     for labels, logits in zip(labels_list, logits_list):
@@ -219,53 +245,59 @@ def hit_rate_at_k(labels_list: list[np.ndarray], logits_list: list[np.ndarray],
     return np.mean(hits)
 
 
-def mean_reciprocal_rank_at_k(labels_list: list[np.ndarray], 
-                             logits_list: list[np.ndarray], k: int) -> float:
+def mean_reciprocal_rank_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
     """Compute Mean Reciprocal Rank at K."""
     scores = []
     for labels, logits in zip(labels_list, logits_list):
         labels_flat = labels.flatten()
         top_k_indices = np.argsort(logits.flatten())[-k:]
         true_indices = np.where(labels_flat == 1)[0]
-        
+
         # Create rank lookup (higher score = better rank)
         rank_lookup = {idx: k - rank for rank, idx in enumerate(top_k_indices)}
-        candidate_ranks = [rank_lookup[idx] for idx in true_indices if idx in rank_lookup]
-        
+        candidate_ranks = [
+            rank_lookup[idx] for idx in true_indices if idx in rank_lookup
+        ]
+
         if candidate_ranks:
             best_rank = max(candidate_ranks)  # Best (highest) rank
             scores.append(1.0 / (k - best_rank + 1))  # Convert to position-based rank
         else:
             scores.append(0.0)
-    
+
     return np.mean(scores)
 
 
-def precision_at_k(labels_list: list[np.ndarray], logits_list: list[np.ndarray], 
-                   k: int) -> float:
+def precision_at_k(
+    labels_list: list[np.ndarray], logits_list: list[np.ndarray], k: int
+) -> float:
     """Compute Precision at K."""
     precisions = []
     for labels, logits in zip(labels_list, logits_list):
         true_indices = set(np.where(labels.flatten() == 1)[0])
         top_k_indices = np.argsort(logits.flatten())[::-1][:k]  # Descending order
-        
+
         if len(true_indices) == 0:
             continue
-            
+
         hits = sum(1 for idx in top_k_indices if idx in true_indices)
         precisions.append(hits / k)
-    
+
     return np.mean(precisions) if precisions else 0.0
 
 
-def prepare_topk_data(logits: list, labels: list) -> tuple[list[np.ndarray], list[np.ndarray]]:
+def prepare_topk_data(
+    logits: list, labels: list
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Prepare data for top-k metrics computation."""
     logits = flatten_nested_lists(logits)
     labels = flatten_nested_lists(labels)
-    
+
     logits = [j.reshape(-1) for j in logits]
     labels = [j.reshape(-1) for j in labels]
-    
+
     return logits, labels
 
 
@@ -277,39 +309,41 @@ def compute_topk_metrics(
 ) -> dict:
     """
     Compute comprehensive metrics including top-k ranking metrics.
-    
+
     Args:
         eval_pred: Tuple of (logits, labels)
         activated: Whether logits are already activated
         threshold: Threshold for binary predictions
         top_k: List of k values for top-k metrics
-        
+
     Returns:
         Dictionary of computed metrics including top-k metrics
     """
     logits, labels = eval_pred
-    
+
     # Prepare data for top-k metrics
     logits_topk, labels_topk = prepare_topk_data(logits, labels)
-    
+
     # Filter top_k values based on number of labels
     n_labels = labels_topk[0].shape[0] if labels_topk else 0
     valid_k = [k for k in top_k if k <= n_labels]
-    
+
     # Compute base metrics
-    metrics = compute_metrics((logits, labels), activated=activated, threshold=threshold)
-    
+    metrics = compute_metrics(
+        (logits, labels), activated=activated, threshold=threshold
+    )
+
     # Compute top-k metrics
     if valid_k and n_labels > 1:
         y_true = np.vstack(labels_topk)
         y_score = np.vstack(logits_topk)
-        
+
         for k in valid_k:
             metrics[f"HR@{k}"] = hit_rate_at_k(labels_topk, logits_topk, k)
             metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(labels_topk, logits_topk, k)
             metrics[f"Precision@{k}"] = precision_at_k(labels_topk, logits_topk, k)
             metrics[f"NDCG@{k}"] = ndcg_score(y_true, y_score, k=k)
-    
+
     return metrics
 
 
@@ -317,62 +351,65 @@ def compute_topk_metrics(
 # THRESHOLD OPTIMIZATION
 # ============================================================================
 
-def find_best_threshold(logits: np.ndarray, labels: np.ndarray, 
-                       metric: str = "f1", n_thresholds: int = 100) -> tuple[float, float]:
+
+def find_best_threshold(
+    logits: np.ndarray, labels: np.ndarray, metric: str = "f1", n_thresholds: int = 100
+) -> tuple[float, float]:
     """
     Find the best threshold for a given metric.
-    
+
     Args:
         logits: Prediction probabilities
         labels: True labels
         metric: Metric to optimize ("f1", "accuracy", "precision", "recall")
         n_thresholds: Number of thresholds to test
-        
+
     Returns:
         Tuple of (best_threshold, best_score)
     """
     thresholds = np.linspace(logits.min(), logits.max(), n_thresholds)
     best_score = 0
     best_threshold = 0.5
-    
+
     metric_func = {
         "f1": f1_score,
         "accuracy": accuracy_score,
         "precision": precision_score,
         "recall": recall_score,
     }[metric]
-    
+
     for threshold in thresholds:
         predictions = (logits > threshold).astype(int)
-        
+
         if metric == "accuracy":
             score = metric_func(labels, predictions)
         else:
             score = metric_func(labels, predictions, zero_division=0)
-        
+
         if score > best_score:
             best_score = score
             best_threshold = threshold
-    
+
     return best_threshold, best_score
 
 
-def compute_best_metrics(logits: list[float], labels: list[float], 
-                        multi: bool = False) -> dict:
+def compute_best_metrics(
+    logits: list[float], labels: list[float], multi: bool = False
+) -> dict:
     """
     Compute metrics with optimized threshold for best F1 score.
-    
+
     Args:
         logits: Prediction scores
         labels: True labels
         multi: Whether this is multi-class classification
-        
+
     Returns:
         Dictionary of metrics with optimized threshold
     """
     logits = np.array(logits)
     labels = np.array(labels)
-    
+
     if multi:
         # For multi-class, use argmax instead of threshold
         predictions = logits
@@ -381,21 +418,25 @@ def compute_best_metrics(logits: list[float], labels: list[float],
         # Find best threshold for F1 score
         threshold, _ = find_best_threshold(logits, labels, metric="f1")
         predictions = (logits > threshold).astype(int)
-    
+
     # Compute metrics
     average_mode = "weighted" if multi else "binary"
-    
+
     metrics = {
         "accuracy": accuracy_score(labels, predictions),
-        "precision": precision_score(labels, predictions, zero_division=0, average=average_mode),
-        "recall": recall_score(labels, predictions, zero_division=0, average=average_mode),
+        "precision": precision_score(
+            labels, predictions, zero_division=0, average=average_mode
+        ),
+        "recall": recall_score(
+            labels, predictions, zero_division=0, average=average_mode
+        ),
         "f1": f1_score(labels, predictions, zero_division=0, average=average_mode),
         "threshold": threshold,
     }
-    
+
     if multi:
         print(classification_report(labels, predictions, zero_division=0))
-    
+
     return metrics
 
 
@@ -409,18 +450,22 @@ def main():
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="Compute metrics for model evaluation.")
-    parser.add_argument("--file", type=str, required=True, help="Path to the evaluation file.")
+    parser = argparse.ArgumentParser(
+        description="Compute metrics for model evaluation."
+    )
+    parser.add_argument(
+        "--file", type=str, required=True, help="Path to the evaluation file."
+    )
     parser.add_argument("--multi", action="store_true", help="Use multi-class metrics.")
     args = parser.parse_args()
 
     # Load data
     with open(args.file, "r") as f:
         data = json.load(f)
-    
+
     logits = data["detailed_results"]["predictions"]
     labels = data["detailed_results"]["true_labels"]
-    
+
     # Process multi-class case
     if args.multi:
         logits = [np.argmax(i) for i in logits]

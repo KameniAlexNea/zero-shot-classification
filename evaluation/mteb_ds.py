@@ -6,8 +6,8 @@ class LabelName:
     lint = "lint"
 
 
-def load_toxic_conversations_dataset():
-    test_ds = datasets.load_dataset("mteb/toxic_conversations", split="test")
+def load_toxic_conversations_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/toxic_conversations", split=split)
     columns = [
         "not_toxic",
         "toxic",
@@ -23,8 +23,8 @@ def load_toxic_conversations_dataset():
     return test_ds
 
 
-def load_poem_sentiment_dataset():
-    test_ds = datasets.load_dataset("mteb/poem_sentiment", split="test")
+def load_poem_sentiment_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/poem_sentiment", split=split)
     columns = test_ds.features["label"].names
     test_ds = test_ds.map(
         lambda x: {
@@ -37,8 +37,8 @@ def load_poem_sentiment_dataset():
     return test_ds
 
 
-def load_movie_review_sentiment_dataset():
-    test_ds = datasets.load_dataset("mteb/movie_review_sentiment", split="test")
+def load_movie_review_sentiment_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/movie_review_sentiment", split=split)
     columns = [
         "negative",
         "positive",
@@ -54,8 +54,8 @@ def load_movie_review_sentiment_dataset():
     return test_ds
 
 
-def load_yahoo_answers_topics_dataset():
-    test_ds = datasets.load_dataset("mteb/yahoo_answers_topics", split="test")
+def load_yahoo_answers_topics_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/yahoo_answers_topics", split=split)
     columns = test_ds.features["label"].names
     test_ds = test_ds.map(
         lambda x: {
@@ -68,8 +68,8 @@ def load_yahoo_answers_topics_dataset():
     return test_ds
 
 
-def load_news_dataset():
-    test_ds = datasets.load_dataset("mteb/news", split="test")
+def load_news_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/news", split=split)
     columns = test_ds.features["label"].names
     test_ds = test_ds.map(
         lambda x: {
@@ -82,9 +82,9 @@ def load_news_dataset():
     return test_ds
 
 
-def load_banking77_dataset():
-    test_ds = datasets.load_dataset("mteb/banking77", split="test")
-    unique_labels = set(test_ds["label_text"])
+def load_banking77_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/banking77", split=split)
+    unique_labels = sorted(set(test_ds["label_text"]))
     columns = list(unique_labels)
     test_ds = test_ds.map(
         lambda x: {
@@ -97,9 +97,11 @@ def load_banking77_dataset():
     return test_ds
 
 
-def load_amazon_massive_intent_dataset():
-    test_ds = datasets.load_dataset("mteb/amazon_massive_intent", "en", split="test")
-    unique_labels = set(test_ds["label"])
+def load_amazon_massive_intent_dataset(split="test"):
+    test_ds = datasets.load_dataset(
+        "mteb/MassiveIntentClassification", "en", split=split
+    )
+    unique_labels = sorted(set(test_ds["label"]))
     columns = list(unique_labels)
     test_ds = test_ds.map(
         lambda x: {
@@ -112,9 +114,9 @@ def load_amazon_massive_intent_dataset():
     return test_ds
 
 
-def load_emotion_dataset():
-    test_ds = datasets.load_dataset("mteb/emotion", split="test")
-    unique_labels = set(test_ds["label_text"])
+def load_emotion_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/emotion", split=split)
+    unique_labels = sorted(set(test_ds["label_text"]))
     columns = list(unique_labels)
     test_ds = test_ds.map(
         lambda x: {
@@ -127,8 +129,8 @@ def load_emotion_dataset():
     return test_ds
 
 
-def load_d_bpedia_dataset():
-    test_ds = datasets.load_dataset("mteb/d_bpedia", split="test")
+def load_d_bpedia_dataset(split="test"):
+    test_ds = datasets.load_dataset("mteb/d_bpedia", split=split)
     columns = test_ds.features["label"].names
     test_ds = test_ds.map(
         lambda x: {

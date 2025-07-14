@@ -171,7 +171,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             return self.dropout(encoder_outputs.last_hidden_state), cls_attn_weights
 
         @torch.inference_mode()
-        def encode(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        def encode(
+            self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+        ) -> torch.Tensor:
             """
             Encode input_ids using the backbone model.
             Returns the last hidden state of the [CLS] token.

@@ -11,7 +11,7 @@ def split_by_uppercase(text):
     return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", text)
 
 
-def load_toxic_comments_dataset(split='test'):
+def load_toxic_comments_dataset(split="test"):
     test_ds = datasets.load_from_disk("results/jigsaw_toxicity_eval_local")["train"]
     columns = [
         "toxic",
@@ -32,7 +32,7 @@ def load_toxic_comments_dataset(split='test'):
     return test_ds
 
 
-def load_yahoo_dataset(split='test'):
+def load_yahoo_dataset(split="test"):
     test_ds = datasets.load_dataset("community-datasets/yahoo_answers_topics")[split]
     all_labels = test_ds.features["topic"].names
     ds_mapping = {
@@ -62,7 +62,7 @@ def load_yahoo_dataset(split='test'):
     return test_ds
 
 
-def load_dbpedia_dataset(split='test'):
+def load_dbpedia_dataset(split="test"):
     test_ds = datasets.load_dataset("fancyzhx/dbpedia_14")[split]
     all_labels = test_ds.features["label"].names
     ds_mapping = {i: split_by_uppercase(j).lower() for i, j in enumerate(all_labels)}
@@ -89,7 +89,7 @@ def load_dbpedia_dataset(split='test'):
     return test_ds
 
 
-def load_events_classification_biotech(split='test'):
+def load_events_classification_biotech(split="test"):
     test_ds = datasets.load_dataset(
         "knowledgator/events_classification_biotech", trust_remote_code=True
     )[split]
@@ -124,7 +124,7 @@ def load_events_classification_biotech(split='test'):
     return test_ds
 
 
-def load_agnews_dataset(split='test'):
+def load_agnews_dataset(split="test"):
     test_ds = datasets.load_dataset("sh0416/ag_news")[split]
     mapping = {1: "World", 2: "Sports", 3: "Business", 4: "Science_or_Technology"}
     mapping = {k: v.lower() + "_news" for k, v in mapping.items()}
@@ -145,7 +145,7 @@ def load_agnews_dataset(split='test'):
     return test_ds
 
 
-def load_imdb_dataset(split='test'):
+def load_imdb_dataset(split="test"):
     test_ds = datasets.load_dataset("stanfordnlp/imdb")[split]
     mapping = {0: "negative", 1: "positive"}
     mapping = {k: v.lower() + "_sentiment" for k, v in mapping.items()}
@@ -166,7 +166,7 @@ def load_imdb_dataset(split='test'):
     return test_ds
 
 
-def load_amazon_massive_intent(split='test', grouped: bool = True):
+def load_amazon_massive_intent(split="test", grouped: bool = True):
     intent_groups: dict[str, list[str]] = json.load(
         open("gliznet/eval_data/intent_data.json", "r")
     )
