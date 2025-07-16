@@ -165,6 +165,17 @@ def main():
     # Create output directory
     os.makedirs(training_args.output_dir, exist_ok=True)
 
+    metrics = compute_metrics
+    callbacks = [
+        EarlyStoppingCallback(
+            early_stopping_patience=model_args.early_stopping_patience
+        )
+    ]
+    if len(train_dataset) > 25000:
+        metrics = None  # Disable metrics for large datasets to speed up training
+        os.environ.pop("CUDA_VISIBLE_DEVICES")
+        callbacks = None  # Disable callbacks for large datasets
+
     # Initialize trainer
     trainer = Trainer(
         model=model,
@@ -173,12 +184,8 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collate_fn,
-        callbacks=[
-            EarlyStoppingCallback(
-                early_stopping_patience=model_args.early_stopping_patience
-            )
-        ],
-        compute_metrics=compute_metrics,
+        callbacks=callbacks,
+        compute_metrics=metrics,
     )
 
     # Start training

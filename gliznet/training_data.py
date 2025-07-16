@@ -7,6 +7,21 @@ from . import LabelName
 selected_columns = ["text", LabelName.ltext, LabelName.lint]
 
 
+def filter_empty_labels(function):
+    def wrapper(*args, **kwargs):
+        ds: datasets.Dataset = function(*args, **kwargs)
+
+        def batch_filter(batch):
+            texts = batch[LabelName.ltext]
+            labels = batch[LabelName.lint]
+            return [len(t) > 0 and len(lab) > 0 for t, lab in zip(texts, labels)]
+
+        return ds.filter(batch_filter, batched=True, batch_size=100_000)
+
+    return wrapper
+
+
+@filter_empty_labels
 def load_mcq_dataset(
     ds_name: str,
     name: str,
@@ -22,7 +37,7 @@ def load_mcq_dataset(
             "text": x[text_column],
             LabelName.ltext: x[choices_column]["text"],
             LabelName.lint: [
-                i == x[answer_key_column] for i in x[choices_column]["label"]
+                int(i == x[answer_key_column]) for i in x[choices_column]["label"]
             ],
         }
 
@@ -53,6 +68,7 @@ def load_tau_commonsense_qa():
     )
 
 
+@filter_empty_labels
 def load_Salesforce_cos_e():
     ds = datasets.load_dataset("Salesforce/cos_e", "v1.11", split="train")
 
@@ -60,20 +76,21 @@ def load_Salesforce_cos_e():
         return {
             "text": x["question"],
             LabelName.ltext: x["choices"],
-            LabelName.lint: [i == x["answer"] for i in x["choices"]],
+            LabelName.lint: [int(i == x["answer"]) for i in x["choices"]],
         }
 
     ds = ds.map(mapper)
     return ds.select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_onionmonster_dream():
     ds = datasets.load_dataset("onionmonster/dream", None, split="train")
     raws = [
         {
             "text": f"{query['question']}\n" + "\n".join(x["0"]),
             LabelName.ltext: query["choice"],
-            LabelName.lint: [i == query["answer"] for i in query["choice"]],
+            LabelName.lint: [int(i == query["answer"]) for i in query["choice"]],
         }
         for x in ds
         for query in x["1"]
@@ -82,6 +99,7 @@ def load_onionmonster_dream():
     return datasets.Dataset.from_list(raws).select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_sagnikrayc_mctest():
     ds = datasets.load_dataset("sagnikrayc/mctest", "mc500", split="train")
 
@@ -89,13 +107,14 @@ def load_sagnikrayc_mctest():
         return {
             "text": f"{x['question']}\n{x['story']}",
             LabelName.ltext: list(x["answer_options"].values()),
-            LabelName.lint: [i == x["answer"] for i in x["answer_options"]],
+            LabelName.lint: [int(i == x["answer"]) for i in x["answer_options"]],
         }
 
     ds = ds.map(mapper)
     return ds.select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_ehovy_race():
     ds = datasets.load_dataset("ehovy/race", "all", split="train")
 
@@ -104,7 +123,8 @@ def load_ehovy_race():
             "text": f"{x['question']}\n{x['article']}",
             LabelName.ltext: x["options"],
             LabelName.lint: [
-                i == (ord(x["answer"]) - ord("A")) for i in range(len(x["options"]))
+                int(i == (ord(x["answer"]) - ord("A")))
+                for i in range(len(x["options"]))
             ],
         }
 
@@ -112,6 +132,7 @@ def load_ehovy_race():
     return ds.select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_sentence_transformers_wikihow():
     ds = datasets.load_dataset("sentence-transformers/wikihow", None, split="train")
 
@@ -125,13 +146,14 @@ def load_sentence_transformers_wikihow():
         return {
             "text": x["text"],
             LabelName.ltext: labels,
-            LabelName.lint: [i == x["summary"] for i in labels],
+            LabelName.lint: [int(i == x["summary"]) for i in labels],
         }
 
     ds = ds.map(mapper)
     return ds.select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_tasksource_cycic_classification():
     ds = datasets.load_dataset("tasksource/cycic_classification", None, split="train")
 
@@ -146,6 +168,7 @@ def load_tasksource_cycic_classification():
     return ds.select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_ml4pubmed_pubmed_text_classification_cased():
     ds = datasets.load_dataset(
         "ml4pubmed/pubmed-text-classification-cased", None, split="train"
@@ -156,13 +179,14 @@ def load_ml4pubmed_pubmed_text_classification_cased():
         return {
             "text": x["description_cln"],
             LabelName.ltext: labels,
-            LabelName.lint: [x["target"] == label for label in labels],
+            LabelName.lint: [int(x["target"] == label) for label in labels],
         }
 
     ds = ds.map(mapper)
     return ds.select_columns(selected_columns)
 
 
+@filter_empty_labels
 def load_alexneakameni_qa_africa():
     ds = datasets.load_dataset("alexneakameni/qa_africa", None, split="train")
 
@@ -171,7 +195,7 @@ def load_alexneakameni_qa_africa():
         return {
             "text": f"{x['question_text']}\n{x['explanation']}",
             LabelName.ltext: list(answer_choices.values()),
-            LabelName.lint: [i in x["correct_answers"] for i in answer_choices],
+            LabelName.lint: [int(i in x["correct_answers"]) for i in answer_choices],
         }
 
     ds = ds.map(mapper)

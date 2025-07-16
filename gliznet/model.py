@@ -97,6 +97,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 new_vocab_size = tokenizer.get_vocab_size()
                 model.resize_token_embeddings(new_vocab_size)
                 model.config.vocab_size = new_vocab_size
+                model.config.resized_token_embeddings = True
 
             return model
 
@@ -228,7 +229,66 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             cls_attn_weights: Optional[torch.Tensor],  # (B, L)
         ) -> torch.Tensor:
             """
-            Compute logits between [CLS] and averaged label embeddings per sample.
+            Compute logits between [CLS] and label representations per sample.
+
+            If resized_token_embeddings=True, uses separator token embeddings directly.
+            Otherwise, uses averaged label token embeddings (original implementation).
+            """
+            # Check if we should use optimized separator token approach
+            if getattr(self.config, "resized_token_embeddings", False):
+                return self._compute_batch_logits_with_separator_tokens(
+                    hidden_states, lmask, cls_attn_weights
+                )
+            return self._compute_batch_logits_original(
+                hidden_states, lmask, cls_attn_weights
+            )
+
+        def _compute_batch_logits_with_separator_tokens(
+            self,
+            hidden_states: torch.Tensor,  # (B, L, H)
+            lmask: torch.Tensor,  # (B, L), values: 0 = text, 1... = label groups
+            cls_attn_weights: Optional[torch.Tensor],  # (B, L)
+        ) -> torch.Tensor:
+            """
+            Optimized version that uses separator token embeddings directly.
+            This is used when custom tokens (like [LAB]) have been added to the model.
+            """
+            hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)
+
+            # Get [CLS] tokens (first token in each sequence)
+            cls_tokens = hidden_proj[:, 0]  # (B, D)
+
+            # Create mask for separator tokens (lmask == 0, but exclude CLS position)
+            separator_mask = lmask.bool()
+
+            # Get separator token positions and their embeddings
+            separator_positions = (
+                separator_mask.nonzero()
+            )  # (num_separators, 2) - [batch_idx, seq_idx]
+
+            separator_hidden = hidden_proj[separator_mask]  # (num_separators, D)
+            separator_batch_indices = separator_positions[:, 0]  # (num_separators,)
+
+            # Get corresponding CLS tokens for each separator
+            cls_for_separators = cls_tokens[
+                separator_batch_indices
+            ]  # (num_separators, D)
+
+            # Compute similarities between CLS and separator tokens
+            all_logits = self.compute_similarity(
+                cls_for_separators, separator_hidden
+            )  # (num_separators, 1)
+
+            return all_logits
+
+        def _compute_batch_logits_original(
+            self,
+            hidden_states: torch.Tensor,  # (B, L, H)
+            lmask: torch.Tensor,  # (B, L), values: 0 = text, 1... = label groups
+            cls_attn_weights: Optional[torch.Tensor],  # (B, L)
+        ) -> torch.Tensor:
+            """
+            Original implementation: Compute logits between [CLS] and averaged label embeddings per sample.
             Fully vectorized implementation - computes similarity only once!
             """
             hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)

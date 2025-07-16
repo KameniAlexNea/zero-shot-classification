@@ -24,7 +24,7 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token: int = 5,
-        cls_separator_token: str = "[LAB]",
+        cls_separator_token: str = "[LAB]",  # ;
         *args,
         **kwargs,
     ):
@@ -100,13 +100,15 @@ class GliZNETTokenizer:
         lmask = [0] * (1 + len(text_tokens) + 1)
 
         for i, label in enumerate(label_tokens, start=1):
+            lab_value = i * (self.cls_separator_token == ";")
+            mask_value = i * (self.cls_separator_token != ";")
             sequence += label
-            lmask += [i] * len(label)
+            lmask += [lab_value] * len(label)
 
             # Add [LAB] separator after each label (except the last one)
             if i < len(label_tokens):
                 sequence += [self.label_sep_id]
-                lmask += [0]  # [LAB] token not included in label group
+                lmask += [mask_value]  # [LAB] token not included in label group
 
         return sequence, lmask
 
