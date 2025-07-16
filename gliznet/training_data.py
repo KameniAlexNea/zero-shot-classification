@@ -1,5 +1,7 @@
 import random
+
 import datasets
+
 from . import LabelName
 
 selected_columns = ["text", LabelName.ltext, LabelName.lint]
@@ -95,7 +97,7 @@ def load_sagnikrayc_mctest():
 
 
 def load_ehovy_race():
-    ds = datasets.load_dataset("sagnikrayc/mctest", "mc500", split="train")
+    ds = datasets.load_dataset("ehovy/race", "all", split="train")
 
     def mapper(x: dict[str, str]):
         return {
@@ -137,7 +139,7 @@ def load_tasksource_cycic_classification():
         return {
             "text": x["question"],
             LabelName.ltext: ["false", "true"],
-            LabelName.lint: [1 - int(x["answer"]), int(x["answer"])],
+            LabelName.lint: [1 - int(x["correct_answer"]), int(x["correct_answer"])],
         }
 
     ds = ds.map(mapper)
@@ -148,13 +150,28 @@ def load_ml4pubmed_pubmed_text_classification_cased():
     ds = datasets.load_dataset(
         "ml4pubmed/pubmed-text-classification-cased", None, split="train"
     )
-    labels = list(set(ds["labels"]))
+    labels = list(set(ds["target"]))
 
     def mapper(x: dict[str, str]):
         return {
             "text": x["description_cln"],
             LabelName.ltext: labels,
-            LabelName.lint: [x["labels"] == label for label in labels],
+            LabelName.lint: [x["target"] == label for label in labels],
+        }
+
+    ds = ds.map(mapper)
+    return ds.select_columns(selected_columns)
+
+
+def load_alexneakameni_qa_africa():
+    ds = datasets.load_dataset("alexneakameni/qa_africa", None, split="train")
+
+    def mapper(x: dict[str, str]):
+        answer_choices = {k: v for k, v in x["answer_choices"].items() if v}
+        return {
+            "text": f"{x['question_text']}\n{x['explanation']}",
+            LabelName.ltext: list(answer_choices.values()),
+            LabelName.lint: [i in x["correct_answers"] for i in answer_choices],
         }
 
     ds = ds.map(mapper)
@@ -173,4 +190,5 @@ additional_datasets = {
     "sentence_transformers_wikihow": load_sentence_transformers_wikihow,
     "tasksource_cycic_classification": load_tasksource_cycic_classification,
     "ml4pubmed_pubmed": load_ml4pubmed_pubmed_text_classification_cased,
+    "alexneakameni_qa_africa": load_alexneakameni_qa_africa,
 }
