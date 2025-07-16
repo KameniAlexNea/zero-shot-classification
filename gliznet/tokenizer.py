@@ -106,9 +106,8 @@ class GliZNETTokenizer:
             lmask += [lab_value] * len(label)
 
             # Add [LAB] separator after each label (except the last one)
-            if i < len(label_tokens):
-                sequence += [self.label_sep_id]
-                lmask += [mask_value]  # [LAB] token not included in label group
+            sequence += [self.label_sep_id]
+            lmask += [mask_value]  # [LAB] token not included in label group
 
         return sequence, lmask
 

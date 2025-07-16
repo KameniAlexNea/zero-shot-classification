@@ -4,8 +4,8 @@ import os
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import importlib
 from dataclasses import dataclass, field
@@ -166,15 +166,8 @@ def main():
     os.makedirs(training_args.output_dir, exist_ok=True)
 
     metrics = compute_metrics
-    callbacks = [
-        EarlyStoppingCallback(
-            early_stopping_patience=model_args.early_stopping_patience
-        )
-    ]
-    if len(train_dataset) > 25000:
+    if len(train_dataset) > 100_000 or "CUDA_VISIBLE_DEVICES" in os.environ:
         metrics = None  # Disable metrics for large datasets to speed up training
-        os.environ.pop("CUDA_VISIBLE_DEVICES")
-        callbacks = None  # Disable callbacks for large datasets
 
     # Initialize trainer
     trainer = Trainer(
@@ -184,7 +177,11 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collate_fn,
-        callbacks=callbacks,
+        callbacks=[
+            EarlyStoppingCallback(
+                early_stopping_patience=model_args.early_stopping_patience
+            )
+        ],
         compute_metrics=metrics,
     )
 
