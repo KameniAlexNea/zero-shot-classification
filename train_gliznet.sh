@@ -32,4 +32,5 @@ nohup uv run train_gliznet.py \
     --eval_on_start \
     --data_seed 42 \
     --auto_find_batch_size \
+    --dataloader_prefetch_factor 2 \
     &> nohup.out &

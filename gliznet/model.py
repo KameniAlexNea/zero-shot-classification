@@ -64,6 +64,42 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
             self.post_init()
 
+        def resize_token_embeddings(
+            self, new_num_tokens: Optional[int] = None
+        ) -> nn.Embedding:
+            """
+            Resize input token embeddings matrix of the model if new_num_tokens != config.vocab_size.
+
+            This method should be called when custom tokens are added to the tokenizer.
+            """
+            base_model = getattr(self, self.base_model_prefix)
+            return base_model.resize_token_embeddings(new_num_tokens)
+
+        @classmethod
+        def from_pretrained_with_tokenizer(
+            cls,
+            pretrained_model_name_or_path: str,
+            tokenizer,  # GliZNETTokenizer instance
+            **kwargs,
+        ):
+            """
+            Create model from pretrained and automatically resize embeddings if tokenizer has custom tokens.
+
+            Args:
+                pretrained_model_name_or_path: Path to pretrained model
+                tokenizer: GliZNETTokenizer instance
+                **kwargs: Additional arguments for model initialization
+            """
+            model = cls.from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+            # Resize token embeddings if custom tokens were added
+            if tokenizer.has_custom_tokens():
+                new_vocab_size = tokenizer.get_vocab_size()
+                model.resize_token_embeddings(new_vocab_size)
+                model.config.vocab_size = new_vocab_size
+
+            return model
+
         def _initialize_config(
             self,
             config,

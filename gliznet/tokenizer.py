@@ -24,7 +24,7 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token: int = 5,
-        cls_separator_token: str = ";",
+        cls_separator_token: str = "[LAB]",
         *args,
         **kwargs,
     ):
@@ -33,6 +33,38 @@ class GliZNETTokenizer:
         )
 
         self.min_text_token = min_text_token
+
+        # Check if tokenizer already has custom tokens and detect [LAB] token
+        additional_special_tokens = getattr(
+            self.tokenizer, "additional_special_tokens", []
+        )
+        self._auto_detected = False
+
+        if additional_special_tokens:
+            # Look for [LAB] token or similar custom separator tokens
+            lab_tokens = [
+                token
+                for token in additional_special_tokens
+                if token.startswith("[") and token.endswith("]")
+            ]
+            if lab_tokens:
+                # Use the first bracket token found as the separator
+                detected_separator = lab_tokens[0]
+                if cls_separator_token == ";" and detected_separator != ";":
+                    # Auto-detect and use the found custom token
+                    cls_separator_token = detected_separator
+                    self._auto_detected = True
+
+        self.cls_separator_token = cls_separator_token
+
+        # Add custom [LAB] token if not using default ";" separator and token doesn't exist
+        if (
+            cls_separator_token != ";"
+            and cls_separator_token not in additional_special_tokens
+        ):
+            # Add the custom token to the tokenizer
+            special_tokens_dict = {"additional_special_tokens": [cls_separator_token]}
+            self.tokenizer.add_special_tokens(special_tokens_dict)
 
         self.max_length = self.tokenizer.model_max_length
         self.cls_token_id = self.tokenizer.cls_token_id
@@ -48,7 +80,7 @@ class GliZNETTokenizer:
         cls,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token=5,
-        cls_separator_token: str = ";",
+        cls_separator_token: str = "[LAB]",
         *args,
         **kwargs,
     ) -> "GliZNETTokenizer":
@@ -203,6 +235,25 @@ class GliZNETTokenizer:
 
     def get_vocab_size(self) -> int:
         return len(self.tokenizer)
+
+    def has_custom_tokens(self) -> bool:
+        """Check if custom tokens were added to the tokenizer."""
+        return self.cls_separator_token != ";"
+
+    def get_added_tokens_count(self) -> int:
+        """Get the number of tokens added to the original vocabulary."""
+        additional_special_tokens = getattr(
+            self.tokenizer, "additional_special_tokens", []
+        )
+        return len(additional_special_tokens) if additional_special_tokens else 0
+
+    def get_additional_special_tokens(self) -> List[str]:
+        """Get the list of additional special tokens in the tokenizer."""
+        return getattr(self.tokenizer, "additional_special_tokens", [])
+
+    def was_auto_detected(self) -> bool:
+        """Check if the cls_separator_token was auto-detected from existing tokens."""
+        return hasattr(self, "_auto_detected") and self._auto_detected
 
     def _to_tensors(self, results: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {
