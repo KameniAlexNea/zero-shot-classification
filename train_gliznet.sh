@@ -3,19 +3,19 @@ nohup uv run train_gliznet.py \
     --model_name microsoft/deberta-v3-small \
     --model_class DebertaV2PreTrainedModel \
     --run_name "gliznet_training" \
-    --use_fast_tokenizer false \
+    --use_fast_tokenizer \
     --similarity_metric dot_learning \
-    --max_labels 15 \
+    --max_labels 20 \
     --per_device_train_batch_size 128 \
     --per_device_eval_batch_size 128 \
-    --num_train_epochs 2 \
+    --num_train_epochs 4 \
     --output_dir "results/small" \
     --learning_rate 1e-4 \
     --logging_steps 100 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
-    --eval_steps 0.2 \
-    --save_steps 0.2 \
+    --eval_steps 0.15 \
+    --save_steps 0.15 \
     --eval_strategy steps \
     --save_strategy steps \
     --save_total_limit 2 \

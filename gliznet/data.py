@@ -5,6 +5,7 @@ This module provides PyTorch DataLoader-based data loading for improved efficien
 compared to the original HuggingFace datasets approach.
 """
 
+import os
 import random
 from typing import Dict, List
 
@@ -73,6 +74,7 @@ def add_tokenized_function(
     max_labels=50,
     shuffle_labels: bool = True,
     token_dropout: float = 0.0,
+    as_transform: bool = True,
 ) -> datasets.Dataset:
     """
     Tokenizes the HuggingFace dataset using the GliZNETTokenizer.
@@ -105,12 +107,32 @@ def add_tokenized_function(
             "labels": processed_lints_batch,
         }
 
-    return hf_dataset.with_transform(
+    if as_transform:
+        return hf_dataset.with_transform(
+            tokenize_function,
+        )
+    return hf_dataset.map(
         tokenize_function,
+        batched=True,
+        batch_size=10_000,
+        remove_columns=hf_dataset.column_names,
+        desc="Tokenizing dataset",
+        num_proc=os.cpu_count(),
     )
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    if isinstance(batch, dict):
+        return {
+            "input_ids": torch.tensor(batch["input_ids"]),
+            "attention_mask": torch.tensor(batch["attention_mask"]),
+            "lmask": torch.tensor(batch["lmask"]),
+            "labels": pad_sequence(
+                [torch.tensor(lab) for lab in batch["labels"]],
+                batch_first=True,
+                padding_value=-100,
+            ),
+        }
     # Stack regular tensors
     input_ids = torch.stack([item["input_ids"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
