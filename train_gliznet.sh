@@ -5,7 +5,7 @@ nohup uv run train_gliznet.py \
     --run_name "gliznet_training" \
     --use_fast_tokenizer false \
     --similarity_metric dot_learning \
-    --max_labels 20 \
+    --max_labels 15 \
     --per_device_train_batch_size 128 \
     --per_device_eval_batch_size 128 \
     --num_train_epochs 2 \
@@ -14,15 +14,15 @@ nohup uv run train_gliznet.py \
     --logging_steps 100 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
-    --eval_steps 0.25 \
-    --save_steps 0.25 \
+    --eval_steps 0.2 \
+    --save_steps 0.2 \
     --eval_strategy steps \
     --save_strategy steps \
     --save_total_limit 2 \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
     --dataloader_pin_memory \
-    --dataloader_num_workers 4 \
+    --dataloader_num_workers 8 \
     --remove_unused_columns False \
     --report_to wandb \
     --lr_scheduler_type cosine \

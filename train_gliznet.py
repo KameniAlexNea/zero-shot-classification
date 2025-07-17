@@ -166,7 +166,7 @@ def main():
     os.makedirs(training_args.output_dir, exist_ok=True)
 
     metrics = compute_metrics
-    if len(train_dataset) > 100_000 or "CUDA_VISIBLE_DEVICES" in os.environ:
+    if len(train_dataset) > 100_000 or "CUDA_VISIBLE_DEVICES" not in os.environ:
         metrics = None  # Disable metrics for large datasets to speed up training
 
     # Initialize trainer

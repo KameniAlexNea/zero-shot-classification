@@ -115,8 +115,8 @@ class GliZNETTokenizer:
         self, text_tokens: List[int], label_tokens: List[List[int]]
     ) -> List[int]:
         label_flat_count = sum(len(lab) for lab in label_tokens)
-        # 1 SEP after text + (len(label_tokens) - 1) LAB tokens between labels
-        separator_count = 1 + max(0, len(label_tokens) - 1)
+        # 1 SEP after text + (len(label_tokens)) LAB tokens between labels
+        separator_count = 1 + len(label_tokens)
         reserve = 1 + label_flat_count + separator_count  # CLS + labels + separators
 
         allowed_text = (

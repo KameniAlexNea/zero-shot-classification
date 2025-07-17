@@ -104,9 +104,10 @@ def load_sagnikrayc_mctest():
     ds = datasets.load_dataset("sagnikrayc/mctest", "mc500", split="train")
 
     def mapper(x: dict[str, str]):
+        options = [str(i) for i in x["answer_options"].values()]
         return {
             "text": f"{x['question']}\n{x['story']}",
-            LabelName.ltext: list(x["answer_options"].values()),
+            LabelName.ltext: options,
             LabelName.lint: [int(i == x["answer"]) for i in x["answer_options"]],
         }
 
@@ -137,6 +138,7 @@ def load_sentence_transformers_wikihow():
     ds = datasets.load_dataset("sentence-transformers/wikihow", None, split="train")
 
     all_labels = list(set(ds["summary"]))
+    all_labels = [str(i) for i in all_labels if i]  # Convert to string if needed
 
     def mapper(x: dict[str, str]):
         neg_count = random.randint(1, 4)
@@ -174,6 +176,7 @@ def load_ml4pubmed_pubmed_text_classification_cased():
         "ml4pubmed/pubmed-text-classification-cased", None, split="train"
     )
     labels = list(set(ds["target"]))
+    labels = [str(i) for i in labels if i]  # Convert to string if needed
 
     def mapper(x: dict[str, str]):
         return {
@@ -191,7 +194,7 @@ def load_alexneakameni_qa_africa():
     ds = datasets.load_dataset("alexneakameni/qa_africa", None, split="train")
 
     def mapper(x: dict[str, str]):
-        answer_choices = {k: v for k, v in x["answer_choices"].items() if v}
+        answer_choices = {k: str(v) for k, v in x["answer_choices"].items() if v}
         return {
             "text": f"{x['question_text']}\n{x['explanation']}",
             LabelName.ltext: list(answer_choices.values()),

@@ -56,6 +56,7 @@ def load_dataset(
 def limit_labels(
     labels_text: List[str], labels_int: List[int], shuffle_labels: bool, max_labels: int
 ):
+    labels_text = [i.replace("_", " ") for i in labels_text]
     combined = list(zip(labels_text, labels_int))
     if shuffle_labels:
         random.shuffle(combined)
