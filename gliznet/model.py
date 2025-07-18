@@ -8,22 +8,6 @@ from transformers import AutoModel, BertConfig, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
 
-class GliZNetConfig(BertConfig):
-    def __init__(
-        self,
-        projected_dim: Optional[int] = None,
-        similarity_metric: str = "dot",
-        temperature: float = 1.0,
-        dropout_rate: float = 0.1,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.projected_dim = projected_dim
-        self.similarity_metric = similarity_metric
-        self.temperature = temperature
-        self.dropout_rate = dropout_rate
-
-
 @dataclass
 class GliZNetOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
@@ -119,7 +103,14 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def _setup_layers(self):
             projected_dim = self.config.projected_dim or self.config.hidden_size
-            self.proj = (
+            
+            # Separate projectors for CLS and label tokens
+            self.cls_proj = (
+                nn.Linear(self.config.hidden_size, projected_dim)
+                if projected_dim != self.config.hidden_size
+                else nn.Identity()
+            )
+            self.label_proj = (
                 nn.Linear(self.config.hidden_size, projected_dim)
                 if projected_dim != self.config.hidden_size
                 else nn.Identity()
@@ -253,10 +244,8 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             Optimized version that uses separator token embeddings directly.
             This is used when custom tokens (like [LAB]) have been added to the model.
             """
-            hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)
-
-            # Get [CLS] tokens (first token in each sequence)
-            cls_tokens = hidden_proj[:, 0]  # (B, D)
+            # Project CLS tokens and separator tokens separately
+            cls_tokens = self.cls_proj(hidden_states[:, 0])  # (B, D)
 
             # Create mask for separator tokens (lmask == 0, but exclude CLS position)
             separator_mask = lmask.bool()
@@ -266,7 +255,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 separator_mask.nonzero()
             )  # (num_separators, 2) - [batch_idx, seq_idx]
 
-            separator_hidden = hidden_proj[separator_mask]  # (num_separators, D)
+            separator_hidden = self.label_proj(hidden_states[separator_mask])  # (num_separators, D)
             separator_batch_indices = separator_positions[:, 0]  # (num_separators,)
 
             # Get corresponding CLS tokens for each separator
@@ -291,11 +280,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             Original implementation: Compute logits between [CLS] and averaged label embeddings per sample.
             Fully vectorized implementation - computes similarity only once!
             """
-            hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)
-            projected_dim = hidden_proj.shape[-1]
-
-            # Get [CLS] tokens (first token in each sequence)
-            cls_tokens = hidden_proj[:, 0]  # (B, D)
+            # Project CLS tokens and all tokens separately
+            cls_tokens = self.cls_proj(hidden_states[:, 0])  # (B, D)
+            projected_dim = cls_tokens.shape[-1]
 
             # Create mask for non-text tokens (label tokens have lmask > 0)
             label_mask = lmask > 0  # (B, L)
@@ -304,7 +291,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             label_positions = (
                 label_mask.nonzero()
             )  # (num_label_tokens, 2) - [batch_idx, seq_idx]
-            label_hidden = hidden_proj[label_mask]  # (num_label_tokens, D)
+            label_hidden = self.label_proj(hidden_states[label_mask])  # (num_label_tokens, D)
             label_ids = lmask[label_mask]  # (num_label_tokens,)
             label_batch_indices = label_positions[:, 0]  # (num_label_tokens,)
 
