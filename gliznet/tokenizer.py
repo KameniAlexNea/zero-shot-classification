@@ -92,51 +92,16 @@ class GliZNETTokenizer:
             **kwargs,
         )
 
-    def _build_sequence(
-        self, text_tokens: List[int], label_tokens: List[List[int]]
-    ) -> tuple[List[int], List[int]]:
-        # [CLS] + text + [SEP] + label1 + [LAB] + label2 + [LAB] + ...
-        sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id]
-        lmask = [0] * (1 + len(text_tokens) + 1)
-
-        for i, label in enumerate(label_tokens, start=1):
-            lab_value = i * (self.cls_separator_token == ";")
-            mask_value = i * (self.cls_separator_token != ";")
-            sequence += label
-            lmask += [lab_value] * len(label)
-
-            # Add [LAB] separator after each label (except the last one)
-            sequence += [self.label_sep_id]
-            lmask += [mask_value]  # [LAB] token not included in label group
-
-        return sequence, lmask
-
-    def _truncate_text_tokens(
-        self, text_tokens: List[int], label_tokens: List[List[int]]
-    ) -> List[int]:
-        label_flat_count = sum(len(lab) for lab in label_tokens)
-        # 1 SEP after text + (len(label_tokens)) LAB tokens between labels
-        separator_count = 1 + len(label_tokens)
-        reserve = 1 + label_flat_count + separator_count  # CLS + labels + separators
-
-        allowed_text = (
-            self.max_length - reserve
-            if reserve < self.max_length
-            else self.min_text_token
-        )
-        max_allowed_text = max(self.min_text_token, allowed_text)
-        return text_tokens[: min(len(text_tokens), max_allowed_text)]
-
     def _pad_and_mask(self, token_ids: List[int], lmask: List[int]) -> Dict[str, Any]:
+        # Truncate both sequences to max_length if needed
+        if len(token_ids) > self.max_length:
+            token_ids = token_ids[:self.max_length]
+            lmask = lmask[:self.max_length]
+        
         pad_len = self.max_length - len(token_ids)
         input_ids = token_ids + [self.pad_token_id] * pad_len
         attention_mask = [1] * len(token_ids) + [0] * pad_len
         lmask = lmask + [0] * pad_len
-
-        if len(lmask) > self.max_length:
-            raise ValueError(
-                f"Label mask too long: {len(lmask)} > max_length {self.max_length}"
-            )
 
         return {
             "input_ids": input_ids,
@@ -144,30 +109,118 @@ class GliZNETTokenizer:
             "lmask": lmask,
         }
 
-    def _batch_tokenize(
-        self,
-        texts: Union[str, List[str]],
-        all_labels: Union[List[str], List[List[str]]],
-    ):
-        if isinstance(texts, str):
-            return (
-                self.tokenizer(texts, **tokenizer_config)["input_ids"],
-                self.tokenizer(all_labels, **tokenizer_config)["input_ids"],
-            )
+    def _build_full_sequence_text(
+        self, text: str, labels: List[str]
+    ) -> str:
+        """Build the full sequence as text: [CLS] + text + [SEP] + label1 + [LAB] + label2 + [LAB] + ..."""
+        cls_token = self.tokenizer.cls_token
+        sep_token = self.tokenizer.sep_token
+        
+        # Build the sequence with special tokens as text
+        sequence_parts = [cls_token, text, sep_token]
+        
+        # Add labels separated by [LAB] tokens
+        for i, label in enumerate(labels):
+            sequence_parts.append(label)
+            sequence_parts.append(self.cls_separator_token)
+        
+        return " ".join(sequence_parts)
 
-        text_ids = self.tokenizer(texts, **tokenizer_config)["input_ids"]
-        merged_labels = sum(all_labels, start=[])
-        merged_labels_ids = self.tokenizer(merged_labels, **tokenizer_config)[
-            "input_ids"
-        ]
+    def _build_reverse_sequence_text(
+        self, text: str, labels: List[str]
+    ) -> str:
+        """Build the reverse sequence for truncation: labels + [SEP] + text"""
+        sep_token = self.tokenizer.sep_token
+        
+        # Build reverse sequence: label1 + [LAB] + label2 + [LAB] + ... + [SEP] + text
+        sequence_parts = []
+        
+        # Add labels separated by [LAB] tokens
+        for i, label in enumerate(labels):
+            sequence_parts.append(label)
+            sequence_parts.append(self.cls_separator_token)
+        
+        sequence_parts.extend([sep_token, text])
+        return " ".join(sequence_parts)
 
-        labels_ids = []
-        idx = 0
-        for label_group in all_labels:
-            labels_ids.append(merged_labels_ids[idx : idx + len(label_group)])
-            idx += len(label_group)
+    def _tokenize_with_truncation_strategy(
+        self, text: str, labels: List[str]
+    ) -> tuple[List[int], List[int]]:
+        """Tokenize using reverse strategy to prioritize text over labels when truncating."""
+        # First, try to build the full sequence
+        full_sequence = self._build_full_sequence_text(text, labels)
+        full_tokens = self.tokenizer(full_sequence, **tokenizer_config)["input_ids"]
+        
+        # If it fits, return as is
+        if len(full_tokens) <= self.max_length:
+            return self._parse_tokenized_sequence(full_tokens, labels)
+        
+        # If it doesn't fit, use reverse tokenization strategy
+        reverse_sequence = self._build_reverse_sequence_text(text, labels)
+        
+        # Tokenize the reverse sequence with truncation
+        truncated_config = {**tokenizer_config, "max_length": self.max_length}
+        reverse_tokens = self.tokenizer(reverse_sequence, **truncated_config)["input_ids"]
+        
+        # Now we need to rearrange the tokens to get the correct order
+        # Find [SEP] token in reverse sequence
+        try:
+            sep_idx = reverse_tokens.index(self.sep_token_id)
+        except ValueError:
+            # If no SEP found, fallback to original strategy
+            return self._parse_tokenized_sequence(full_tokens[:self.max_length], labels)
+        
+        # Extract text tokens (after [SEP] in reverse) and labels (before [SEP] in reverse)
+        text_tokens = reverse_tokens[sep_idx + 1:]  # Text comes after [SEP] in reverse
+        label_tokens = reverse_tokens[:sep_idx]     # Labels come before [SEP] in reverse
+        
+        # Reconstruct the proper sequence: [CLS] + text + [SEP] + labels
+        proper_sequence = [self.cls_token_id] + text_tokens + [self.sep_token_id] + label_tokens
+        
+        return self._parse_tokenized_sequence(proper_sequence, labels)
 
-        return text_ids, labels_ids
+    def _parse_tokenized_sequence(
+        self, token_ids: List[int], labels: List[str]
+    ) -> tuple[List[int], List[int]]:
+        """Parse the tokenized sequence to extract text tokens and create label mask."""
+        # Create label mask with same length as token_ids
+        lmask = [0] * len(token_ids)
+        
+        # Find [SEP] token position
+        try:
+            sep_idx = token_ids.index(self.sep_token_id)
+        except ValueError:
+            # If no SEP found, assume everything after [CLS] is text
+            return token_ids, lmask
+        
+        # Mark label tokens in the mask
+        if sep_idx < len(token_ids) - 1:  # If there are tokens after [SEP]
+            current_pos = sep_idx + 1
+            label_idx = 1
+            
+            while current_pos < len(token_ids):
+                # Find next [LAB] token or end of sequence
+                lab_pos = current_pos
+                while lab_pos < len(token_ids) and token_ids[lab_pos] != self.label_sep_id:
+                    lab_pos += 1
+                
+                # Mark tokens between current_pos and lab_pos as belonging to current label
+                for i in range(current_pos, lab_pos):
+                    if self.cls_separator_token == ";":
+                        lmask[i] = label_idx
+                    else:
+                        lmask[i] = label_idx
+                
+                # Mark [LAB] token with special value
+                if lab_pos < len(token_ids) and token_ids[lab_pos] == self.label_sep_id:
+                    if self.cls_separator_token != ";":
+                        lmask[lab_pos] = label_idx
+                    current_pos = lab_pos + 1
+                    label_idx += 1
+                else:
+                    break
+        
+        return token_ids, lmask
 
     def tokenize_example(
         self,
@@ -175,13 +228,15 @@ class GliZNETTokenizer:
         all_labels: List[str],
         token_dropout: float = 0.0,
     ) -> Dict[str, Any]:
-        text_tokens, label_tokens = self._batch_tokenize(text, all_labels)
+        # Use new refactored method
+        token_ids, lmask = self._tokenize_with_truncation_strategy(text, all_labels)
+        
+        # Apply token dropout if specified
         if token_dropout > 0.0:
-            text_tokens = apply_token_dropout(
-                text_tokens, token_dropout, self.mask_token_id
+            token_ids = apply_token_dropout(
+                token_ids, token_dropout, self.mask_token_id
             )
-        text_tokens = self._truncate_text_tokens(text_tokens, label_tokens)
-        token_ids, lmask = self._build_sequence(text_tokens, label_tokens)
+        
         result = self._pad_and_mask(token_ids, lmask)
         result.update(self._to_tensors(result))
         return result
@@ -192,25 +247,28 @@ class GliZNETTokenizer:
         all_labels: List[List[str]],
         token_dropout: float = 0.0,
     ) -> Dict[str, Any]:
-        text_tokens, label_tokens = self._batch_tokenize(texts, all_labels)
-        if token_dropout > 0.0:
-            text_tokens = [
-                apply_token_dropout(txt, token_dropout, self.mask_token_id)
-                for txt in text_tokens
-            ]
-        text_tokens = [
-            self._truncate_text_tokens(txt, lbls)
-            for txt, lbls in zip(text_tokens, label_tokens)
-        ]
-        token_ids, label_masks = zip(
-            *[
-                self._build_sequence(txt, lbls)
-                for txt, lbls in zip(text_tokens, label_tokens)
-            ]
-        )
+        # Process each text-label pair using the new strategy
+        token_ids_list = []
+        lmask_list = []
+        
+        for text, labels in zip(texts, all_labels):
+            token_ids, lmask = self._tokenize_with_truncation_strategy(text, labels)
+            
+            # Apply token dropout if specified
+            if token_dropout > 0.0:
+                token_ids = apply_token_dropout(
+                    token_ids, token_dropout, self.mask_token_id
+                )
+            
+            token_ids_list.append(token_ids)
+            lmask_list.append(lmask)
+        
+        # Pad all sequences
         padded = [
-            self._pad_and_mask(ids, mask) for ids, mask in zip(token_ids, label_masks)
+            self._pad_and_mask(ids, mask) 
+            for ids, mask in zip(token_ids_list, lmask_list)
         ]
+        
         result = {
             "input_ids": [p["input_ids"] for p in padded],
             "attention_mask": [p["attention_mask"] for p in padded],
