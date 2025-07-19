@@ -74,7 +74,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         )
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
-        self.model.proj = nn.Identity()
+        self.model.cls_proj = nn.Identity()
+        self.model.label_proj = nn.Identity()
         # sample inputs: batch=2, seq_len=4
         self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
@@ -93,7 +94,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
         model.hidden_size = self.hidden_size
-        model.proj = nn.Identity()
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
         return model
 
     def test_compute_similarity_dot(self):
@@ -380,7 +382,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         # Replace with dummy encoder for testing
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
-        model.proj = nn.Identity()
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
 
         # Test that resized_token_embeddings flag is set
         self.assertTrue(getattr(model.config, "resized_token_embeddings", False))
@@ -433,7 +436,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         # Replace with dummy encoder
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
-        model.proj = nn.Identity()
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
 
         # Test prediction
         texts = ["Great movie!", "Terrible film."]
@@ -497,7 +501,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         # Replace with dummy encoder
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
-        model.proj = nn.Identity()
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
 
         # Should use original computation method
         self.assertFalse(getattr(model.config, "resized_token_embeddings", False))
@@ -538,7 +543,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
                 # Replace with dummy encoder
                 setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
                 model.config.hidden_size = self.hidden_size
-                model.proj = nn.Identity()
+                model.cls_proj = nn.Identity()
+                model.label_proj = nn.Identity()
 
                 # Test forward pass
                 text = "Test text"

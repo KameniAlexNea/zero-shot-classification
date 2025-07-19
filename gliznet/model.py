@@ -103,7 +103,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def _setup_layers(self):
             projected_dim = self.config.projected_dim or self.config.hidden_size
-            
+
             # Separate projectors for CLS and label tokens
             self.cls_proj = (
                 nn.Linear(self.config.hidden_size, projected_dim)
@@ -255,7 +255,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 separator_mask.nonzero()
             )  # (num_separators, 2) - [batch_idx, seq_idx]
 
-            separator_hidden = self.label_proj(hidden_states[separator_mask])  # (num_separators, D)
+            separator_hidden = self.label_proj(
+                hidden_states[separator_mask]
+            )  # (num_separators, D)
             separator_batch_indices = separator_positions[:, 0]  # (num_separators,)
 
             # Get corresponding CLS tokens for each separator
@@ -291,7 +293,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             label_positions = (
                 label_mask.nonzero()
             )  # (num_label_tokens, 2) - [batch_idx, seq_idx]
-            label_hidden = self.label_proj(hidden_states[label_mask])  # (num_label_tokens, D)
+            label_hidden = self.label_proj(
+                hidden_states[label_mask]
+            )  # (num_label_tokens, D)
             label_ids = lmask[label_mask]  # (num_label_tokens,)
             label_batch_indices = label_positions[:, 0]  # (num_label_tokens,)
 

@@ -7,7 +7,9 @@ from gliznet.tokenizer import GliZNETTokenizer
 class TestTokenizerIntegration(unittest.TestCase):
     def setUp(self):
         # Initialize tokenizer and load expected outputs
-        self.tokenizer = GliZNETTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token=";"
+        )
         expected_file = "tests/testing_data/expected_tokenizer_outputs.json"
         with open(expected_file, "r") as f:
             self.expected: dict = json.load(f)
