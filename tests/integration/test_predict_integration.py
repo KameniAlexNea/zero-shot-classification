@@ -26,9 +26,11 @@ class TestModelPredictIntegration(unittest.TestCase):
         seed_everything(42)
         model_name = "bert-base-uncased"
         cls.tokenizer = GliZNETTokenizer.from_pretrained(
-            model_name, cls_separator_token=";"
+            model_name,
         )
-        cls.model = GliZNetForSequenceClassification.from_pretrained(model_name)
+        cls.model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            model_name, cls.tokenizer
+        )
         cls.model.eval()
         expected_file = "tests/testing_data/expected_model_predict_outputs.json"
         with open(expected_file, "r") as f:
