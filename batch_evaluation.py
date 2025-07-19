@@ -16,20 +16,27 @@ from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
 
 MODELS = [
     {
-        "model_name": "results/experiments/gliznet/gliznet-small/clip-gliner/checkpoint-3932",
-        "name": "small",
+        "model_name": "results/small/checkpoint-83848",
+        "name": "small-83848",
     },
     {
-        "model_name": "results/experiments/gliznet/gliznet-base/clip-gliner/checkpoint-7864",
-        "name": "base",
+        "model_name": "results/small/checkpoint-62890",
+        "name": "small-62890",
+    },
+    {
+        "model_name": "results/small/checkpoint-1966",
+        "name": "base-1966",
+    },
+    {
+        "model_name": "results/small/checkpoint-1476",
+        "name": "base-1476",
     },
 ]
 
 DATASETS = list(mteb_ds_mapping.keys())
 
-NO_SOFTMAX_DATA = ["poem_sentiment", "toxic_conversations", "movie_review_sentiment"]
+# NO_SOFTMAX_DATA = ["poem_sentiment", "toxic_conversations", "movie_review_sentiment"]
 NO_SOFTMAX_DATA = list(mteb_ds_mapping.keys())
-# ACTIVATIONS = ["softmax", "sigmoid"]
 
 
 def run_evaluation(
@@ -247,7 +254,6 @@ def main():
     print("🚀 Starting batch evaluation for cross-encoder models", os.getpid())
     print(f"📊 Total models: {len(MODELS)}")
     print(f"📊 Total datasets: {len(DATASETS)}")
-    # print(f"📊 Total activations: {len(ACTIVATIONS)}")
 
     # Create task queue
     task_queue = create_task_queue()

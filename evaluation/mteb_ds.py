@@ -16,7 +16,7 @@ def load_toxic_conversations_dataset(split="test"):
         lambda x: {
             "text": x["text"],
             LabelName.ltext: columns,
-            LabelName.lint: [x["label"] == 0, x["label"] == 1],
+            LabelName.lint: [1-x["label"], x["label"]],
         },
         remove_columns=test_ds.column_names,
     )
