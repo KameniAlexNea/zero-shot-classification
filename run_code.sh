@@ -1,10 +1,10 @@
-export WANDB_PROJECT="zero-shot-classification"
-export WANDB_WATCH="none"
-export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+# export WANDB_PROJECT="zero-shot-classification"
+# export WANDB_WATCH="none"
+# export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 
 python mteb_style_evals.py \
-    --model_path "results/experiments/gliznet/gliznet-small/clip-gliner/checkpoint-3932" \
-    --data "amazon_massive_intent" \
+    --model_path "results/small/checkpoint-1966" \
+    --data "poem_sentiment" \
     --classifier_type "knn" \
     --k 5 \
     --batch_size 128 \
