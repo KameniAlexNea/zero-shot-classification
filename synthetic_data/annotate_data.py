@@ -28,9 +28,9 @@ You are an expert text classification assistant. Your task is to analyze a given
 - Examples: academic_research, entertainment_content, product_advertisement
 
 **OUTPUT FORMAT**:
-Provide exactly 2 lines:
-Line 1: Positive labels (comma-separated)
-Line 2: Hard negative labels (comma-separated)
+Provide exactly 2 lines of labels without any additional text, first line should contain only positive labels and second line should contain hard negative labels:
+pos1,pos2,pos3
+neg1,neg2,neg3,neg4
 
 **Text to analyze**: "{text}"
 """
@@ -50,12 +50,16 @@ def generate_labels_for_text(text: str):
         if len(lines) >= 2:
             positive_labels = [
                 label.strip()
-                for label in lines[0].replace("Line 1: ", "").split(",")
+                for label in lines[0]
+                .split(":")[-1].strip()
+                .split(",")
                 if label.replace("- ", "").strip()
             ]
             negative_labels = [
                 label.strip()
-                for label in lines[1].replace("Line 2: ", "").split(",")
+                for label in lines[1]
+                .split(":")[-1].strip()
+                .split(",")
                 if label.replace("- ", "").strip()
             ]
             return positive_labels, negative_labels

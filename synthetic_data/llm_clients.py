@@ -3,6 +3,8 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
+import signal
+from contextlib import contextmanager
 
 from groq import Groq
 from loguru import logger
@@ -13,11 +15,12 @@ from ollama import Client
 class LLMConfig:
     model: str
     temperature: float = 0.8
-    max_tokens: int = 2048
+    max_tokens: int = 4096
     top_p: float = 0.95
     max_retries: int = 3
     retry_delay: float = 1.0
-    repeat_penalty: float = 1.1
+    repeat_penalty: float = 1.2
+    timeout: float = 45.0  # Default timeout in seconds
 
 
 class BaseLLMClient(ABC):
@@ -29,6 +32,24 @@ class BaseLLMClient(ABC):
     @abstractmethod
     def generate_text(self, prompt: str) -> str:
         """Generate text from prompt."""
+
+    @contextmanager
+    def timeout_handler(self, timeout_duration: float):
+        """Context manager for handling timeouts."""
+
+        def timeout_handler_func(signum, frame):
+            raise TimeoutError(f"Operation timed out after {timeout_duration} seconds")
+
+        # Set the signal handler and alarm
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler_func)
+        signal.alarm(int(timeout_duration))
+
+        try:
+            yield
+        finally:
+            # Reset the alarm and handler
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
 
     def _retry_with_backoff(self, func, *args, **kwargs):
         """Retry function with exponential backoff."""
@@ -59,7 +80,7 @@ class GroqClient(BaseLLMClient):
 
     def _make_groq_request(self, prompt: str) -> str:
         """Make a single request to Groq API."""
-        temperature = random.uniform(0.1, 0.3)
+        temperature = random.uniform(0.01, 0.2)
         seed = random.randint(1, 100000)
         completion = self.client.chat.completions.create(
             model=self.config.model,
@@ -89,23 +110,32 @@ class OllamaClient(BaseLLMClient):
         logger.info(f"Initialized Ollama client with model: {config.model}")
 
     def _make_ollama_request(self, prompt: str) -> str:
-        """Make a single request to Ollama."""
+        """Make a single request to Ollama with timeout."""
         # Randomize for diversity
         temperature = random.uniform(0.7, 0.9)
         seed = random.randint(1, 100000)
 
-        response = self.client.generate(
-            model=self.config.model,
-            prompt=prompt,
-            options={
-                "seed": seed,
-                "temperature": temperature,
-                "repeat_penalty": self.config.repeat_penalty,
-                "max_tokens": self.config.max_tokens,
-            },
-        )
+        try:
+            with self.timeout_handler(self.config.timeout):
+                response = self.client.generate(
+                    model=self.config.model,
+                    prompt=prompt,
+                    system="You're an expert in generating data for training zero-shot classification models.",
+                    options={
+                        "seed": seed,
+                        "temperature": temperature,
+                        "repeat_penalty": self.config.repeat_penalty,
+                        "max_tokens": self.config.max_tokens,
+                    },
+                )
+                return response.response.strip()
 
-        return response.response.strip()
+        except TimeoutError as e:
+            logger.error(f"Ollama request timed out after {self.config.timeout}s")
+            raise e
+        except Exception as e:
+            logger.error(f"Ollama request failed: {e}")
+            raise e
 
     def generate_text(self, prompt: str) -> str:
         """Generate text using Ollama with retry logic."""

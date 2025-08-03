@@ -96,15 +96,15 @@ def generate_prompt(num_samples: int, topics: str = None) -> str:
     return f"""Generate **exactly {num_samples}** diverse text samples for zero-shot classification training.
 
 **TOPICS** - Create text samples relating to these topics:
-```
+<topics>
 {topics}
-```
+</topics>
 
 **TEXT REQUIREMENTS**:
-- Generate long, detailed sentences/paragraphs with rich context
-- Avoid short or simple sentences
-- Vary text types: statements, instructions, questions, reviews, announcements
-- Use diverse writing styles: technical, conversational, formal, casual
+- Generate a detailed sentence/paragraph/story with `rich context`
+- Avoid short or simple storylines
+- Vary text types: statements, instructions, questions, reviews, announcements...
+- Use diverse writing styles: technical, conversational, formal, casual...
 
 **LABELS**:
 - Create 5-20 descriptive labels per sample that require deep understanding
@@ -117,19 +117,15 @@ def generate_prompt(num_samples: int, topics: str = None) -> str:
 - Require deep analysis to distinguish from correct labels
 
 **LABEL INSPIRATION**:
-- Content: news_article, product_review, email, instruction
-- Domains: {"', '".join(random_domain)}
-- Tone: {"', '".join(random_tone)}
-- Industry: {"', '".join(random_industry)}
-- Intent: question, request, opinion, announcement
+- Content: news_article, product_review, email, instruction...
+- Domains: {"', '".join(random_domain)}...
+- Tone: {"', '".join(random_tone)}...
+- Industry: {"', '".join(random_industry)}...
+- Intent: question, request, opinion, announcement...
+...
 
 **OUTPUT**: Return valid JSON array with objects containing:
 - "sentence": generated text relating to topics
 - "labels": list of applicable descriptive labels
 - "not_labels": list of challenging hard negatives
-
-**Example**:
-```json
-{json.dumps(output_example, indent=2)}
-```
 """
