@@ -3,12 +3,15 @@ import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List
-
+import datasets
 from llm_clients import BaseLLMClient, create_llm_client
 from llm_output_parser import parse_json
 from loguru import logger
 from prompts import generate_prompt
 from tqdm import tqdm
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class DatasetGenerator:
@@ -35,13 +38,16 @@ class DatasetGenerator:
     def generate_dataset(self, num_samples: int) -> List[Dict[str, List[str]]]:
         """Generate a single batch of synthetic data."""
         prompt, topics = self._create_prompt(num_samples)
-
-        # LLM call - clearly separated
-        raw_response = self.llm_client.generate_text(prompt)
+        
+        try:
+            raw_response = self.llm_client.generate_text(prompt)
+        except TimeoutError as e:
+            logger.error(f"Error generating text: {e}")
+            raw_response = ""
 
         # Parse response
         try:
-            data = parse_json(raw_response)
+            data = parse_json(raw_response, allow_incomplete=True)
         except Exception:
             data = []
         data = data if isinstance(data, list) else []
@@ -50,7 +56,7 @@ class DatasetGenerator:
     def _save_batch_file(self, batch_data: Dict, batch_file: str) -> None:
         """Save batch data to file (used for parallel execution)."""
         with open(batch_file, "w") as f:
-            json.dump(batch_data, f, indent=2)
+            json.dump(batch_data, f, indent=2, ensure_ascii=False)
 
     def generate_large_dataset(
         self, total_samples: int, batch_size: int = 50, output_dir: str = "batches"
@@ -106,6 +112,13 @@ class DatasetGenerator:
         )
 
 
+class DatasetV2Generator(DatasetGenerator):
+    def __init__(self, llm_client):
+        super().__init__(llm_client)
+        all_topics = datasets.load_dataset("derenrich/wikidata-enwiki-categories-and-statements", split="train")["text"]
+        self.all_topics = [" - ".join(str(topic).strip().splitlines()) for topic in all_topics if topic.strip()]
+
+
 def main():
     import argparse
 
@@ -116,13 +129,17 @@ def main():
         "--provider",
         type=str,
         choices=["groq", "ollama"],
-        default="ollama",
+        # default="ollama",
+        default="groq",
         help="LLM provider to use",
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="cogito:latest",
+        # default="qwen2.5:latest",
+        # default="phi3:3.8b",
+        # default="cogito",
+        default="llama-3.3-70b-versatile",
         help="Model name to use",
     )
     parser.add_argument(
@@ -134,19 +151,19 @@ def main():
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=100_000,
+        default=500_000,
         help="Number of synthetic samples to generate",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=15,
-        help="Batch size for large dataset generation (default: 50)",
+        default=10,
+        help="Batch size for large dataset generation (default: 10)",
     )
     parser.add_argument(
         "--batch-dir",
         type=str,
-        default="data/batches_cogito",
+        default="data/batches_wiki_llama",
         help="Directory to save batch files",
     )
 
@@ -157,14 +174,12 @@ def main():
     logger.info(f"Target samples: {args.num_samples}, Batch size: {args.batch_size}")
 
     # Create LLM client
-    try:
-        llm_client = create_llm_client(args.provider, args.model, args.api_key)
-    except Exception as e:
-        logger.error(f"Failed to create LLM client: {e}")
-        return
+    llm_client = create_llm_client(args.provider, args.model, args.api_key)
+
+    logger.info(f"LLM client created successfully: {os.getpid()}")
 
     # Create dataset generator
-    generator = DatasetGenerator(llm_client)
+    generator = DatasetV2Generator(llm_client)
 
     # Generate data
     if args.num_samples > args.batch_size:

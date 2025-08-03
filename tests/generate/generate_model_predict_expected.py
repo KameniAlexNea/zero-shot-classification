@@ -23,7 +23,9 @@ def main():
     # Initialize tokenizer and model (random weights)
     model_name = "bert-base-uncased"
     tokenizer = GliZNETTokenizer.from_pretrained(model_name)
-    model = GliZNetForSequenceClassification.from_pretrained(model_name)
+    model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+        model_name, tokenizer
+    )
     model.eval()
 
     examples = [

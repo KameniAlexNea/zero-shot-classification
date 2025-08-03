@@ -1,28 +1,28 @@
 # --projected_dim 256 \
 nohup uv run train_gliznet.py \
-    --model_name microsoft/deberta-v3-base \
+    --model_name microsoft/deberta-v3-small \
     --model_class DebertaV2PreTrainedModel \
     --run_name "gliznet_training" \
-    --use_fast_tokenizer false \
+    --use_fast_tokenizer \
     --similarity_metric dot_learning \
     --max_labels 20 \
     --per_device_train_batch_size 128 \
     --per_device_eval_batch_size 128 \
-    --num_train_epochs 5 \
-    --output_dir results \
+    --num_train_epochs 4 \
+    --output_dir "results/small" \
     --learning_rate 1e-4 \
     --logging_steps 100 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
-    --eval_steps 100 \
-    --save_steps 100 \
-    --eval_strategy epoch \
-    --save_strategy epoch \
+    --eval_steps 0.15 \
+    --save_steps 0.15 \
+    --eval_strategy steps \
+    --save_strategy steps \
     --save_total_limit 2 \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
     --dataloader_pin_memory \
-    --dataloader_num_workers 4 \
+    --dataloader_num_workers 8 \
     --remove_unused_columns False \
     --report_to wandb \
     --lr_scheduler_type cosine \
@@ -32,4 +32,5 @@ nohup uv run train_gliznet.py \
     --eval_on_start \
     --data_seed 42 \
     --auto_find_batch_size \
+    --dataloader_prefetch_factor 2 \
     &> nohup.out &

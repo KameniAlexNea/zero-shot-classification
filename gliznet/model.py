@@ -8,22 +8,6 @@ from transformers import AutoModel, BertConfig, BertPreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
 
-class GliZNetConfig(BertConfig):
-    def __init__(
-        self,
-        projected_dim: Optional[int] = None,
-        similarity_metric: str = "dot",
-        temperature: float = 1.0,
-        dropout_rate: float = 0.1,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.projected_dim = projected_dim
-        self.similarity_metric = similarity_metric
-        self.temperature = temperature
-        self.dropout_rate = dropout_rate
-
-
 @dataclass
 class GliZNetOutput(ModelOutput):
     loss: Optional[torch.FloatTensor] = None
@@ -64,6 +48,43 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             self.loss_fn = nn.BCEWithLogitsLoss(reduction="none")
             self.post_init()
 
+        def resize_token_embeddings(
+            self, new_num_tokens: Optional[int] = None
+        ) -> nn.Embedding:
+            """
+            Resize input token embeddings matrix of the model if new_num_tokens != config.vocab_size.
+
+            This method should be called when custom tokens are added to the tokenizer.
+            """
+            base_model = getattr(self, self.base_model_prefix)
+            return base_model.resize_token_embeddings(new_num_tokens)
+
+        @classmethod
+        def from_pretrained_with_tokenizer(
+            cls,
+            pretrained_model_name_or_path: str,
+            tokenizer,  # GliZNETTokenizer instance
+            **kwargs,
+        ):
+            """
+            Create model from pretrained and automatically resize embeddings if tokenizer has custom tokens.
+
+            Args:
+                pretrained_model_name_or_path: Path to pretrained model
+                tokenizer: GliZNETTokenizer instance
+                **kwargs: Additional arguments for model initialization
+            """
+            model = cls.from_pretrained(pretrained_model_name_or_path, **kwargs)
+
+            # Resize token embeddings if custom tokens were added
+            if tokenizer.has_custom_tokens():
+                new_vocab_size = tokenizer.get_vocab_size()
+                model.resize_token_embeddings(new_vocab_size)
+                model.config.vocab_size = new_vocab_size
+                model.config.resized_token_embeddings = True
+
+            return model
+
         def _initialize_config(
             self,
             config,
@@ -82,7 +103,14 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
         def _setup_layers(self):
             projected_dim = self.config.projected_dim or self.config.hidden_size
-            self.proj = (
+
+            # Separate projectors for CLS and label tokens
+            self.cls_proj = (
+                nn.Linear(self.config.hidden_size, projected_dim)
+                if projected_dim != self.config.hidden_size
+                else nn.Identity()
+            )
+            self.label_proj = (
                 nn.Linear(self.config.hidden_size, projected_dim)
                 if projected_dim != self.config.hidden_size
                 else nn.Identity()
@@ -150,10 +178,10 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
         def _get_hidden_states(
             self,
             input_ids,
-            attention_mask,
-            token_type_ids,
-            output_attentions,
-            output_hidden_states,
+            attention_mask: Optional[torch.Tensor] = None,
+            token_type_ids: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
         ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
             # Only compute attention weights if explicitly requested
             compute_attention = output_attentions is not None and output_attentions
@@ -170,6 +198,21 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 cls_attn_weights = encoder_outputs.attentions[-1].mean(dim=1)[:, 0, :]
             return self.dropout(encoder_outputs.last_hidden_state), cls_attn_weights
 
+        @torch.inference_mode()
+        def encode(
+            self, input_ids: torch.Tensor, attention_mask: torch.Tensor
+        ) -> torch.Tensor:
+            """
+            Encode input_ids using the backbone model.
+            Returns the last hidden state of the [CLS] token.
+            """
+            outputs = self.backbone_forward(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_dict=True,
+            )
+            return outputs.last_hidden_state[:, 0]
+
         def _compute_batch_logits(
             self,
             hidden_states: torch.Tensor,  # (B, L, H)
@@ -177,14 +220,71 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             cls_attn_weights: Optional[torch.Tensor],  # (B, L)
         ) -> torch.Tensor:
             """
-            Compute logits between [CLS] and averaged label embeddings per sample.
+            Compute logits between [CLS] and label representations per sample.
+
+            If resized_token_embeddings=True, uses separator token embeddings directly.
+            Otherwise, uses averaged label token embeddings (original implementation).
+            """
+            # Check if we should use optimized separator token approach
+            if getattr(self.config, "resized_token_embeddings", False):
+                return self._compute_batch_logits_with_separator_tokens(
+                    hidden_states, lmask, cls_attn_weights
+                )
+            return self._compute_batch_logits_original(
+                hidden_states, lmask, cls_attn_weights
+            )
+
+        def _compute_batch_logits_with_separator_tokens(
+            self,
+            hidden_states: torch.Tensor,  # (B, L, H)
+            lmask: torch.Tensor,  # (B, L), values: 0 = text, 1... = label groups
+            cls_attn_weights: Optional[torch.Tensor],  # (B, L)
+        ) -> torch.Tensor:
+            """
+            Optimized version that uses separator token embeddings directly.
+            This is used when custom tokens (like [LAB]) have been added to the model.
+            """
+            # Project CLS tokens and separator tokens separately
+            cls_tokens = self.cls_proj(hidden_states[:, 0])  # (B, D)
+
+            # Create mask for separator tokens (lmask == 0, but exclude CLS position)
+            separator_mask = lmask.bool()
+
+            # Get separator token positions and their embeddings
+            separator_positions = (
+                separator_mask.nonzero()
+            )  # (num_separators, 2) - [batch_idx, seq_idx]
+
+            separator_hidden = self.label_proj(
+                hidden_states[separator_mask]
+            )  # (num_separators, D)
+            separator_batch_indices = separator_positions[:, 0]  # (num_separators,)
+
+            # Get corresponding CLS tokens for each separator
+            cls_for_separators = cls_tokens[
+                separator_batch_indices
+            ]  # (num_separators, D)
+
+            # Compute similarities between CLS and separator tokens
+            all_logits = self.compute_similarity(
+                cls_for_separators, separator_hidden
+            )  # (num_separators, 1)
+
+            return all_logits
+
+        def _compute_batch_logits_original(
+            self,
+            hidden_states: torch.Tensor,  # (B, L, H)
+            lmask: torch.Tensor,  # (B, L), values: 0 = text, 1... = label groups
+            cls_attn_weights: Optional[torch.Tensor],  # (B, L)
+        ) -> torch.Tensor:
+            """
+            Original implementation: Compute logits between [CLS] and averaged label embeddings per sample.
             Fully vectorized implementation - computes similarity only once!
             """
-            hidden_proj: torch.Tensor = self.proj(hidden_states)  # (B, L, D)
-            projected_dim = hidden_proj.shape[-1]
-
-            # Get [CLS] tokens (first token in each sequence)
-            cls_tokens = hidden_proj[:, 0]  # (B, D)
+            # Project CLS tokens and all tokens separately
+            cls_tokens = self.cls_proj(hidden_states[:, 0])  # (B, D)
+            projected_dim = cls_tokens.shape[-1]
 
             # Create mask for non-text tokens (label tokens have lmask > 0)
             label_mask = lmask > 0  # (B, L)
@@ -193,7 +293,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             label_positions = (
                 label_mask.nonzero()
             )  # (num_label_tokens, 2) - [batch_idx, seq_idx]
-            label_hidden = hidden_proj[label_mask]  # (num_label_tokens, D)
+            label_hidden = self.label_proj(
+                hidden_states[label_mask]
+            )  # (num_label_tokens, D)
             label_ids = lmask[label_mask]  # (num_label_tokens,)
             label_batch_indices = label_positions[:, 0]  # (num_label_tokens,)
 

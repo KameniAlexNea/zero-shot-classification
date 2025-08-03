@@ -4,13 +4,14 @@ import os
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import importlib
 from dataclasses import dataclass, field
 from typing import Optional
 
+import datasets
 import torch
 from loguru import logger
 from transformers import (
@@ -24,6 +25,14 @@ from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
+from gliznet.training_data import additional_datasets
+
+
+def add_additional_ds(base_ds: datasets.Dataset):
+    ds = datasets.concatenate_datasets(
+        [base_ds] + [ds_loader() for ds_loader in additional_datasets.values()]
+    )
+    return ds
 
 
 def get_transformers_class(class_name):
@@ -106,7 +115,9 @@ def main():
     # Load and prepare dataset
     dataset = load_dataset()
     splits = dataset.train_test_split(test_size=0.1, seed=42)
-    train_data = splits["train"]
+
+    train_split = splits["train"]
+    train_data = add_additional_ds(train_split)
     val_data = splits["test"]
 
     logger.info(
@@ -144,14 +155,19 @@ def main():
     pretrained_cls = create_gli_znet_for_sequence_classification(
         get_transformers_class(model_args.model_class)
     )
-    model = pretrained_cls.from_pretrained(
+    model = pretrained_cls.from_pretrained_with_tokenizer(
         model_args.model_name,
+        tokenizer=tokenizer,
         projected_dim=model_args.projected_dim,
         similarity_metric=model_args.similarity_metric,
     )
 
     # Create output directory
     os.makedirs(training_args.output_dir, exist_ok=True)
+
+    metrics = compute_metrics
+    if len(train_dataset) > 100_000 or "CUDA_VISIBLE_DEVICES" not in os.environ:
+        metrics = None  # Disable metrics for large datasets to speed up training
 
     # Initialize trainer
     trainer = Trainer(
@@ -166,7 +182,7 @@ def main():
                 early_stopping_patience=model_args.early_stopping_patience
             )
         ],
-        compute_metrics=compute_metrics,
+        compute_metrics=metrics,
     )
 
     # Start training

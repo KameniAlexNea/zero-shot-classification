@@ -1,3 +1,10 @@
+import os
+
+os.environ["WANDB_PROJECT"] = "zero-shot-classification"
+os.environ["WANDB_WATCH"] = "none"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 import importlib
 import json
 from argparse import ArgumentParser
@@ -12,10 +19,13 @@ from loguru import logger
 from tqdm import tqdm
 
 from evaluation.metrics import compute_topk_metrics
+from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
 from gliznet.data import add_tokenized_function
 from gliznet.evaluation_ds import ds_mapping
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
+
+ds_mapping = {**ds_mapping, **mteb_ds_mapping}
 
 
 def get_transformers_class(class_name):
@@ -202,7 +212,15 @@ def get_args():
         default=100,
         help="Maximum number of labels to consider for each example.",
     )
-    return args.parse_args()
+    args.add_argument(
+        "--device_pos",
+        type=int,
+        default=0,
+        help="Batch size for evaluation.",
+    )
+    args = args.parse_args()
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
+    return args
 
 
 args = get_args()

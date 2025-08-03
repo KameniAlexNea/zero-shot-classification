@@ -74,7 +74,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         )
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
-        self.model.proj = nn.Identity()
+        self.model.cls_proj = nn.Identity()
+        self.model.label_proj = nn.Identity()
         # sample inputs: batch=2, seq_len=4
         self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
@@ -93,7 +94,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
         model.hidden_size = self.hidden_size
-        model.proj = nn.Identity()
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
         return model
 
     def test_compute_similarity_dot(self):
@@ -304,6 +306,260 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         self.assertEqual(len(results), 2)
         for idx, res in enumerate(results):
             self.assertIsInstance(res, list)
+
+
+class TestGliZNetWithCustomTokens(unittest.TestCase):
+    """Test suite for model functionality with custom tokens and embedding resizing"""
+
+    def setUp(self):
+        self.hidden_size = 8
+
+    def test_resize_token_embeddings(self):
+        """Test token embedding resizing functionality"""
+        # Create base model
+        model = GliZNetForSequenceClassification.from_pretrained("bert-base-uncased")
+        original_vocab_size = model.config.vocab_size
+
+        # Resize embeddings
+        new_vocab_size = original_vocab_size + 5
+        new_embeddings = model.resize_token_embeddings(new_vocab_size)
+
+        # Check that embeddings were resized
+        self.assertEqual(new_embeddings.num_embeddings, new_vocab_size)
+        self.assertEqual(model.get_input_embeddings().num_embeddings, new_vocab_size)
+
+        # Original config should still be unchanged (this is the issue we identified)
+        self.assertEqual(model.config.vocab_size, original_vocab_size)
+
+    def test_from_pretrained_with_tokenizer_default(self):
+        """Test model creation with default tokenizer (no custom tokens)"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token=";"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer
+        )
+
+        # Should not resize embeddings
+        self.assertFalse(getattr(model.config, "resized_token_embeddings", False))
+        self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
+
+    def test_from_pretrained_with_tokenizer_custom(self):
+        """Test model creation with custom tokenizer ([LAB] tokens)"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token="[LAB]"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer
+        )
+
+        # Should resize embeddings and update config
+        self.assertTrue(getattr(model.config, "resized_token_embeddings", False))
+        self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
+        self.assertEqual(
+            model.get_input_embeddings().num_embeddings, tokenizer.get_vocab_size()
+        )
+
+    def test_compute_batch_logits_method_selection(self):
+        """Test that correct computation method is selected based on resized_token_embeddings"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        # Create model with custom tokens
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token="[LAB]"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
+        )
+
+        # Replace with dummy encoder for testing
+        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+        model.config.hidden_size = self.hidden_size
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
+
+        # Test that resized_token_embeddings flag is set
+        self.assertTrue(getattr(model.config, "resized_token_embeddings", False))
+
+        # Create test inputs
+        text = "Test text"
+        labels = ["positive", "negative"]
+        batch = tokenizer.tokenize_example(text, labels)
+
+        # Test forward pass works
+        with torch.no_grad():
+            outputs = model.forward(
+                input_ids=batch["input_ids"].unsqueeze(0),
+                attention_mask=batch["attention_mask"].unsqueeze(0),
+                lmask=batch["lmask"].unsqueeze(0),
+            )
+
+        self.assertIsNotNone(outputs.logits)
+        self.assertTrue(outputs.logits.numel() > 0)
+
+    def test_model_config_persistence(self):
+        """Test that model config correctly stores resize information"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token="[CUSTOM]"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer
+        )
+
+        # Check that config has been updated properly
+        self.assertTrue(hasattr(model.config, "resized_token_embeddings"))
+        self.assertTrue(model.config.resized_token_embeddings)
+        self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
+
+    def test_model_inference_with_custom_tokens(self):
+        """Test model inference with custom tokens"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token="[LAB]"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
+        )
+
+        # Replace with dummy encoder
+        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+        model.config.hidden_size = self.hidden_size
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
+
+        # Test prediction
+        texts = ["Great movie!", "Terrible film."]
+        labels = [["positive", "negative"], ["good", "bad"]]
+
+        batch = tokenizer.tokenize_batch(texts, labels)
+
+        predictions = model.predict(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            lmask=batch["lmask"],
+        )
+
+        # Should return predictions for both samples
+        self.assertEqual(len(predictions), 2)
+        for pred in predictions:
+            self.assertIsInstance(pred, list)
+            self.assertTrue(len(pred) > 0)
+
+    def test_encode_method(self):
+        """Test the encode method with resized embeddings"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token="[LAB]"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
+        )
+
+        # Replace with dummy encoder
+        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+        model.config.hidden_size = self.hidden_size
+
+        # Test encoding
+        text = "Test encoding"
+        batch = tokenizer.tokenize_example(text, ["label"])
+
+        encoding = model.encode(
+            input_ids=batch["input_ids"].unsqueeze(0),
+            attention_mask=batch["attention_mask"].unsqueeze(0),
+        )
+
+        # Should return CLS token encoding
+        self.assertEqual(encoding.shape, (1, self.hidden_size))
+
+    def test_backward_compatibility(self):
+        """Test that models without custom tokens still work"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        # Default tokenizer (no custom tokens)
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token=";"
+        )
+
+        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
+        )
+
+        # Replace with dummy encoder
+        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+        model.config.hidden_size = self.hidden_size
+        model.cls_proj = nn.Identity()
+        model.label_proj = nn.Identity()
+
+        # Should use original computation method
+        self.assertFalse(getattr(model.config, "resized_token_embeddings", False))
+
+        # Test inference still works
+        text = "Test text"
+        labels = ["positive", "negative"]
+        batch = tokenizer.tokenize_example(text, labels)
+
+        with torch.no_grad():
+            outputs = model.forward(
+                input_ids=batch["input_ids"].unsqueeze(0),
+                attention_mask=batch["attention_mask"].unsqueeze(0),
+                lmask=batch["lmask"].unsqueeze(0),
+            )
+
+        self.assertIsNotNone(outputs.logits)
+
+    def test_similarity_metrics_with_custom_tokens(self):
+        """Test different similarity metrics with custom tokens"""
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", cls_separator_token="[LAB]"
+        )
+
+        metrics = ["dot", "bilinear", "dot_learning"]
+
+        for metric in metrics:
+            with self.subTest(metric=metric):
+                model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
+                    "bert-base-uncased",
+                    tokenizer,
+                    projected_dim=self.hidden_size,
+                    similarity_metric=metric,
+                )
+
+                # Replace with dummy encoder
+                setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+                model.config.hidden_size = self.hidden_size
+                model.cls_proj = nn.Identity()
+                model.label_proj = nn.Identity()
+
+                # Test forward pass
+                text = "Test text"
+                labels = ["positive", "negative"]
+                batch = tokenizer.tokenize_example(text, labels)
+
+                with torch.no_grad():
+                    outputs = model.forward(
+                        input_ids=batch["input_ids"].unsqueeze(0),
+                        attention_mask=batch["attention_mask"].unsqueeze(0),
+                        lmask=batch["lmask"].unsqueeze(0),
+                    )
+
+                self.assertIsNotNone(outputs.logits)
+                self.assertEqual(model.config.similarity_metric, metric)
 
 
 if __name__ == "__main__":
