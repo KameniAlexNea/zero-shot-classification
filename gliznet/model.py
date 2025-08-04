@@ -156,6 +156,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             )
             loss = (
                 self._compute_loss(outputs_logits, labels)
+                + 0.1 * self._compute_barlow_loss(outputs_logits)
                 if labels is not None
                 else None
             )
@@ -402,6 +403,27 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             )
 
             return bce_loss + total_contrastive_loss
+
+        def _compute_barlow_loss(
+            self, logits: torch.Tensor, coef: float = 0.005
+        ) -> torch.Tensor:
+            """
+            Compute contrastive loss for a single batch of logits and labels.
+            This is a simplified version that handles the case where there are no valid comparisons.
+            """
+            if logits.numel() == 0:
+                return torch.tensor(0.0, device=logits.device)
+            # Barlow Twins loss implementation
+            # Normalize logits
+            z = logits.unsqueeze(0) if logits.dim() == 1 else logits
+            z_norm = (z - z.mean(dim=0)) / (z.std(dim=0) + 1e-6)
+
+            # Compute cross-correlation matrix
+            c = torch.mm(z_norm.T, z_norm) / z_norm.shape[0]
+
+            # Barlow Twins loss: on-diagonal should be close to 1, off-diagonal close to 0
+            off_diag = c.flatten()[1:].view(c.size(0), -1).pow_(2).sum()
+            return coef * off_diag
 
         def _compute_contrastive_loss(
             self, logits: torch.Tensor, labels: torch.Tensor

@@ -117,7 +117,8 @@ def main():
     splits = dataset.train_test_split(test_size=0.1, seed=42)
 
     train_split = splits["train"]
-    train_data = add_additional_ds(train_split)
+    train_data = train_split
+    # train_data = add_additional_ds(train_split)
     val_data = splits["test"]
 
     logger.info(

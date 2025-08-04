@@ -9,13 +9,13 @@ nohup uv run train_gliznet.py \
     --per_device_train_batch_size 128 \
     --per_device_eval_batch_size 128 \
     --num_train_epochs 4 \
-    --output_dir "results/small" \
+    --output_dir "results/small-orig" \
     --learning_rate 1e-4 \
     --logging_steps 100 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
-    --eval_steps 0.15 \
-    --save_steps 0.15 \
+    --eval_steps 0.25 \
+    --save_steps 0.25 \
     --eval_strategy steps \
     --save_strategy steps \
     --save_total_limit 2 \
@@ -32,5 +32,6 @@ nohup uv run train_gliznet.py \
     --eval_on_start \
     --data_seed 42 \
     --auto_find_batch_size \
+    --projected_dim 1024 \
     --dataloader_prefetch_factor 2 \
     &> nohup.out &
