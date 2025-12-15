@@ -1,4 +1,3 @@
-import json
 import random
 
 from faker import Faker
@@ -85,7 +84,7 @@ def random_labels():
 
 
 def generate_prompt(num_samples: int, topics: str = None) -> str:
-    output_example = base_output_example()
+    base_output_example()
 
     # Simple, controlled random elements
     random_domain, random_industry, random_tone = random_labels()

@@ -47,7 +47,7 @@ def load_movie_review_sentiment_dataset(split="test"):
         lambda x: {
             "text": x["text"],
             LabelName.ltext: columns,
-            LabelName.lint: [1-x["label"], x["label"]],
+            LabelName.lint: [1 - x["label"], x["label"]],
         },
         remove_columns=test_ds.column_names,
     )
@@ -113,10 +113,9 @@ def load_amazon_massive_intent_dataset(split="test"):
     )
     return test_ds
 
+
 def load_amazon_massive_scenario_dataset(split="test"):
-    test_ds = datasets.load_dataset(
-        "mteb/massive_scenario", "en", split=split
-    )
+    test_ds = datasets.load_dataset("mteb/massive_scenario", "en", split=split)
     unique_labels = sorted(set(test_ds["label"]))
     columns = list(unique_labels)
     test_ds = test_ds.map(

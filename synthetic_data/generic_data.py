@@ -3,13 +3,14 @@ import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List
+
 import datasets
+from dotenv import load_dotenv
 from llm_clients import BaseLLMClient, create_llm_client
 from llm_output_parser import parse_json
 from loguru import logger
 from prompts import generate_prompt
 from tqdm import tqdm
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -38,7 +39,7 @@ class DatasetGenerator:
     def generate_dataset(self, num_samples: int) -> List[Dict[str, List[str]]]:
         """Generate a single batch of synthetic data."""
         prompt, topics = self._create_prompt(num_samples)
-        
+
         try:
             raw_response = self.llm_client.generate_text(prompt)
         except TimeoutError as e:
@@ -115,8 +116,14 @@ class DatasetGenerator:
 class DatasetV2Generator(DatasetGenerator):
     def __init__(self, llm_client):
         super().__init__(llm_client)
-        all_topics = datasets.load_dataset("derenrich/wikidata-enwiki-categories-and-statements", split="train")["text"]
-        self.all_topics = [" - ".join(str(topic).strip().splitlines()) for topic in all_topics if topic.strip()]
+        all_topics = datasets.load_dataset(
+            "derenrich/wikidata-enwiki-categories-and-statements", split="train"
+        )["text"]
+        self.all_topics = [
+            " - ".join(str(topic).strip().splitlines())
+            for topic in all_topics
+            if topic.strip()
+        ]
 
 
 def main():

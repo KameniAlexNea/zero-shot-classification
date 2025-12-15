@@ -28,6 +28,20 @@ class GliZNETTokenizer:
         *args,
         **kwargs,
     ):
+        """Initialize GliZNET tokenizer.
+
+        Args:
+            pretrained_model_name_or_path: HuggingFace model identifier or path
+            min_text_token: Minimum number of text tokens (unused, kept for compatibility)
+            cls_separator_token: Token to separate labels. Use '[LAB]' for separator pooling
+                or ';' for mean pooling over label content tokens
+
+        Pooling Strategies:
+            - Separator pooling (cls_separator_token='[LAB]'): Uses the separator token
+              embedding directly. Marks separator positions in lmask.
+            - Mean pooling (cls_separator_token=';'): Averages embeddings of label content
+              tokens. Marks content token positions in lmask.
+        """
         self.tokenizer: BertTokenizerFast = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
@@ -57,6 +71,9 @@ class GliZNETTokenizer:
 
         self.cls_separator_token = cls_separator_token
 
+        # Determine pooling strategy based on separator token
+        self.pooling_strategy = "separator" if cls_separator_token != ";" else "mean"
+
         # Add custom [LAB] token if not using default ";" separator and token doesn't exist
         if (
             cls_separator_token != ";"
@@ -71,9 +88,7 @@ class GliZNETTokenizer:
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
         self.mask_token_id = self.tokenizer.mask_token_id or self.tokenizer.unk_token_id
-        self.label_sep_id = self.tokenizer.convert_tokens_to_ids(
-            cls_separator_token
-        )  # ';' is used as label separator. Try [SEP] if you want to use it as label separator.
+        self.label_sep_id = self.tokenizer.convert_tokens_to_ids(cls_separator_token)
 
     @classmethod
     def from_pretrained(
@@ -181,7 +196,20 @@ class GliZNETTokenizer:
     def _parse_tokenized_sequence(
         self, token_ids: List[int], labels: List[str]
     ) -> tuple[List[int], List[int]]:
-        """Parse the tokenized sequence to extract text tokens and create label mask."""
+        """Parse tokenized sequence and create label mask.
+
+        lmask semantics:
+            - 0: Text tokens, special tokens, and padding
+            - 1, 2, 3, ...: Label group identifiers
+
+        For separator pooling (cls_separator_token='[LAB]'):
+            - lmask marks the SEPARATOR token positions with label IDs
+            - Content tokens get 0
+
+        For mean pooling (cls_separator_token=';'):
+            - lmask marks the CONTENT token positions with label IDs
+            - Separator tokens get 0
+        """
         # Create label mask with same length as token_ids
         lmask = [0] * len(token_ids)
 
@@ -192,23 +220,21 @@ class GliZNETTokenizer:
             # If no SEP found, assume everything after [CLS] is text
             return token_ids, lmask
 
-        if self.cls_separator_token != ";":
+        if self.pooling_strategy == "separator":
+            # Separator pooling: mark separator token positions
             label_idx = 1
             for i, token_id in enumerate(token_ids[sep_idx + 1 :], start=sep_idx + 1):
                 if token_id == self.label_sep_id:
                     lmask[i] = label_idx
                     label_idx += 1
         else:
-
-            # Mark label tokens in the mask - iterate directly over tokens after [SEP]
+            # Mean pooling: mark content token positions
             label_idx = 1
-
-            # Iterate through tokens after [SEP]
             for i, token_id in enumerate(token_ids[sep_idx + 1 :], start=sep_idx + 1):
                 if token_id == self.label_sep_id:
                     label_idx += 1
                 else:
-                    # This is a label token
+                    # This is a label content token
                     lmask[i] = label_idx
 
         return token_ids, lmask
@@ -329,6 +355,15 @@ class GliZNETTokenizer:
     def was_auto_detected(self) -> bool:
         """Check if the cls_separator_token was auto-detected from existing tokens."""
         return hasattr(self, "_auto_detected") and self._auto_detected
+
+    def get_pooling_strategy(self) -> str:
+        """Get the pooling strategy used by this tokenizer.
+
+        Returns:
+            'separator': Uses separator token embeddings directly
+            'mean': Averages label content token embeddings
+        """
+        return self.pooling_strategy
 
     def _to_tensors(self, results: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {

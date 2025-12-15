@@ -8,8 +8,6 @@ os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import importlib
-from dataclasses import dataclass, field
-from typing import Optional
 
 import datasets
 import torch
@@ -21,6 +19,8 @@ from transformers import (
     TrainingArguments,
 )
 
+from gliznet.arguments import ModelArgs
+from gliznet.config import GliZNetDataConfig, GliZNetTrainingConfig
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import create_gli_znet_for_sequence_classification
@@ -52,57 +52,16 @@ def seed_everything(seed: int = 42):
     torch.backends.cudnn.benchmark = False
 
 
-@dataclass
-class ModelArgs:
-    model_name: str = field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        metadata={"help": "Pretrained model name or path"},
-    )
-    model_class: str = field(
-        default="BertPreTrainedModel",
-        metadata={"help": "Model class to use"},
-    )
-    projected_dim: int = field(
-        default=None, metadata={"help": "Hidden size for projection layer"}
-    )
-    similarity_metric: str = field(
-        default="dot",
-        metadata={"help": "Similarity metric: cosine, bilinear, dot"},
-    )
-    max_labels: Optional[int] = field(
-        default=50, metadata={"help": "Maximum number of labels"}
-    )  # 50 to avoid overflow
-    shuffle_labels: bool = field(default=True, metadata={"help": "Shuffle labels"})
-    save_path: str = field(
-        default=None,
-        metadata={"help": "Legacy model save path"},
-    )
-    early_stopping_patience: int = field(
-        default=3,
-        metadata={"help": "Early stopping patience"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Use fast tokenizer if available"},
-    )
-    model_max_length: int = field(
-        default=512,
-        metadata={"help": "Maximum sequence length for the model"},
-    )
-    token_dropout: float = field(
-        default=0.1,
-        metadata={
-            "help": "Token dropout probability for token masking during training"
-        },
-    )
-
-
 def main():
-    print("Starting process at...", os.getpid())
+    logger.info(f"Starting GliZNet training process (PID: {os.getpid()})")
 
     parser = HfArgumentParser((ModelArgs, TrainingArguments))
     args: tuple[ModelArgs, TrainingArguments] = parser.parse_args_into_dataclasses()
     model_args, training_args = args
+
+    # Set random seeds for reproducibility
+    seed_everything(model_args.data_seed)
+    logger.info(f"Set random seed to {model_args.data_seed}")
 
     # Set device
     device = (
@@ -110,67 +69,141 @@ def main():
     )
     logger.info(f"Using device: {device}")
 
-    testing_data = load_dataset(split="test")
+    # Validate configuration
+    if model_args.use_separator_pooling and model_args.cls_separator_token == ";":
+        logger.warning(
+            "use_separator_pooling=True but cls_separator_token=';'. "
+            "Consider using '[LAB]' for separator pooling."
+        )
 
-    # Load and prepare dataset
-    dataset = load_dataset()
-    splits = dataset.train_test_split(test_size=0.1, seed=42)
+    # Create training configuration
+    training_config = GliZNetTrainingConfig(
+        projected_dim=model_args.projected_dim,
+        similarity_metric=model_args.similarity_metric,
+        dropout_rate=model_args.dropout_rate,
+        scale_loss=model_args.scale_loss,
+        margin=model_args.margin,
+        temperature=model_args.temperature,
+        barlow_loss_weight=model_args.barlow_loss_weight,
+        contrastive_loss_weight=model_args.contrastive_loss_weight,
+        use_separator_pooling=model_args.use_separator_pooling,
+    )
+    logger.info(f"Training config: {training_config}")
+
+    # Create data configuration
+    data_config = GliZNetDataConfig(
+        max_labels=model_args.max_labels,
+        shuffle_labels=model_args.shuffle_labels,
+        min_label_length=model_args.min_label_length,
+    )
+    logger.info(f"Data config: {data_config}")
+
+    # Load datasets
+    logger.info(f"Loading dataset from {model_args.dataset_path}...")
+    testing_data = load_dataset(
+        path=model_args.dataset_path,
+        name=model_args.dataset_name,
+        split="test",
+        min_label_length=data_config.min_label_length,
+    )
+
+    dataset = load_dataset(
+        path=model_args.dataset_path,
+        name=model_args.dataset_name,
+        split="train",
+        min_label_length=data_config.min_label_length,
+    )
+    splits = dataset.train_test_split(test_size=0.1, seed=model_args.data_seed)
 
     train_split = splits["train"]
     train_data = train_split
-    # train_data = add_additional_ds(train_split)
+    # train_data = add_additional_ds(train_split)  # Uncomment to add additional datasets
     val_data = splits["test"]
 
     logger.info(
-        f"Train samples: {len(train_data)}, Validation samples: {len(val_data)}"
+        f"Dataset loaded - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(testing_data)}"
     )
 
     # Initialize tokenizer
+    logger.info(f"Initializing tokenizer from {model_args.model_name}...")
     tokenizer = GliZNETTokenizer.from_pretrained(
         model_args.model_name,
         use_fast=model_args.use_fast_tokenizer,
         model_max_length=model_args.model_max_length,
+        cls_separator_token=model_args.cls_separator_token,
     )
-    # Create datasets
+    logger.info(
+        f"Tokenizer initialized - Vocab size: {tokenizer.get_vocab_size()}, "
+        f"Pooling strategy: {tokenizer.get_pooling_strategy()}"
+    )
+
+    # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
+    logger.info("Tokenizing datasets...")
     train_dataset = add_tokenized_function(
         hf_dataset=train_data,
         tokenizer=tokenizer,
-        max_labels=model_args.max_labels,
-        token_dropout=model_args.token_dropout,
+        max_labels=data_config.max_labels,
+        shuffle_labels=data_config.shuffle_labels,
+        as_transform=True,
     )
 
     val_dataset = add_tokenized_function(
         hf_dataset=val_data,
         tokenizer=tokenizer,
-        shuffle_labels=False,
-        max_labels=model_args.max_labels,
+        shuffle_labels=False,  # Don't shuffle validation labels
+        max_labels=data_config.max_labels,
+        as_transform=True,
     )
+
     testing_dataset = add_tokenized_function(
         hf_dataset=testing_data,
         tokenizer=tokenizer,
-        shuffle_labels=False,
-        max_labels=model_args.max_labels,
+        shuffle_labels=False,  # Don't shuffle test labels
+        max_labels=data_config.max_labels,
+        as_transform=True,
     )
+    logger.info("Datasets tokenized successfully")
 
     # Initialize model
+    logger.info(f"Initializing model with {model_args.model_class}...")
     pretrained_cls = create_gli_znet_for_sequence_classification(
         get_transformers_class(model_args.model_class)
     )
     model = pretrained_cls.from_pretrained_with_tokenizer(
         model_args.model_name,
         tokenizer=tokenizer,
-        projected_dim=model_args.projected_dim,
-        similarity_metric=model_args.similarity_metric,
+        **training_config.to_model_kwargs(),
     )
+
+    # Log model configuration
+    logger.info(f"Model initialized - Parameters: {model.num_parameters():,}")
+    logger.info(f"Model config: {model.config}")
 
     # Create output directory
     os.makedirs(training_args.output_dir, exist_ok=True)
+    logger.info(f"Output directory: {training_args.output_dir}")
 
+    # Configure metrics computation
     metrics = compute_metrics
-    if len(train_dataset) > 100_000 or "CUDA_VISIBLE_DEVICES" not in os.environ:
-        metrics = None  # Disable metrics for large datasets to speed up training
+    if len(train_dataset) > 100_000:
+        logger.info(
+            "Disabling metrics computation for large dataset to speed up training"
+        )
+        metrics = None
 
     # Initialize trainer
+    logger.info("Initializing Trainer...")
+    callbacks = []
+    if model_args.early_stopping_patience > 0:
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=model_args.early_stopping_patience
+            )
+        )
+        logger.info(
+            f"Early stopping enabled with patience={model_args.early_stopping_patience}"
+        )
+
     trainer = Trainer(
         model=model,
         processing_class=tokenizer.tokenizer,
@@ -178,21 +211,36 @@ def main():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collate_fn,
-        callbacks=[
-            EarlyStoppingCallback(
-                early_stopping_patience=model_args.early_stopping_patience
-            )
-        ],
+        callbacks=callbacks,
         compute_metrics=metrics,
     )
 
     # Start training
-    logger.info("Starting training with Transformers Trainer...")
-    trainer.train()
+    logger.info("=" * 60)
+    logger.info("Starting training...")
+    logger.info(f"Total epochs: {training_args.num_train_epochs}")
+    logger.info(f"Batch size per device: {training_args.per_device_train_batch_size}")
+    logger.info(f"Learning rate: {training_args.learning_rate}")
+    logger.info("=" * 60)
 
-    logger.info("Training complete")
-    trainer.evaluate(testing_dataset, metric_key_prefix="test")
-    logger.info("Evaluation complete")
+    try:
+        trainer.train()
+        logger.info("✓ Training completed successfully")
+    except Exception as e:
+        logger.error(f"✗ Training failed: {e}")
+        raise
+
+    # Evaluate on test set
+    logger.info("Evaluating on test set...")
+    test_results = trainer.evaluate(testing_dataset, metric_key_prefix="test")
+    logger.info(f"Test results: {test_results}")
+    logger.info("✓ Evaluation complete")
+
+    # Save final model
+    logger.info(f"Saving final model to {training_args.output_dir}...")
+    trainer.save_model()
+    tokenizer.tokenizer.save_pretrained(training_args.output_dir)
+    logger.info("✓ Model saved successfully")
 
 
 if __name__ == "__main__":
