@@ -13,7 +13,7 @@ import datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from . import LabelName
+from .config import LabelName
 from .tokenizer import GliZNETTokenizer
 
 
@@ -52,10 +52,15 @@ def load_dataset(
         ]
         labels = pos + neg
         labels_int = [1] * len(pos) + [0] * len(neg)
-        if shuffle_labels:
+
+        # Handle shuffling
+        if shuffle_labels and labels:
             combined = list(zip(labels, labels_int))
             random.shuffle(combined)
             labels, labels_int = zip(*combined)
+            labels = list(labels)
+            labels_int = list(labels_int)
+
         return {
             "text": x[text_column],
             LabelName.ltext: labels,
@@ -64,9 +69,11 @@ def load_dataset(
 
     ds = datasets.load_dataset(path, name)[split]
     text_column = "text" if "text" in ds.column_names else "sentence"
-    ds = ds.map(
-        mapper,
-    )
+    ds = ds.map(mapper)
+
+    # Filter out samples with no labels after filtering by min_label_length
+    ds = ds.filter(lambda x: len(x[LabelName.ltext]) > 0)
+
     return ds.select_columns(["text", LabelName.ltext, LabelName.lint])
 
 
@@ -157,10 +164,20 @@ def add_tokenized_function(
         # Second step: batch tokenize everything at once (without token dropout)
         tokenized = tokenizer(texts, processed_ltexts_batch, token_dropout=0.0)
 
-        # Return the results
+        # Third step: truncate labels to match what actually fit after tokenization
+        truncated_labels = []
+        for label_tensor, num_fitted in zip(
+            processed_lints_batch, tokenized["num_labels_fitted"]
+        ):
+            # Only keep labels that actually fit in the tokenized sequence
+            truncated_labels.append(label_tensor[:num_fitted])
+
+        # Return the results (without num_labels_fitted in the dataset)
         return {
-            **tokenized,
-            "labels": processed_lints_batch,
+            "input_ids": tokenized["input_ids"],
+            "attention_mask": tokenized["attention_mask"],
+            "lmask": tokenized["lmask"],
+            "labels": truncated_labels,
         }
 
     if as_transform:

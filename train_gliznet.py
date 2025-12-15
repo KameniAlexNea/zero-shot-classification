@@ -60,8 +60,8 @@ def main():
     model_args, training_args = args
 
     # Set random seeds for reproducibility
-    seed_everything(model_args.data_seed)
-    logger.info(f"Set random seed to {model_args.data_seed}")
+    seed_everything(training_args.data_seed)
+    logger.info(f"Set random seed to {training_args.data_seed}")
 
     # Set device
     device = (
@@ -113,7 +113,7 @@ def main():
         split="train",
         min_label_length=data_config.min_label_length,
     )
-    splits = dataset.train_test_split(test_size=0.1, seed=model_args.data_seed)
+    splits = dataset.train_test_split(test_size=0.1, seed=training_args.data_seed)
 
     train_split = splits["train"]
     train_data = train_split

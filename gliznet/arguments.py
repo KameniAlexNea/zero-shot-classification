@@ -94,7 +94,3 @@ class ModelArgs:
         default=3,
         metadata={"help": "Early stopping patience"},
     )
-    data_seed: int = field(
-        default=42,
-        metadata={"help": "Random seed for data operations"},
-    )

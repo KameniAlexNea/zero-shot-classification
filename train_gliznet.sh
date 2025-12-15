@@ -9,7 +9,7 @@ nohup uv run train_gliznet.py \
     `# Model Configuration` \
     --model_name microsoft/deberta-v3-small \
     --model_class DebertaV2PreTrainedModel \
-    --projected_dim 1024 \
+    --projected_dim 512 \
     --similarity_metric dot_learning \
     --dropout_rate 0.1 \
     \
@@ -24,7 +24,7 @@ nohup uv run train_gliznet.py \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET \
     --dataset_name triplet \
-    --max_labels 20 \
+    --max_labels 15 \
     --shuffle_labels \
     --min_label_length 2 \
     --data_seed 42 \
@@ -38,8 +38,9 @@ nohup uv run train_gliznet.py \
     --run_name "gliznet_training" \
     --output_dir "results/deberta-v3-small-sep-pooling" \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 128 \
-    --per_device_eval_batch_size 128 \
+    --per_device_train_batch_size 16 \
+    --per_device_eval_batch_size 16 \
+    --gradient_accumulation_steps 8 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
@@ -62,7 +63,6 @@ nohup uv run train_gliznet.py \
     --dataloader_num_workers 8 \
     --dataloader_prefetch_factor 2 \
     --dataloader_drop_last \
-    --auto_find_batch_size \
     --fp16 \
     \
     `# Logging & Monitoring` \

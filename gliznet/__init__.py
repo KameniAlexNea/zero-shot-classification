@@ -21,6 +21,7 @@ Key Features:
 from .config import (
     GliZNetDataConfig,
     GliZNetTrainingConfig,
+    LabelName,
     get_default_config,
     get_mean_pooling_config,
     get_separator_pooling_config,
@@ -33,14 +34,6 @@ from .data import (
 )
 from .model import GliZNetForSequenceClassification, GliZNetOutput
 from .tokenizer import GliZNETTokenizer
-
-
-class LabelName:
-    """Column names for label data."""
-
-    ltext = "ltext"  # Label text column
-    lint = "lint"  # Label integer column (0=negative, 1=positive)
-
 
 __all__ = [
     "GliZNetForSequenceClassification",

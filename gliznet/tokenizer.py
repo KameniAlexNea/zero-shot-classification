@@ -283,6 +283,7 @@ class GliZNETTokenizer:
         input_ids_batch = []
         attention_mask_batch = []
         lmask_batch = []
+        num_labels_fitted = []  # Track how many labels actually fit
 
         for i, (tokens, labels) in enumerate(zip(batch_tokens, all_labels)):
             # Check if truncation is needed
@@ -301,6 +302,10 @@ class GliZNETTokenizer:
                     token_ids, token_dropout, self.mask_token_id
                 )
 
+            # Count how many labels actually fit (max label_id in lmask)
+            num_fitted = max(lmask) if lmask else 0
+            num_labels_fitted.append(num_fitted)
+
             # Pad
             pad_len = self.max_length - len(token_ids)
             input_ids = token_ids + [self.pad_token_id] * pad_len
@@ -315,6 +320,7 @@ class GliZNETTokenizer:
             "input_ids": input_ids_batch,
             "attention_mask": attention_mask_batch,
             "lmask": lmask_batch,
+            "num_labels_fitted": num_labels_fitted,  # NEW: Return count of fitted labels
         }
         result.update(self._to_tensors(result))
         return result

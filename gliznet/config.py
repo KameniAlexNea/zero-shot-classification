@@ -4,6 +4,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+class LabelName:
+    """Column names for label data."""
+
+    ltext = "ltext"  # Label text column
+    lint = "lint"  # Label integer column (0=negative, 1=positive)
+
+
 @dataclass
 class GliZNetTrainingConfig:
     """Configuration for GliZNet training hyperparameters.
