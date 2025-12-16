@@ -4,6 +4,8 @@ Batch evaluation script for cross-encoder models using multiple GPUs.
 This script runs evaluations in parallel across available GPUs.
 """
 
+import argparse
+import json
 import os
 import queue
 import subprocess
@@ -14,23 +16,12 @@ from typing import Dict, List, Tuple
 
 from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
 
-MODELS = [
+# Default models (can be overridden via command-line arguments)
+DEFAULT_MODELS = [
     {
-        "model_name": "results/small/checkpoint-83848",
-        "name": "small-83848",
-    },
-    {
-        "model_name": "results/small/checkpoint-62890",
-        "name": "small-62890",
-    },
-    {
-        "model_name": "results/small/checkpoint-1966",
-        "name": "base-1966",
-    },
-    {
-        "model_name": "results/small/checkpoint-1476",
-        "name": "base-1476",
-    },
+        "model_name": "alexneakameni/gliznet-deberta-v3-small",
+        "name": "gliznet-deberta-v3-small",
+    }
 ]
 
 DATASETS = list(mteb_ds_mapping.keys())
@@ -65,7 +56,7 @@ def run_evaluation(
     # Build command
     cmd = [
         "python",
-        "evaluate_agnews.py",
+        "evaluation/evaluate_agnews.py",
         "--model_path",
         model_name,
         "--data",
@@ -126,15 +117,18 @@ def run_evaluation(
         return False, exception_msg
 
 
-def create_task_queue() -> queue.Queue:
+def create_task_queue(models: List[Dict]) -> queue.Queue:
     """
     Create a queue of all evaluation tasks.
+
+    Args:
+        models: List of model configurations to evaluate
 
     Returns:
         Queue containing tuples of (model_config, dataset, activation)
     """
     task_queue = queue.Queue()
-    for model_config in MODELS:
+    for model_config in models:
         for dataset in DATASETS:
             activation = "sigmoid" if dataset in NO_SOFTMAX_DATA else "softmax"
             task_queue.put((model_config, dataset, activation))
@@ -247,26 +241,49 @@ def progress_monitor(
             print("-" * 50)
 
 
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Batch evaluation for models using multiple GPUs")
+    parser.add_argument("--model_path", nargs="*", help="Model paths to evaluate")
+    parser.add_argument("--num_gpus", type=int, default=2, help="Number of GPUs (default: 2)")
+    parser.add_argument("--model_class", type=str, default="DebertaV2PreTrainedModel", help="Model class")
+    return parser.parse_args()
+
+
+def load_models_config(args) -> List[Dict]:
+    """Load model configurations."""
+    if args.model_path:
+        return [{"model_name": path, "name": Path(path).name} for path in args.model_path]
+    return DEFAULT_MODELS
+
+
 def main():
     """
     Main function to run batch evaluation with dynamic task assignment.
     """
+    args = parse_args()
+    
     print("🚀 Starting batch evaluation for cross-encoder models", os.getpid())
-    print(f"📊 Total models: {len(MODELS)}")
+    
+    # Load model configurations
+    models = load_models_config(args)
+    
+    print(f"📊 Total models: {len(models)}")
     print(f"📊 Total datasets: {len(DATASETS)}")
+    print(f"🔧 Model class: {args.model_class}")
 
     # Create task queue
-    task_queue = create_task_queue()
+    task_queue = create_task_queue(models)
     total_tasks = task_queue.qsize()
     print(f"📊 Total evaluation tasks: {total_tasks}")
 
     # Show estimated time
     estimated_time_per_task = 120  # seconds (rough estimate)
-    estimated_total_time = (total_tasks * estimated_time_per_task) / 2  # 2 GPUs
+    estimated_total_time = (total_tasks * estimated_time_per_task) / args.num_gpus
     print(f"⏱️  Estimated total time: {estimated_total_time/3600:.1f} hours")
 
     # Setup for dynamic task execution
-    num_gpus = 2
+    num_gpus = args.num_gpus
     results_list = []
     results_lock = threading.Lock()
 

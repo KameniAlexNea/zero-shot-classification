@@ -32,7 +32,7 @@ class EvaluationConfig:
     """Configuration for evaluation."""
 
     model_path: str = "results/best_model/model"
-    model_class: str = "BertPreTrainedModel"
+    model_class: str = "DebertaV2PreTrainedModel"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 50
@@ -64,10 +64,12 @@ class ModelEvaluator:
                 self.config.model_path, use_fast=self.config.use_fast_tokenizer
             )
 
+            # Use from_pretrained_with_tokenizer to properly handle custom tokens
             model = create_gli_znet_for_sequence_classification(
                 get_transformers_class(self.config.model_class)
-            ).from_pretrained(
+            ).from_pretrained_with_tokenizer(
                 self.config.model_path,
+                tokenizer=tokenizer,
             )
             model.to(self.device)
             model.eval()
@@ -96,7 +98,7 @@ class ModelEvaluator:
         all_true_labels = []
 
         for batch in tqdm(
-            dataset.iter(batch_size=self.config.batch_size), desc="Evaluating"
+            dataset.iter(batch_size=self.config.batch_size), desc="Evaluating", total=len(dataset) // self.config.batch_size + 1
         ):
             try:
                 labels = batch.pop("labels")
@@ -176,13 +178,19 @@ args.add_argument(
 args.add_argument(
     "--model_class",
     type=str,
-    default="BertPreTrainedModel",
+    default="DebertaV2PreTrainedModel",
     help="Model class to use",
 )
 args.add_argument(
     "--use_fast_tokenizer",
     action="store_true",
     help="Use fast tokenizer if available.",
+)
+args.add_argument(
+    "--batch_size",
+    type=int,
+    default=32,
+    help="Batch size for evaluation.",
 )
 args = args.parse_args()
 
@@ -195,6 +203,7 @@ def main():
         results_dir=args.results_dir,
         model_class=args.model_class,
         use_fast_tokenizer=args.use_fast_tokenizer,
+        batch_size=args.batch_size,
     )
 
     # Initialize evaluator
