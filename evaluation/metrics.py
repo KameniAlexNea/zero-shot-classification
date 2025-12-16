@@ -32,8 +32,21 @@ def prepare_arrays(logits: list, labels: list) -> tuple[np.ndarray, np.ndarray]:
     logits = flatten_nested_lists(logits)
     labels = flatten_nested_lists(labels)
 
-    logits = np.concatenate([j.reshape(1, -1) for j in logits])
-    labels = np.concatenate([j.reshape(1, -1) for j in labels])
+    # Filter out empty predictions/labels
+    valid_pairs = [(log, lab) for log, lab in zip(logits, labels) if len(log) > 0 and len(lab) > 0]
+    
+    if not valid_pairs:
+        raise ValueError("No valid examples with labels found in the dataset")
+    
+    logits, labels = zip(*valid_pairs)
+    
+    # Flatten all predictions/labels into 1D arrays (for binary classification at label level)
+    logits_flat = np.concatenate([np.asarray(log).flatten() for log in logits])
+    labels_flat = np.concatenate([np.asarray(lab).flatten() for lab in labels])
+    
+    # Reshape to (n_samples, 1) for compatibility with metrics
+    logits = logits_flat.reshape(-1, 1)
+    labels = labels_flat.reshape(-1, 1)
 
     return logits, labels
 
@@ -297,6 +310,16 @@ def prepare_topk_data(
 
     logits = [j.reshape(-1) for j in logits]
     labels = [j.reshape(-1) for j in labels]
+    
+    # Filter out empty arrays (size 0)
+    valid_pairs = [(log, lab) for log, lab in zip(logits, labels) if log.size > 0 and lab.size > 0]
+    
+    if not valid_pairs:
+        return [], []
+    
+    logits, labels = zip(*valid_pairs)
+    logits = list(logits)
+    labels = list(labels)
 
     return logits, labels
 
@@ -334,15 +357,23 @@ def compute_topk_metrics(
     )
 
     # Compute top-k metrics
-    if valid_k and n_labels > 1:
-        y_true = np.vstack(labels_topk)
-        y_score = np.vstack(logits_topk)
-
-        for k in valid_k:
-            metrics[f"HR@{k}"] = hit_rate_at_k(labels_topk, logits_topk, k)
-            metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(labels_topk, logits_topk, k)
-            metrics[f"Precision@{k}"] = precision_at_k(labels_topk, logits_topk, k)
-            metrics[f"NDCG@{k}"] = ndcg_score(y_true, y_score, k=k)
+    if valid_k and n_labels > 1 and labels_topk:
+        # Ensure all arrays have the same shape before vstacking
+        expected_size = labels_topk[0].shape[0]
+        valid_indices = [i for i, lab in enumerate(labels_topk) if lab.shape[0] == expected_size]
+        
+        if valid_indices:
+            labels_topk_filtered = [labels_topk[i] for i in valid_indices]
+            logits_topk_filtered = [logits_topk[i] for i in valid_indices]
+            
+            y_true = np.vstack(labels_topk_filtered)
+            y_score = np.vstack(logits_topk_filtered)
+            
+            for k in valid_k:
+                metrics[f"HR@{k}"] = hit_rate_at_k(labels_topk_filtered, logits_topk_filtered, k)
+                metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(labels_topk_filtered, logits_topk_filtered, k)
+                metrics[f"Precision@{k}"] = precision_at_k(labels_topk_filtered, logits_topk_filtered, k)
+                metrics[f"NDCG@{k}"] = ndcg_score(y_true, y_score, k=k)
 
     return metrics
 

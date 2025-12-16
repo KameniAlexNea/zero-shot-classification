@@ -1,9 +1,6 @@
 import os
 
-os.environ["WANDB_PROJECT"] = "zero-shot-classification"
-os.environ["WANDB_WATCH"] = "none"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import importlib
 import json
@@ -38,7 +35,7 @@ class EvaluationConfig:
     """Configuration for evaluation."""
 
     model_path: str = "results/best_model/model"
-    model_class: str = "BertPreTrainedModel"
+    model_class: str = "DebertaV2PreTrainedModel"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20
@@ -71,10 +68,12 @@ class ModelEvaluator:
                 self.config.model_path, use_fast=self.config.use_fast_tokenizer
             )
 
+            # Use from_pretrained_with_tokenizer to properly handle custom tokens
             model = create_gli_znet_for_sequence_classification(
                 get_transformers_class(self.config.model_class)
-            ).from_pretrained(
+            ).from_pretrained_with_tokenizer(
                 self.config.model_path,
+                tokenizer=tokenizer,
             )
             model.to(self.device)
             model.eval()
@@ -86,7 +85,7 @@ class ModelEvaluator:
             logger.error(f"Failed to load model: {e}")
             raise
 
-    def predict_batch(self, inputs: dict[str, torch.Tensor]) -> List[List[float]]:
+    def predict_batch(self, inputs: Dict[str, torch.Tensor]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
         with torch.no_grad():
@@ -103,20 +102,20 @@ class ModelEvaluator:
 
         all_predictions = []
         all_true_labels = []
+        
+        # Calculate correct total batches
+        total_batches = (len(dataset) + self.config.batch_size - 1) // self.config.batch_size
 
         for batch in tqdm(
-            dataset.iter(batch_size=self.config.batch_size), desc="Evaluating", total=len(dataset) // self.config.batch_size + 1
+            dataset.iter(batch_size=self.config.batch_size), 
+            desc="Evaluating", 
+            total=total_batches
         ):
-            try:
-                labels = batch.pop("labels")
-                logits = self.predict_batch(batch)
+            labels = batch.pop("labels")
+            logits = self.predict_batch(batch)
 
-                all_predictions.append([np.array(logit) for logit in logits])
-                all_true_labels.append([lab.numpy() for lab in labels])
-
-            except Exception as e:
-                logger.error(f"Error processing batch: {e}")
-                raise e
+            all_predictions.append([np.array(logit) for logit in logits])
+            all_true_labels.append([lab.numpy() for lab in labels])
 
         # Calculate comprehensive metrics
         metrics = compute_topk_metrics((all_predictions, all_true_labels), True)
@@ -218,16 +217,21 @@ def get_args():
         default=0,
         help="Batch size for evaluation.",
     )
+    args.add_argument(
+        "--batch_size",
+        type=int,
+        default=128,
+        help="Batch size for evaluation.",
+    )
     args = args.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
     return args
 
 
-args = get_args()
-
-
 def main():
     """Main evaluation function."""
+    args = get_args()
+    
     config = EvaluationConfig(
         model_path=args.model_path,
         threshold=args.threshold,
@@ -236,6 +240,7 @@ def main():
         use_fast_tokenizer=args.use_fast_tokenizer,
         activation=args.activation,
         max_labels=args.max_labels,
+        batch_size=args.batch_size,
     )
 
     # Initialize evaluator
