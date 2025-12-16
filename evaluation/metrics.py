@@ -28,27 +28,40 @@ def flatten_nested_lists(data: list) -> list:
 
 
 def prepare_arrays(logits: list, labels: list) -> tuple[np.ndarray, np.ndarray]:
-    """Convert lists to numpy arrays and ensure proper shape."""
+    """Convert lists to numpy arrays and ensure proper shape.
+
+    For variable-length arrays (different number of candidates per example),
+    pad to the maximum length to create rectangular arrays.
+    """
     logits = flatten_nested_lists(logits)
     labels = flatten_nested_lists(labels)
 
     # Filter out empty predictions/labels
-    valid_pairs = [(log, lab) for log, lab in zip(logits, labels) if len(log) > 0 and len(lab) > 0]
-    
+    valid_pairs = [
+        (log, lab) for log, lab in zip(logits, labels) if len(log) > 0 and len(lab) > 0
+    ]
+
     if not valid_pairs:
         raise ValueError("No valid examples with labels found in the dataset")
-    
-    logits, labels = zip(*valid_pairs)
-    
-    # Flatten all predictions/labels into 1D arrays (for binary classification at label level)
-    logits_flat = np.concatenate([np.asarray(log).flatten() for log in logits])
-    labels_flat = np.concatenate([np.asarray(lab).flatten() for lab in labels])
-    
-    # Reshape to (n_samples, 1) for compatibility with metrics
-    logits = logits_flat.reshape(-1, 1)
-    labels = labels_flat.reshape(-1, 1)
 
-    return logits, labels
+    logits, labels = zip(*valid_pairs)
+
+    # Convert to numpy arrays
+    logits = [np.asarray(log).flatten() for log in logits]
+    labels = [np.asarray(lab).flatten() for lab in labels]
+
+    # Find maximum length
+    max_len = max(max(len(log) for log in logits), max(len(lab) for lab in labels))
+
+    # Pad arrays to same length (pad with -1 for labels, 0 for logits)
+    logits_padded = np.array(
+        [np.pad(log, (0, max_len - len(log)), constant_values=0) for log in logits]
+    )
+    labels_padded = np.array(
+        [np.pad(lab, (0, max_len - len(lab)), constant_values=-1) for lab in labels]
+    )
+
+    return logits_padded, labels_padded
 
 
 def apply_sigmoid(logits: np.ndarray) -> np.ndarray:
@@ -210,31 +223,45 @@ def compute_metrics(
     # Prepare data
     logits, labels = prepare_arrays(logits, labels)
 
+    # Create mask for valid entries (labels != -1 for padding)
+    valid_mask = labels != -1
+
+    # Filter to only valid entries
+    logits_valid = logits[valid_mask]
+    labels_valid = labels[valid_mask]
+
+    # Reshape if needed
+    if logits_valid.ndim == 1:
+        logits_valid = logits_valid.reshape(-1, 1)
+        labels_valid = labels_valid.reshape(-1, 1)
+
     # Apply sigmoid if needed
     if not activated:
-        logits = apply_sigmoid(logits)
+        logits_valid = apply_sigmoid(logits_valid)
 
     # Get predictions
-    predictions = get_predictions(logits, threshold)
+    predictions = get_predictions(logits_valid, threshold)
 
     # Determine problem type and compute appropriate metrics
-    if is_multilabel(labels):
-        if is_single_label_multiclass(labels):
+    if is_multilabel(labels_valid):
+        if is_single_label_multiclass(labels_valid):
             # Single-label multi-class case (one-hot encoded)
-            metrics = compute_basic_metrics(labels, predictions, average="micro")
+            metrics = compute_basic_metrics(labels_valid, predictions, average="micro")
             metrics["match_accuracy"] = (
-                labels.argmax(axis=1) == logits.argmax(axis=1)
+                labels_valid.argmax(axis=1) == logits_valid.argmax(axis=1)
             ).mean()
         else:
             # True multi-label case
-            metrics = compute_multilabel_metrics(labels, predictions, logits)
+            metrics = compute_multilabel_metrics(
+                labels_valid, predictions, logits_valid
+            )
     else:
         # Binary classification
-        metrics = compute_binary_metrics(labels, predictions, logits)
+        metrics = compute_binary_metrics(labels_valid, predictions, logits_valid)
 
     # Add diagnostic stats if requested
     if activated:
-        metrics.update(compute_diagnostic_stats(labels, logits, threshold))
+        metrics.update(compute_diagnostic_stats(labels_valid, logits_valid, threshold))
 
     return metrics
 
@@ -310,13 +337,15 @@ def prepare_topk_data(
 
     logits = [j.reshape(-1) for j in logits]
     labels = [j.reshape(-1) for j in labels]
-    
+
     # Filter out empty arrays (size 0)
-    valid_pairs = [(log, lab) for log, lab in zip(logits, labels) if log.size > 0 and lab.size > 0]
-    
+    valid_pairs = [
+        (log, lab) for log, lab in zip(logits, labels) if log.size > 0 and lab.size > 0
+    ]
+
     if not valid_pairs:
         return [], []
-    
+
     logits, labels = zip(*valid_pairs)
     logits = list(logits)
     labels = list(labels)
@@ -360,19 +389,27 @@ def compute_topk_metrics(
     if valid_k and n_labels > 1 and labels_topk:
         # Ensure all arrays have the same shape before vstacking
         expected_size = labels_topk[0].shape[0]
-        valid_indices = [i for i, lab in enumerate(labels_topk) if lab.shape[0] == expected_size]
-        
+        valid_indices = [
+            i for i, lab in enumerate(labels_topk) if lab.shape[0] == expected_size
+        ]
+
         if valid_indices:
             labels_topk_filtered = [labels_topk[i] for i in valid_indices]
             logits_topk_filtered = [logits_topk[i] for i in valid_indices]
-            
+
             y_true = np.vstack(labels_topk_filtered)
             y_score = np.vstack(logits_topk_filtered)
-            
+
             for k in valid_k:
-                metrics[f"HR@{k}"] = hit_rate_at_k(labels_topk_filtered, logits_topk_filtered, k)
-                metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(labels_topk_filtered, logits_topk_filtered, k)
-                metrics[f"Precision@{k}"] = precision_at_k(labels_topk_filtered, logits_topk_filtered, k)
+                metrics[f"HR@{k}"] = hit_rate_at_k(
+                    labels_topk_filtered, logits_topk_filtered, k
+                )
+                metrics[f"MRR@{k}"] = mean_reciprocal_rank_at_k(
+                    labels_topk_filtered, logits_topk_filtered, k
+                )
+                metrics[f"Precision@{k}"] = precision_at_k(
+                    labels_topk_filtered, logits_topk_filtered, k
+                )
                 metrics[f"NDCG@{k}"] = ndcg_score(y_true, y_score, k=k)
 
     return metrics

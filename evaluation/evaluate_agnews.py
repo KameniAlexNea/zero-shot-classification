@@ -68,6 +68,9 @@ class ModelEvaluator:
                 self.config.model_path, use_fast=self.config.use_fast_tokenizer
             )
 
+            # Ensure max_length is set to 512 to prevent sequences exceeding model limits
+            tokenizer.max_length = 512
+
             # Use from_pretrained_with_tokenizer to properly handle custom tokens
             model = create_gli_znet_for_sequence_classification(
                 get_transformers_class(self.config.model_class)
@@ -102,14 +105,16 @@ class ModelEvaluator:
 
         all_predictions = []
         all_true_labels = []
-        
+
         # Calculate correct total batches
-        total_batches = (len(dataset) + self.config.batch_size - 1) // self.config.batch_size
+        total_batches = (
+            len(dataset) + self.config.batch_size - 1
+        ) // self.config.batch_size
 
         for batch in tqdm(
-            dataset.iter(batch_size=self.config.batch_size), 
-            desc="Evaluating", 
-            total=total_batches
+            dataset.iter(batch_size=self.config.batch_size),
+            desc="Evaluating",
+            total=total_batches,
         ):
             labels = batch.pop("labels")
             logits = self.predict_batch(batch)
@@ -231,7 +236,7 @@ def get_args():
 def main():
     """Main evaluation function."""
     args = get_args()
-    
+
     config = EvaluationConfig(
         model_path=args.model_path,
         threshold=args.threshold,

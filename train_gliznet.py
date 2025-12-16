@@ -130,6 +130,7 @@ def main():
         model_args.model_name,
         use_fast=model_args.use_fast_tokenizer,
         model_max_length=model_args.model_max_length,
+        max_length=model_args.model_max_length,
         cls_separator_token=model_args.cls_separator_token,
     )
     logger.info(

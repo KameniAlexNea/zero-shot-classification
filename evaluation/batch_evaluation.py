@@ -5,7 +5,6 @@ This script runs evaluations in parallel across available GPUs.
 """
 
 import argparse
-import json
 import os
 import queue
 import subprocess
@@ -243,17 +242,28 @@ def progress_monitor(
 
 def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Batch evaluation for models using multiple GPUs")
+    parser = argparse.ArgumentParser(
+        description="Batch evaluation for models using multiple GPUs"
+    )
     parser.add_argument("--model_path", nargs="*", help="Model paths to evaluate")
-    parser.add_argument("--num_gpus", type=int, default=2, help="Number of GPUs (default: 2)")
-    parser.add_argument("--model_class", type=str, default="DebertaV2PreTrainedModel", help="Model class")
+    parser.add_argument(
+        "--num_gpus", type=int, default=2, help="Number of GPUs (default: 2)"
+    )
+    parser.add_argument(
+        "--model_class",
+        type=str,
+        default="DebertaV2PreTrainedModel",
+        help="Model class",
+    )
     return parser.parse_args()
 
 
 def load_models_config(args) -> List[Dict]:
     """Load model configurations."""
     if args.model_path:
-        return [{"model_name": path, "name": Path(path).name} for path in args.model_path]
+        return [
+            {"model_name": path, "name": Path(path).name} for path in args.model_path
+        ]
     return DEFAULT_MODELS
 
 
@@ -262,12 +272,12 @@ def main():
     Main function to run batch evaluation with dynamic task assignment.
     """
     args = parse_args()
-    
+
     print("🚀 Starting batch evaluation for cross-encoder models", os.getpid())
-    
+
     # Load model configurations
     models = load_models_config(args)
-    
+
     print(f"📊 Total models: {len(models)}")
     print(f"📊 Total datasets: {len(DATASETS)}")
     print(f"🔧 Model class: {args.model_class}")

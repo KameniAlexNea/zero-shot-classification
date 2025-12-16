@@ -98,7 +98,9 @@ class ModelEvaluator:
         all_true_labels = []
 
         for batch in tqdm(
-            dataset.iter(batch_size=self.config.batch_size), desc="Evaluating", total=len(dataset) // self.config.batch_size + 1
+            dataset.iter(batch_size=self.config.batch_size),
+            desc="Evaluating",
+            total=len(dataset) // self.config.batch_size + 1,
         ):
             try:
                 labels = batch.pop("labels")
