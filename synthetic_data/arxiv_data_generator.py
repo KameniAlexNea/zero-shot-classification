@@ -28,71 +28,42 @@ class SyntheticDataGenerator(BaseModel):
 
 def generate_prompt(abstract: str, num_samples: int = 3) -> str:
     """Generate prompt for creating zero-shot training data from abstract."""
-    return f"""Developer: # Role and Objective
-Generate exactly {num_samples} diverse text samples, each semantically related to the provided scientific abstract, for use in zero-shot classification training.
+    return f"""Given the following scientific abstract, generate **exactly {num_samples}** diverse text samples for zero-shot classification training that are semantically related to the abstract's content.
 
 **ABSTRACT**:
 {abstract}
 
-# Instructions
-- Produce detailed sentences or paragraphs connected to the abstract's domain and content.
-- Ensure diversity in text types, such as research questions, hypotheses, methods descriptions, results summaries, and implications.
-- Vary writing styles among generated samples, using technical, explanatory, questioning, or assertive tones.
-- Each sample must explore a different aspect or perspective derived from the abstract.
-- If the abstract does not support producing {num_samples} high-quality, distinct samples due to brevity or lack of specificity, generate as many as possible and output a complete JSON array with the actual count produced.
+**TEXT REQUIREMENTS**:
+- Generate detailed sentences/paragraphs related to the abstract's topic and domain
+- Create diverse text types: research questions, hypotheses, methods descriptions, results summaries, implications, etc.
+- Vary writing styles: technical, explanatory, questioning, assertive
+- Each text should capture different aspects or perspectives from the abstract
 
-## Labeling Rules
-- For every sample, create 5-15 nuanced and descriptive labels requiring genuine subject understanding (single words or short phrases).
-  - Include aspects like scientific domain, methodology, subject, research type, tone, and complexity.
-  - Avoid labels that simply echo obvious keywords.
-  - Emphasize research approach nuance, domain specificity, technical depth, or application area.
-- For each sample, create 5-15 challenging negative labels ('not_labels') that are plausible but incorrect.
-  - Draw from related, but distinctly different, fields or methodologies.
-  - Ensure they require careful analysis to distinguish from correct labels.
+**LABELS**:
+- Create 5-15 descriptive labels per sample that require deep understanding
+- Include: scientific domain, methodology, subject matter, research type, tone, complexity level
+- Avoid obvious keyword-based labels
+- Focus on nuanced aspects: research approach, field specificity, technical level, application area
 
-## Output Specification
-- Output only a valid JSON array (no extra formatting or non-JSON text), where each object contains:
-  - "sentence": string (the generated sample, sentence or paragraph)
-  - "labels": array of 5-15 strings (each a word or short phrase)
-  - "not_labels": array of 5-15 strings (each a word or short phrase)
-- Preserve sample generation order (no post-generation sorting).
+**NOT_LABELS** (Hard Negatives):
+- Create 5-15 challenging negative labels that are plausible but incorrect
+- Should be from related but different scientific domains or methodologies
+- Require deep analysis to distinguish from correct labels
 
-After generation, briefly validate that all samples meet instructional requirements (diversity, relevance, correct output schema, proper labeling) before final output.
+**OUTPUT**: Return ONLY a valid JSON array (no markdown, no extra text) with objects containing:
+- "sentence": generated text related to the abstract
+- "labels": list of applicable descriptive labels
+- "not_labels": list of challenging hard negatives
 
-## Example Output
+Example output format:
 [
-  {
-    "sentence": "What are the primary mechanisms through which gravitational waves are detected in merging black hole systems?",
-    "labels": ["astrophysics", "theoretical research", "gravitational waves", "black holes", "technical question"],
-    "not_labels": ["experimental physics", "particle physics", "biology", "chemistry", "casual language"]
-  },
-  {
-    "sentence": "This research examines the computational models used for simulating high-energy astrophysical events.",
-    "labels": ["astrophysics", "computational modeling", "simulation", "high-energy events", "technical summary"],
-    "not_labels": ["ecology", "laboratory experiment", "clinical study", "everyday language", "literature review"]
-  }
+  {{
+    "sentence": "What are the primary mechanisms through which...",
+    "labels": ["astrophysics", "theoretical_research", "gravitational_waves", "black_holes", "technical_question"],
+    "not_labels": ["experimental_physics", "particle_physics", "biology", "chemistry", "casual_language"]
+  }}
 ]
 """
-
-
-def parse_json_response(response_text: str) -> List[Dict]:
-    """Parse JSON response, handling markdown code blocks and other formatting."""
-    text = response_text.strip()
-
-    # Remove markdown code blocks if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
-
-    # Remove language identifier
-    text = text.replace("```json", "").replace("```", "").strip()
-
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, list) else []
-    except json.JSONDecodeError as e:
-        logger.warning(f"JSON parse error: {e}")
-        return []
 
 
 def generate_synthetic_data(
@@ -246,7 +217,7 @@ def generate_dataset_from_abstracts(
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    if not num_abstracts:
+    if not num_abstracts or num_abstracts < 0:
         num_abstracts = len(dataset)
 
     # Randomly sample abstracts from the dataset
