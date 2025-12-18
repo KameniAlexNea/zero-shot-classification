@@ -123,7 +123,7 @@ def prepare_dataset(
         tokenizer=tokenizer,
         max_labels=data_config.max_labels,
         shuffle_labels=data_config.shuffle_labels,
-        as_transform=True,  # Use lazy transform for efficiency
+        as_transform=True,
     )
 
     print(f"✓ Dataset prepared: {len(tokenized_dataset)} samples")

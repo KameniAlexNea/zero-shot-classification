@@ -320,7 +320,7 @@ class GliZNETTokenizer:
             "input_ids": input_ids_batch,
             "attention_mask": attention_mask_batch,
             "lmask": lmask_batch,
-            "num_labels_fitted": num_labels_fitted,  # NEW: Return count of fitted labels
+            "num_labels_fitted": num_labels_fitted,
         }
         result.update(self._to_tensors(result))
         return result

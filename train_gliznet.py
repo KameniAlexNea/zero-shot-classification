@@ -186,11 +186,6 @@ def main():
 
     # Configure metrics computation
     metrics = compute_metrics
-    if len(train_dataset) > 100_000:
-        logger.info(
-            "Disabling metrics computation for large dataset to speed up training"
-        )
-        metrics = None
 
     # Initialize trainer
     logger.info("Initializing Trainer...")
