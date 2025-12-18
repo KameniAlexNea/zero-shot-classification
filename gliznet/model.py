@@ -16,6 +16,7 @@ class GliZNetOutput(ModelOutput):
     hidden_states: Optional[torch.FloatTensor] = None
     batch_indices: Optional[torch.Tensor] = None
     label_ids: Optional[torch.Tensor] = None
+    label_representations: Optional[torch.Tensor] = None
 
 
 class GliZNetSimilarityHead(nn.Module):
@@ -30,6 +31,9 @@ class GliZNetSimilarityHead(nn.Module):
             self.classifier = None
 
     def forward(self, text_repr, label_repr):
+        text_repr = F.normalize(text_repr, p=2, dim=-1)
+        label_repr = F.normalize(label_repr, p=2, dim=-1)
+
         if self.config.similarity_metric == "dot":
             return (text_repr * label_repr).mean(dim=1, keepdim=True)
         elif self.config.similarity_metric == "bilinear":
@@ -61,7 +65,7 @@ class GliZNetRepresentationAggregator(nn.Module):
         cls_for_separators = cls_tokens[separator_batch_indices]
         logits = self.similarity_head(cls_for_separators, separator_hidden)
 
-        return logits, separator_batch_indices, label_ids
+        return logits, separator_batch_indices, label_ids, separator_hidden
 
     def _compute_original(self, hidden_states, lmask, cls_attn_weights):
         cls_tokens = self.cls_proj(hidden_states[:, 0])
@@ -118,7 +122,7 @@ class GliZNetRepresentationAggregator(nn.Module):
         cls_for_labels = cls_tokens[batch_indices]
         logits = self.similarity_head(cls_for_labels, label_representations)
 
-        return logits, batch_indices, out_label_ids
+        return logits, batch_indices, out_label_ids, label_representations
 
 
 class GliZNetLoss(nn.Module):
@@ -127,7 +131,7 @@ class GliZNetLoss(nn.Module):
         self.config = config
         self.margin = config.margin
 
-    def forward(self, logits: torch.Tensor, labels: torch.Tensor, batch_indices: torch.Tensor, label_ids: torch.Tensor):
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor, batch_indices: torch.Tensor, label_ids: torch.Tensor, label_representations: Optional[torch.Tensor] = None):
         if labels is None:
             return None
 
@@ -174,9 +178,10 @@ class GliZNetLoss(nn.Module):
 
         loss = bce_loss + contrastive_loss
 
-        if self.config.barlow_loss_weight > 0:
+        if self.config.barlow_loss_weight > 0 and label_representations is not None:
+            valid_representations = label_representations[valid_mask.view(-1)]
             loss = loss + self.config.barlow_loss_weight * self._compute_barlow_loss(
-                valid_logits
+                valid_representations
             )
 
         return loss
@@ -192,13 +197,21 @@ class GliZNetLoss(nn.Module):
         max_neg = negative_logits.max()
         return F.relu(self.margin + max_neg - min_pos)
 
-    def _compute_barlow_loss(self, logits, coef=0.005):
-        if logits.numel() == 0:
-            return torch.tensor(0.0, device=logits.device)
-        z = logits.unsqueeze(0) if logits.dim() == 1 else logits
+    def _compute_barlow_loss(self, z, coef=0.005):
+        if z.numel() == 0:
+            return torch.tensor(0.0, device=z.device)
+        
+        # z is (N, D)
+        # Normalize along batch dimension
         z_norm = (z - z.mean(dim=0)) / (z.std(dim=0) + 1e-6)
+        
+        # Cross-correlation matrix (D, D)
         c = torch.mm(z_norm.T, z_norm) / z_norm.shape[0]
-        off_diag = c.flatten()[1:].view(c.size(0), -1).pow_(2).sum()
+        
+        # Barlow Twins loss: off-diagonal should be close to 0
+        # We sum the squares of the off-diagonal elements
+        off_diag = c.pow(2).sum() - torch.diagonal(c).pow(2).sum()
+        
         return coef * off_diag
 
 
@@ -373,13 +386,13 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 output_hidden_states,
             )
 
-            logits, batch_indices, label_ids = self.aggregator(
+            logits, batch_indices, label_ids, label_representations = self.aggregator(
                 hidden_states, lmask, attentions
             )
 
             loss = None
             if labels is not None:
-                loss = self.loss_module(logits, labels, batch_indices, label_ids)
+                loss = self.loss_module(logits, labels, batch_indices, label_ids, label_representations)
 
             if not return_dict:
                 output = (logits, None)
@@ -391,6 +404,7 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 hidden_states=None,
                 batch_indices=batch_indices,
                 label_ids=label_ids,
+                label_representations=label_representations,
             )
 
         def _get_hidden_states(
