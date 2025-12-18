@@ -69,7 +69,7 @@ nohup uv run train_gliznet.py \
     --report_to wandb \
     --remove_unused_columns False \
     \
-    &> nohup1.out &
+    &> nohup.out &
 
 echo "Training started in background (PID: $!)"
-echo "Monitor progress with: tail -f nohup1.out"
+echo "Monitor progress with: tail -f nohup.out"

@@ -206,7 +206,7 @@ class GliZNetLoss(nn.Module):
         # BCE Loss
         bce_loss: torch.Tensor = (
             F.binary_cross_entropy_with_logits(
-                valid_logits, valid_targets, reduction=None
+                valid_logits, valid_targets, reduction='none'
             ).mean()
             * self.config.scale_loss
         )
@@ -337,6 +337,7 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 separation_loss_weight=separation_loss_weight,
                 positive_logit_margin=positive_logit_margin,
                 negative_logit_margin=negative_logit_margin,
+                scale_loss=scale_loss,
             )
 
             self.scale_loss = scale_loss
@@ -398,6 +399,7 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
             separation_loss_weight,
             positive_logit_margin,
             negative_logit_margin,
+            scale_loss,
         ):
             config.projected_dim = getattr(config, "projected_dim", projected_dim)
             config.similarity_metric = getattr(
@@ -427,6 +429,7 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
             config.negative_logit_margin = getattr(
                 config, "negative_logit_margin", negative_logit_margin
             )
+            config.scale_loss = getattr(config, "scale_loss", scale_loss)
             self.config = config
 
         def _setup_layers(self):
@@ -500,8 +503,8 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 loss=loss,
                 logits=logits,
                 hidden_states=None,
-                batch_indices=batch_indices,
-                label_ids=label_ids,
+                batch_indices=None,
+                label_ids=None,
             )
 
         def _get_hidden_states(
