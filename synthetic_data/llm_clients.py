@@ -1,10 +1,10 @@
 import random
+import signal
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional
-import signal
-from contextlib import contextmanager
 
 from groq import Groq
 from loguru import logger

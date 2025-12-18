@@ -1,0 +1,76 @@
+{
+  "description": "Example GliZNet training configuration with separator pooling",
+  
+  "model": {
+    "model_name": "microsoft/deberta-v3-small",
+    "model_class": "DebertaV2PreTrainedModel",
+    "projected_dim": 1024,
+    "similarity_metric": "dot_learning",
+    "dropout_rate": 0.1
+  },
+  
+  "loss": {
+    "scale_loss": 10.0,
+    "margin": 0.1,
+    "temperature": 1.0,
+    "barlow_loss_weight": 0.1,
+    "contrastive_loss_weight": 1.0
+  },
+  
+  "pooling": {
+    "use_separator_pooling": true,
+    "cls_separator_token": "[LAB]",
+    "note": "Set use_separator_pooling=false and cls_separator_token=';' for mean pooling"
+  },
+  
+  "data": {
+    "dataset_path": "alexneakameni/ZSHOT-HARDSET",
+    "dataset_name": "triplet",
+    "max_labels": 20,
+    "shuffle_labels": true,
+    "min_label_length": 2,
+    "data_seed": 42
+  },
+  
+  "tokenizer": {
+    "use_fast_tokenizer": true,
+    "model_max_length": 512
+  },
+  
+  "training": {
+    "output_dir": "results/deberta-v3-small-sep-pooling",
+    "run_name": "gliznet_training",
+    "num_train_epochs": 4,
+    "per_device_train_batch_size": 128,
+    "per_device_eval_batch_size": 128,
+    "learning_rate": 1e-4,
+    "warmup_ratio": 0.01,
+    "weight_decay": 1e-3,
+    "lr_scheduler_type": "cosine",
+    "early_stopping_patience": 3
+  },
+  
+  "evaluation": {
+    "eval_strategy": "steps",
+    "eval_steps": 0.25,
+    "save_steps": 0.25,
+    "save_total_limit": 2,
+    "load_best_model_at_end": true,
+    "metric_for_best_model": "eval_loss",
+    "eval_on_start": true
+  },
+  
+  "performance": {
+    "fp16": true,
+    "auto_find_batch_size": true,
+    "dataloader_num_workers": 8,
+    "dataloader_pin_memory": true,
+    "dataloader_prefetch_factor": 2,
+    "dataloader_drop_last": true
+  },
+  
+  "logging": {
+    "logging_steps": 100,
+    "report_to": "wandb"
+  }
+}

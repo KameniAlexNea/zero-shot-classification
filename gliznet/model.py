@@ -26,7 +26,25 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             dropout_rate: float = 0.1,
             scale_loss: float = 10.0,
             margin: float = 0.1,
+            barlow_loss_weight: float = 0.1,
+            contrastive_loss_weight: float = 1.0,
+            use_separator_pooling: bool = False,
         ):
+            """Initialize GliZNet model.
+
+            Args:
+                config: BERT configuration
+                projected_dim: Dimension for projection layers (None = use hidden_size)
+                similarity_metric: How to compute similarity ('dot', 'bilinear', 'dot_learning')
+                temperature: Temperature for contrastive loss scaling
+                dropout_rate: Dropout probability
+                scale_loss: Multiplier for BCE loss
+                margin: Margin for contrastive loss
+                barlow_loss_weight: Weight for Barlow Twins regularization loss
+                contrastive_loss_weight: Weight for hard negative mining loss
+                use_separator_pooling: If True, use separator token embeddings directly;
+                    if False, average label token embeddings (requires custom separator token)
+            """
             super().__init__(config)
             if similarity_metric not in ["dot", "bilinear", "dot_learning"]:
                 raise ValueError(
@@ -39,6 +57,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 similarity_metric,
                 temperature,
                 dropout_rate,
+                barlow_loss_weight,
+                contrastive_loss_weight,
+                use_separator_pooling,
             )
 
             self.scale_loss = scale_loss
@@ -81,7 +102,8 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
                 new_vocab_size = tokenizer.get_vocab_size()
                 model.resize_token_embeddings(new_vocab_size)
                 model.config.vocab_size = new_vocab_size
-                model.config.resized_token_embeddings = True
+                # Use separator pooling when custom separator tokens are present
+                model.config.use_separator_pooling = True
 
             return model
 
@@ -92,6 +114,9 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             similarity_metric,
             temperature,
             dropout_rate,
+            barlow_loss_weight,
+            contrastive_loss_weight,
+            use_separator_pooling,
         ):
             config.projected_dim = getattr(config, "projected_dim", projected_dim)
             config.similarity_metric = getattr(
@@ -99,6 +124,15 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             )
             config.temperature = getattr(config, "temperature", temperature)
             config.dropout_rate = getattr(config, "dropout_rate", dropout_rate)
+            config.barlow_loss_weight = getattr(
+                config, "barlow_loss_weight", barlow_loss_weight
+            )
+            config.contrastive_loss_weight = getattr(
+                config, "contrastive_loss_weight", contrastive_loss_weight
+            )
+            config.use_separator_pooling = getattr(
+                config, "use_separator_pooling", use_separator_pooling
+            )
             self.config = config
 
         def _setup_layers(self):
@@ -154,11 +188,16 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             outputs_logits = self._compute_batch_logits(
                 hidden_states, lmask, attentions
             )
-            loss = (
-                self._compute_loss(outputs_logits, labels)
-                if labels is not None
-                else None
-            )
+            loss = None
+            if labels is not None:
+                loss = self._compute_loss(outputs_logits, labels)
+                # Add Barlow regularization if weight > 0
+                if self.config.barlow_loss_weight > 0:
+                    loss = (
+                        loss
+                        + self.config.barlow_loss_weight
+                        * self._compute_barlow_loss(outputs_logits)
+                    )
 
             if not return_dict:
                 output = (outputs_logits, None)
@@ -222,11 +261,11 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             """
             Compute logits between [CLS] and label representations per sample.
 
-            If resized_token_embeddings=True, uses separator token embeddings directly.
-            Otherwise, uses averaged label token embeddings (original implementation).
+            If use_separator_pooling=True, uses separator token embeddings directly.
+            Otherwise, uses averaged label token embeddings (default implementation).
             """
-            # Check if we should use optimized separator token approach
-            if getattr(self.config, "resized_token_embeddings", False):
+            # Check if we should use separator token pooling approach
+            if getattr(self.config, "use_separator_pooling", False):
                 return self._compute_batch_logits_with_separator_tokens(
                     hidden_states, lmask, cls_attn_weights
                 )
@@ -376,16 +415,29 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
         def _compute_loss(
             self, outputs_logits: torch.Tensor, labels: torch.Tensor
         ) -> Optional[torch.Tensor]:
+            """Compute composite loss with BCE, contrastive, and optional Barlow components.
+
+            Args:
+                outputs_logits: Model predictions (num_labels, 1)
+                labels: Ground truth labels (batch_size, max_labels) with -100 for padding
+
+            Returns:
+                Combined loss tensor
+            """
             # Filter out padding values (-100) from labels
-            temperature = 10 / len(labels)
             valid_mask = labels != -100
+            num_valid_labels = valid_mask.sum().item()
+
+            # Fix: temperature should scale with total number of valid labels, not batch size
+            temperature = self.config.temperature * (10.0 / max(num_valid_labels, 1))
+
             valid_labels = labels[valid_mask].float().view(-1, 1)
 
-            # Original BCE loss
+            # BCE loss component
             loss_values: torch.Tensor = self.loss_fn(outputs_logits, valid_labels)
             bce_loss = loss_values.mean() * self.scale_loss
 
-            # Contrastive loss component - using torch.split
+            # Contrastive loss component (hard negative mining)
             valid_labels_flat = valid_labels.squeeze(-1)
             sigmoid_logits = torch.sigmoid(outputs_logits.squeeze(-1)).clamp(
                 min=1e-6, max=1 - 1e-6
@@ -396,12 +448,34 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             logits_splits = torch.split(sigmoid_logits, split_sizes)
             labels_splits = torch.split(valid_labels_flat, split_sizes)
 
-            total_contrastive_loss = (
+            contrastive_loss = (
                 sum(map(self._compute_contrastive_loss, logits_splits, labels_splits))
                 * temperature
+                * self.config.contrastive_loss_weight
             )
 
-            return bce_loss + total_contrastive_loss
+            return bce_loss + contrastive_loss
+
+        def _compute_barlow_loss(
+            self, logits: torch.Tensor, coef: float = 0.005
+        ) -> torch.Tensor:
+            """
+            Compute contrastive loss for a single batch of logits and labels.
+            This is a simplified version that handles the case where there are no valid comparisons.
+            """
+            if logits.numel() == 0:
+                return torch.tensor(0.0, device=logits.device)
+            # Barlow Twins loss implementation
+            # Normalize logits
+            z = logits.unsqueeze(0) if logits.dim() == 1 else logits
+            z_norm = (z - z.mean(dim=0)) / (z.std(dim=0) + 1e-6)
+
+            # Compute cross-correlation matrix
+            c = torch.mm(z_norm.T, z_norm) / z_norm.shape[0]
+
+            # Barlow Twins loss: on-diagonal should be close to 1, off-diagonal close to 0
+            off_diag = c.flatten()[1:].view(c.size(0), -1).pow_(2).sum()
+            return coef * off_diag
 
         def _compute_contrastive_loss(
             self, logits: torch.Tensor, labels: torch.Tensor
@@ -428,6 +502,17 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
             lmask: torch.Tensor,
             activation_fn: Optional[str] = "sigmoid",
         ) -> List[List[float]]:
+            """Predict label scores for input samples.
+
+            Args:
+                input_ids: Token IDs (batch_size, seq_len)
+                attention_mask: Attention mask (batch_size, seq_len)
+                lmask: Label mask indicating label positions (batch_size, seq_len)
+                activation_fn: Activation function to apply ('sigmoid' or 'softmax')
+
+            Returns:
+                List of score lists, one per sample in the batch
+            """
             self.eval()
             outputs = self.forward(
                 input_ids=input_ids, attention_mask=attention_mask, lmask=lmask
@@ -443,20 +528,20 @@ def create_gli_znet_for_sequence_classification(base_class=BertPreTrainedModel):
 
             for batch_idx in range(batch_size):
                 sample_lmask = lmask[batch_idx]
-                num_labels = len(
-                    torch.unique(sample_lmask)[torch.unique(sample_lmask) > 0]
-                )
+                # More efficient: use max instead of unique
+                num_labels = sample_lmask.max().item()
 
                 if num_labels > 0:
                     sample_logits = logits_tensor[logit_idx : logit_idx + num_labels]
                     logit_idx += num_labels
 
-                    activate = (
-                        torch.sigmoid
-                        if activation_fn == "sigmoid"
-                        else lambda x: torch.softmax(x, dim=0)
-                    )
-                    results.append(activate(sample_logits.squeeze(-1)).cpu().tolist())
+                    # Apply activation function
+                    if activation_fn == "sigmoid":
+                        scores = torch.sigmoid(sample_logits.squeeze(-1))
+                    else:
+                        scores = torch.softmax(sample_logits.squeeze(-1), dim=0)
+
+                    results.append(scores.cpu().tolist())
                 else:
                     results.append([])
 

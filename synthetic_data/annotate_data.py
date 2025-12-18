@@ -1,9 +1,9 @@
-import ollama
-import datasets
 import json
 import os
+
+import datasets
+import ollama
 from tqdm import tqdm
-from llm_output_parser import parse_json
 
 data = datasets.load_dataset("sentence-transformers/wikihow", split="train")
 
@@ -50,16 +50,12 @@ def generate_labels_for_text(text: str):
         if len(lines) >= 2:
             positive_labels = [
                 label.strip()
-                for label in lines[0]
-                .split(":")[-1].strip()
-                .split(",")
+                for label in lines[0].split(":")[-1].strip().split(",")
                 if label.replace("- ", "").strip()
             ]
             negative_labels = [
                 label.strip()
-                for label in lines[1]
-                .split(":")[-1].strip()
-                .split(",")
+                for label in lines[1].split(":")[-1].strip().split(",")
                 if label.replace("- ", "").strip()
             ]
             return positive_labels, negative_labels
