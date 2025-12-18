@@ -84,7 +84,6 @@ def main():
         scale_loss=model_args.scale_loss,
         margin=model_args.margin,
         temperature=model_args.temperature,
-        barlow_loss_weight=model_args.barlow_loss_weight,
         contrastive_loss_weight=model_args.contrastive_loss_weight,
         use_separator_pooling=model_args.use_separator_pooling,
     )

@@ -19,11 +19,13 @@ class GlizNetConfig(DebertaV2Config):
     temperature: float = 1.0
     dropout_rate: float = 0.1
     scale_loss: float = 10.0
-    barlow_loss_weight: float = 0.1
     contrastive_loss_weight: float = 1.0
     use_separator_pooling: bool = False
     temperature_scale_base: float = 10.0
     use_projection_layernorm: bool = True
+    separation_loss_weight: float = 0.1
+    positive_logit_margin: float = 1.0
+    negative_logit_margin: float = -1.0
 
 
 @dataclass
@@ -33,7 +35,6 @@ class GliZNetOutput(ModelOutput):
     hidden_states: Optional[torch.FloatTensor] = None
     batch_indices: Optional[torch.Tensor] = None
     label_ids: Optional[torch.Tensor] = None
-    label_representations: Optional[torch.Tensor] = None
 
 
 class GliZNetSimilarityHead(nn.Module):
@@ -52,7 +53,7 @@ class GliZNetSimilarityHead(nn.Module):
         label_repr = F.normalize(label_repr, p=2, dim=-1)
 
         if self.config.similarity_metric == "dot":
-            return (text_repr * label_repr).mean(dim=1, keepdim=True)
+            return (text_repr * label_repr).sum(dim=1, keepdim=True)
         elif self.config.similarity_metric == "bilinear":
             return self.classifier(text_repr, label_repr)
         return self.classifier(text_repr * label_repr)
@@ -73,118 +74,102 @@ class GliZNetRepresentationAggregator(nn.Module):
         lmask: torch.Tensor,
         cls_attn_weights: Optional[torch.Tensor] = None,
     ):
-        if getattr(self.config, "use_separator_pooling", False):
-            return self._compute_with_separator_tokens(hidden_states, lmask)
-        return self._compute_original(hidden_states, lmask, cls_attn_weights)
-
-    def _compute_with_separator_tokens(
-        self, hidden_states: torch.Tensor, lmask: torch.Tensor
-    ):
-        # Project and apply dropout
         cls_tokens = self.dropout(self.cls_proj(hidden_states[:, 0]))
-
-        separator_mask = lmask.bool()
-        separator_hidden = self.dropout(self.label_proj(hidden_states[separator_mask]))
-
-        separator_positions = separator_mask.nonzero()
-        separator_batch_indices = separator_positions[:, 0]
-        label_ids = lmask[separator_mask]
-
-        # Group by (batch_idx, label_id) to handle multi-token labels
-        pairs = torch.stack([separator_batch_indices, label_ids], dim=1)
-        unique_pairs, inverse_indices = torch.unique(pairs, dim=0, return_inverse=True)
-
-        num_unique_labels = unique_pairs.shape[0]
-        projected_dim = separator_hidden.shape[-1]
-
-        # Average representations for same label
-        counts = torch.zeros(num_unique_labels, device=hidden_states.device)
-        counts.scatter_add_(
-            0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.float)
-        )
-
-        label_representations = torch.zeros(
-            num_unique_labels, projected_dim, device=hidden_states.device
-        )
-        label_representations.scatter_add_(
-            0,
-            inverse_indices.unsqueeze(-1).expand(-1, projected_dim),
-            separator_hidden,
-        )
-        label_representations = label_representations / counts.unsqueeze(-1).clamp_min(
-            1
-        )
-
-        batch_indices = unique_pairs[:, 0]
-        out_label_ids = unique_pairs[:, 1]
-
-        cls_for_labels = cls_tokens[batch_indices]
-        logits = self.similarity_head(cls_for_labels, label_representations)
-
-        return logits, batch_indices, out_label_ids, label_representations
-
-    def _compute_original(
-        self,
-        hidden_states: torch.Tensor,
-        lmask: torch.Tensor,
-        cls_attn_weights: Optional[torch.Tensor] = None,
-    ):
-        # Project and apply dropout
-        cls_tokens = self.dropout(self.cls_proj(hidden_states[:, 0]))
-        projected_dim = cls_tokens.shape[-1]
         label_mask = lmask > 0
 
-        label_positions = label_mask.nonzero()
+        if not label_mask.any():
+            empty_logits = torch.empty(0, 1, device=hidden_states.device)
+            empty_indices = torch.empty(
+                0, dtype=torch.long, device=hidden_states.device
+            )
+            return empty_logits, empty_indices, empty_indices
+
         label_hidden = self.dropout(self.label_proj(hidden_states[label_mask]))
-        label_ids = lmask[label_mask]
-        label_batch_indices = label_positions[:, 0]
+        use_attn_weights = cls_attn_weights is not None and not getattr(
+            self.config, "use_separator_pooling", False
+        )
+        label_weights = cls_attn_weights[label_mask] if use_attn_weights else None
 
-        pairs = torch.stack([label_batch_indices, label_ids], dim=1)
-        unique_pairs, inverse_indices = torch.unique(pairs, dim=0, return_inverse=True)
+        return self._scatter_aggregate(
+            cls_tokens,
+            lmask,
+            label_mask,
+            label_hidden,
+            label_weights,
+        )
 
-        num_unique_labels = unique_pairs.shape[0]
+    def _scatter_aggregate(
+        self,
+        cls_tokens: torch.Tensor,
+        lmask: torch.Tensor,
+        label_mask: torch.Tensor,
+        label_hidden: torch.Tensor,
+        label_weights: Optional[torch.Tensor],
+    ):
+        batch_size, seq_len = lmask.shape
+        device = lmask.device
+        max_label_id = int(lmask.max().item())
 
-        if cls_attn_weights is not None:
-            attn_weights = cls_attn_weights[label_mask]
-            attn_sums = torch.zeros(num_unique_labels, device=hidden_states.device)
-            attn_sums.scatter_add_(0, inverse_indices, attn_weights)
-            attn_sums = attn_sums.clamp_min(1e-8)
+        if max_label_id == 0:
+            empty_logits = torch.empty(0, 1, device=device)
+            empty_indices = torch.empty(0, dtype=torch.long, device=device)
+            return empty_logits, empty_indices, empty_indices
 
-            weighted_hidden = label_hidden * attn_weights.unsqueeze(-1)
-            label_representations = torch.zeros(
-                num_unique_labels, projected_dim, device=hidden_states.device
-            )
-            label_representations.scatter_add_(
-                0,
-                inverse_indices.unsqueeze(-1).expand(-1, projected_dim),
-                weighted_hidden,
-            )
-            label_representations = label_representations / attn_sums.unsqueeze(-1)
-        else:
-            counts = torch.zeros(num_unique_labels, device=hidden_states.device)
-            counts.scatter_add_(
-                0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.float)
-            )
+        batch_indices = (
+            torch.arange(batch_size, device=device)
+            .unsqueeze(1)
+            .expand(batch_size, seq_len)
+        )
+        token_batch_indices = batch_indices[label_mask]
+        label_ids = lmask[label_mask].long()
 
-            label_representations = torch.zeros(
-                num_unique_labels, projected_dim, device=hidden_states.device
-            )
-            label_representations.scatter_add_(
-                0,
-                inverse_indices.unsqueeze(-1).expand(-1, projected_dim),
-                label_hidden,
-            )
-            label_representations = label_representations / counts.unsqueeze(
-                -1
-            ).clamp_min(1)
+        token_weights = (
+            label_hidden.new_ones(label_hidden.shape[0])
+            if label_weights is None
+            else label_weights.to(label_hidden.dtype)
+        )
 
-        batch_indices = unique_pairs[:, 0]
-        out_label_ids = unique_pairs[:, 1]
+        projected_dim = label_hidden.shape[-1]
+        total_slots = batch_size * max_label_id
+        scatter_indices = token_batch_indices * max_label_id + (label_ids - 1)
 
-        cls_for_labels = cls_tokens[batch_indices]
-        logits = self.similarity_head(cls_for_labels, label_representations)
+        aggregated = torch.zeros(total_slots, projected_dim, device=device)
+        weight_sums = torch.zeros(total_slots, device=device)
 
-        return logits, batch_indices, out_label_ids, label_representations
+        aggregated.index_add_(
+            0, scatter_indices, label_hidden * token_weights.unsqueeze(-1)
+        )
+        weight_sums.index_add_(0, scatter_indices, token_weights)
+
+        present_mask = weight_sums > 0
+        if not present_mask.any():
+            empty_logits = torch.empty(0, 1, device=device)
+            empty_indices = torch.empty(0, dtype=torch.long, device=device)
+            return empty_logits, empty_indices, empty_indices
+
+        aggregated = aggregated / weight_sums.clamp_min(1e-8).unsqueeze(-1)
+
+        all_batch_ids = (
+            torch.arange(batch_size, device=device)
+            .unsqueeze(1)
+            .expand(batch_size, max_label_id)
+            .reshape(-1)
+        )
+        all_label_ids = (
+            torch.arange(1, max_label_id + 1, device=device)
+            .unsqueeze(0)
+            .expand(batch_size, -1)
+            .reshape(-1)
+        )
+
+        final_batch_indices = all_batch_ids[present_mask]
+        final_label_ids = all_label_ids[present_mask]
+        final_representations = aggregated[present_mask]
+
+        cls_for_labels = cls_tokens[final_batch_indices]
+        logits = self.similarity_head(cls_for_labels, final_representations)
+
+        return logits, final_batch_indices, final_label_ids
 
 
 class GliZNetLoss(nn.Module):
@@ -199,7 +184,6 @@ class GliZNetLoss(nn.Module):
         labels: torch.Tensor,
         batch_indices: torch.Tensor,
         label_ids: torch.Tensor,
-        label_representations: Optional[torch.Tensor] = None,
     ):
         if labels is None:
             return None
@@ -235,7 +219,7 @@ class GliZNetLoss(nn.Module):
                 valid_batch_indices, return_counts=True
             )
 
-            logits_splits = torch.split(torch.sigmoid(valid_logits), counts.tolist())
+            logits_splits = torch.split(valid_logits, counts.tolist())
             targets_splits = torch.split(valid_targets, counts.tolist())
 
             # Calculate temperature scaling based on average number of valid labels
@@ -255,17 +239,15 @@ class GliZNetLoss(nn.Module):
 
         loss = bce_loss + contrastive_loss
 
-        if self.config.barlow_loss_weight > 0 and label_representations is not None:
-            valid_representations = label_representations[valid_mask.view(-1)]
-            loss = loss + self.config.barlow_loss_weight * self._compute_barlow_loss(
-                valid_representations
-            )
+        if self.config.separation_loss_weight > 0:
+            separation_loss = self._compute_separation_loss(valid_logits, valid_targets)
+            loss = loss + self.config.separation_loss_weight * separation_loss
 
         return loss
 
     def _compute_contrastive_loss(self, logits: torch.Tensor, labels: torch.Tensor):
-        positive_logits = logits[labels == 1.0]
-        negative_logits = logits[labels != 1.0]
+        positive_logits = logits[labels > 0.5]
+        negative_logits = logits[labels <= 0.5]
 
         if positive_logits.numel() == 0 or negative_logits.numel() == 0:
             return torch.tensor(0.0, device=logits.device)
@@ -274,22 +256,27 @@ class GliZNetLoss(nn.Module):
         max_neg = negative_logits.max()
         return F.relu(self.margin + max_neg - min_pos)
 
-    def _compute_barlow_loss(self, z: torch.Tensor, coef: float = 0.005):
-        if z.numel() == 0:
-            return torch.tensor(0.0, device=z.device)
+    def _compute_separation_loss(self, logits: torch.Tensor, labels: torch.Tensor):
+        if logits.numel() == 0:
+            return torch.tensor(0.0, device=logits.device)
 
-        # z is (N, D)
-        # Normalize along batch dimension
-        z_norm = (z - z.mean(dim=0)) / (z.std(dim=0) + 1e-6)
+        logits = logits.view(-1)
+        labels = labels.view(-1)
 
-        # Cross-correlation matrix (D, D)
-        c = torch.mm(z_norm.T, z_norm) / z_norm.shape[0]
+        pos_mask = labels == 1.0
+        neg_mask = labels == 0.0
 
-        # Barlow Twins loss: off-diagonal should be close to 0
-        # We sum the squares of the off-diagonal elements
-        off_diag = c.pow(2).sum() - torch.diagonal(c).pow(2).sum()
+        loss = torch.tensor(0.0, device=logits.device)
 
-        return coef * off_diag
+        if pos_mask.any():
+            pos_logits = logits[pos_mask]
+            loss = loss + F.relu(self.config.positive_logit_margin - pos_logits).mean()
+
+        if neg_mask.any():
+            neg_logits = logits[neg_mask]
+            loss = loss + F.relu(neg_logits - self.config.negative_logit_margin).mean()
+
+        return loss
 
 
 def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedModel):
@@ -303,11 +290,13 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
             dropout_rate: float = 0.1,
             scale_loss: float = 10.0,
             margin: float = 0.1,
-            barlow_loss_weight: float = 0.1,
             contrastive_loss_weight: float = 1.0,
             use_separator_pooling: bool = False,
             temperature_scale_base: float = 10.0,
             use_projection_layernorm: bool = True,
+            separation_loss_weight: float = 0.1,
+            positive_logit_margin: float = 1.0,
+            negative_logit_margin: float = -1.0,
         ):
             """Initialize GliZNet model.
 
@@ -319,12 +308,14 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 dropout_rate: Dropout probability
                 scale_loss: Multiplier for BCE loss
                 margin: Margin for contrastive loss
-                barlow_loss_weight: Weight for Barlow Twins regularization loss
                 contrastive_loss_weight: Weight for hard negative mining loss
                 use_separator_pooling: If True, use separator token embeddings directly;
                     if False, average label token embeddings (requires custom separator token)
                 temperature_scale_base: Base value for temperature scaling
                 use_projection_layernorm: Whether to apply LayerNorm after projection
+                separation_loss_weight: Weight for logit separation regularization
+                positive_logit_margin: Minimum desired logit for positive labels
+                negative_logit_margin: Maximum desired logit for negative labels
             """
             super().__init__(config)
             if similarity_metric not in ["dot", "bilinear", "dot_learning"]:
@@ -338,12 +329,14 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 similarity_metric,
                 temperature,
                 dropout_rate,
-                barlow_loss_weight,
                 contrastive_loss_weight,
                 use_separator_pooling,
                 temperature_scale_base,
                 use_projection_layernorm,
                 margin=margin,
+                separation_loss_weight=separation_loss_weight,
+                positive_logit_margin=positive_logit_margin,
+                negative_logit_margin=negative_logit_margin,
             )
 
             self.scale_loss = scale_loss
@@ -397,12 +390,14 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
             similarity_metric,
             temperature,
             dropout_rate,
-            barlow_loss_weight,
             contrastive_loss_weight,
             use_separator_pooling,
             temperature_scale_base,
             use_projection_layernorm,
             margin,
+            separation_loss_weight,
+            positive_logit_margin,
+            negative_logit_margin,
         ):
             config.projected_dim = getattr(config, "projected_dim", projected_dim)
             config.similarity_metric = getattr(
@@ -410,9 +405,6 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
             )
             config.temperature = getattr(config, "temperature", temperature)
             config.dropout_rate = getattr(config, "dropout_rate", dropout_rate)
-            config.barlow_loss_weight = getattr(
-                config, "barlow_loss_weight", barlow_loss_weight
-            )
             config.contrastive_loss_weight = getattr(
                 config, "contrastive_loss_weight", contrastive_loss_weight
             )
@@ -426,6 +418,15 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 config, "use_projection_layernorm", use_projection_layernorm
             )
             config.margin = getattr(config, "margin", margin)
+            config.separation_loss_weight = getattr(
+                config, "separation_loss_weight", separation_loss_weight
+            )
+            config.positive_logit_margin = getattr(
+                config, "positive_logit_margin", positive_logit_margin
+            )
+            config.negative_logit_margin = getattr(
+                config, "negative_logit_margin", negative_logit_margin
+            )
             self.config = config
 
         def _setup_layers(self):
@@ -483,15 +484,13 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 output_hidden_states,
             )
 
-            logits, batch_indices, label_ids, label_representations = self.aggregator(
+            logits, batch_indices, label_ids = self.aggregator(
                 hidden_states, lmask, attentions
             )
 
             loss = None
             if labels is not None:
-                loss = self.loss_module(
-                    logits, labels, batch_indices, label_ids, label_representations
-                )
+                loss = self.loss_module(logits, labels, batch_indices, label_ids)
 
             if not return_dict:
                 output = (logits, None)
@@ -503,7 +502,6 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 hidden_states=None,
                 batch_indices=batch_indices,
                 label_ids=label_ids,
-                label_representations=label_representations,
             )
 
         def _get_hidden_states(

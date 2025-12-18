@@ -42,10 +42,6 @@ class ModelArgs:
         default=1.0,
         metadata={"help": "Base temperature for loss scaling"},
     )
-    barlow_loss_weight: float = field(
-        default=0.1,
-        metadata={"help": "Weight for Barlow Twins regularization loss"},
-    )
     contrastive_loss_weight: float = field(
         default=1.0,
         metadata={"help": "Weight for hard negative mining contrastive loss"},

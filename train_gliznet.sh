@@ -17,7 +17,6 @@ nohup uv run train_gliznet.py \
     --scale_loss 10.0 \
     --margin 0.1 \
     --temperature 1.0 \
-    --barlow_loss_weight 0.1 \
     --contrastive_loss_weight 1.0 \
     --use_separator_pooling \
     \

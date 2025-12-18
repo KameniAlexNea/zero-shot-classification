@@ -21,7 +21,6 @@ class GliZNetTrainingConfig:
     Loss Components:
         - BCE loss: Binary cross-entropy between predictions and labels
         - Contrastive loss: Hard negative mining to separate positive/negative labels
-        - Barlow loss: Regularization to decorrelate label predictions
 
     Pooling Strategies:
         - Separator pooling: Uses separator token ([LAB]) embeddings directly
@@ -37,7 +36,6 @@ class GliZNetTrainingConfig:
     scale_loss: float = 10.0  # Multiplier for BCE loss
     margin: float = 0.1  # Margin for contrastive loss (hard negative mining)
     temperature: float = 1.0  # Base temperature for loss scaling
-    barlow_loss_weight: float = 0.1  # Weight for Barlow Twins regularization
     contrastive_loss_weight: float = 1.0  # Weight for hard negative mining
 
     # Embedding strategy
@@ -76,7 +74,6 @@ class GliZNetTrainingConfig:
             "scale_loss": self.scale_loss,
             "margin": self.margin,
             "temperature": self.temperature,
-            "barlow_loss_weight": self.barlow_loss_weight,
             "contrastive_loss_weight": self.contrastive_loss_weight,
             "use_separator_pooling": self.use_separator_pooling,
         }
@@ -132,7 +129,6 @@ def get_separator_pooling_config() -> GliZNetTrainingConfig:
     """
     return GliZNetTrainingConfig(
         use_separator_pooling=True,
-        barlow_loss_weight=0.05,  # Lower weight since separator embeddings are more stable
     )
 
 
@@ -146,5 +142,4 @@ def get_mean_pooling_config() -> GliZNetTrainingConfig:
     """
     return GliZNetTrainingConfig(
         use_separator_pooling=False,
-        barlow_loss_weight=0.1,  # Higher weight to regularize averaged embeddings
     )
