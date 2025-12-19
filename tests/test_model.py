@@ -223,8 +223,10 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
                 model2 = self._create_model_with_metric(metric)
 
                 # Copy weights from model1 to model2 to ensure identical parameters
-                if hasattr(model1.aggregator.similarity_head, "classifier") and \
-                   model1.aggregator.similarity_head.classifier is not None:
+                if (
+                    hasattr(model1.aggregator.similarity_head, "classifier")
+                    and model1.aggregator.similarity_head.classifier is not None
+                ):
                     model2.aggregator.similarity_head.classifier.load_state_dict(
                         model1.aggregator.similarity_head.classifier.state_dict()
                     )

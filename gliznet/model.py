@@ -206,7 +206,7 @@ class GliZNetLoss(nn.Module):
         # BCE Loss
         bce_loss: torch.Tensor = (
             F.binary_cross_entropy_with_logits(
-                valid_logits, valid_targets, reduction='none'
+                valid_logits, valid_targets, reduction="none"
             ).mean()
             * self.config.scale_loss
         )
@@ -228,62 +228,75 @@ class GliZNetLoss(nn.Module):
         return loss
 
     def _compute_contrastive_loss(
-        self, 
-        logits: torch.Tensor, 
-        labels: torch.Tensor,
-        batch_indices: torch.Tensor
+        self, logits: torch.Tensor, labels: torch.Tensor, batch_indices: torch.Tensor
     ) -> torch.Tensor:
         """Compute vectorized contrastive loss across batches.
-        
+
         Args:
             logits: Valid logits (N, 1)
             labels: Valid labels (N, 1)
             batch_indices: Batch index for each logit (N,)
-            
+
         Returns:
             Scalar contrastive loss tensor
         """
         batch_size = batch_indices.max() + 1
-        
+
         # Vectorized computation without splits
         logits_flat = logits.view(-1)
         labels_flat = labels.view(-1)
-        
+
         pos_mask = labels_flat > 0.5
         neg_mask = labels_flat <= 0.5
-        
+
         # Initialize with extreme values
-        min_pos_per_sample = torch.full((batch_size,), float('inf'), device=logits.device)
-        max_neg_per_sample = torch.full((batch_size,), float('-inf'), device=logits.device)
-        
+        min_pos_per_sample = torch.full(
+            (batch_size,), float("inf"), device=logits.device
+        )
+        max_neg_per_sample = torch.full(
+            (batch_size,), float("-inf"), device=logits.device
+        )
+
         # Scatter min for positives and max for negatives
         if pos_mask.any():
             min_pos_per_sample.scatter_reduce_(
-                0, batch_indices[pos_mask], logits_flat[pos_mask], 
-                reduce='amin', include_self=False
+                0,
+                batch_indices[pos_mask],
+                logits_flat[pos_mask],
+                reduce="amin",
+                include_self=False,
             )
         if neg_mask.any():
             max_neg_per_sample.scatter_reduce_(
-                0, batch_indices[neg_mask], logits_flat[neg_mask], 
-                reduce='amax', include_self=False
+                0,
+                batch_indices[neg_mask],
+                logits_flat[neg_mask],
+                reduce="amax",
+                include_self=False,
             )
-        
+
         # Only compute loss for samples that have both positive and negative labels
-        valid_samples = (min_pos_per_sample < float('inf')) & (max_neg_per_sample > float('-inf'))
-        
+        valid_samples = (min_pos_per_sample < float("inf")) & (
+            max_neg_per_sample > float("-inf")
+        )
+
         if not valid_samples.any():
             return torch.tensor(0.0, device=logits.device)
-        
+
         sample_losses = F.relu(
-            self.margin + max_neg_per_sample[valid_samples] - min_pos_per_sample[valid_samples]
+            self.margin
+            + max_neg_per_sample[valid_samples]
+            - min_pos_per_sample[valid_samples]
         )
-        
+
         # Temperature scaling based on average labels per sample
         num_valid_samples = valid_samples.sum()
         avg_valid_labels = logits.shape[0] / max(num_valid_samples, 1)
         temperature_scale_base = getattr(self.config, "temperature_scale_base", 10.0)
-        temperature = self.config.temperature * (temperature_scale_base / max(avg_valid_labels, 1))
-        
+        temperature = self.config.temperature * (
+            temperature_scale_base / max(avg_valid_labels, 1)
+        )
+
         return sample_losses.sum() * temperature * self.config.contrastive_loss_weight
 
     def _compute_separation_loss(self, logits: torch.Tensor, labels: torch.Tensor):
@@ -596,7 +609,7 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 List of score lists, one per sample in the batch
             """
             self.eval()
-            
+
             # Get outputs with indices
             outputs = self.forward(
                 input_ids=input_ids,
@@ -605,7 +618,7 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 return_dict=True,
                 return_indices=True,
             )
-            
+
             logits = outputs.logits
             batch_indices = outputs.batch_indices
             label_ids = outputs.label_ids

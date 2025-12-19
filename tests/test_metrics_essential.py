@@ -140,7 +140,7 @@ class TestComputeMetrics(unittest.TestCase):
         metrics = compute_metrics(eval_pred, activated=False)
 
         # Should have multilabel-specific metrics
-        multilabel_metrics = ["jaccard_micro", "hamming_loss"]
+        multilabel_metrics = ["jaccard", "hamming_loss"]
         for metric in multilabel_metrics:
             self.assertIn(metric, metrics)
 

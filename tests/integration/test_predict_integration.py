@@ -24,7 +24,7 @@ class TestModelPredictIntegration(unittest.TestCase):
     def setUpClass(cls):
         # Ensure reproducibility
         seed_everything(42)
-        model_name = "bert-base-uncased"
+        model_name = "microsoft/deberta-v3-small"
         cls.tokenizer = GliZNETTokenizer.from_pretrained(
             model_name,
         )

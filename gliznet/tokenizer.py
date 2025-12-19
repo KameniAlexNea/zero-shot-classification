@@ -88,7 +88,7 @@ class GliZNETTokenizer:
         if model_max_length > 100000:  # Likely unset, use 512 as default
             model_max_length = 512
         self.max_length = model_max_length
-        
+
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
