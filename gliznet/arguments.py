@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 
 @dataclass
@@ -20,13 +20,17 @@ class ModelArgs:
     projected_dim: Optional[int] = field(
         default=None, metadata={"help": "Projection dimension (None = use hidden_size)"}
     )
-    similarity_metric: str = field(
+    similarity_metric: Literal["dot", "bilinear"] = field(
         default="dot",
-        metadata={"help": "Similarity metric: dot, bilinear, dot_learning"},
+        metadata={"help": "Similarity metric: dot, bilinear"},
     )
     dropout_rate: float = field(
         default=0.1,
         metadata={"help": "Dropout rate for model"},
+    )
+    use_projection_layernorm: bool = field(
+        default=True,
+        metadata={"help": "Whether to apply LayerNorm after projection"},
     )
 
     # Loss configuration
@@ -42,9 +46,25 @@ class ModelArgs:
         default=1.0,
         metadata={"help": "Base temperature for loss scaling"},
     )
+    temperature_scale_base: float = field(
+        default=10.0,
+        metadata={"help": "Base value for temperature scaling"},
+    )
     contrastive_loss_weight: float = field(
         default=1.0,
         metadata={"help": "Weight for hard negative mining contrastive loss"},
+    )
+    separation_loss_weight: float = field(
+        default=0.1,
+        metadata={"help": "Weight for logit separation regularization"},
+    )
+    positive_logit_margin: float = field(
+        default=1.0,
+        metadata={"help": "Minimum desired logit for positive labels"},
+    )
+    negative_logit_margin: float = field(
+        default=-1.0,
+        metadata={"help": "Maximum desired logit for negative labels"},
     )
     use_separator_pooling: bool = field(
         default=False,

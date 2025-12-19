@@ -20,12 +20,36 @@ from transformers import (
 )
 
 from gliznet.arguments import ModelArgs
-from gliznet.config import GliZNetDataConfig, GliZNetTrainingConfig
+from gliznet.config import GliZNetDataConfig
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
-from gliznet.model import create_gli_znet_for_sequence_classification
+from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_data import additional_datasets
+
+
+def create_model_tokenizer(args: ModelArgs):
+    tokenizer = GliZNETTokenizer.from_pretrained(
+        args.model_name, model_max_length=args.model_max_length
+    )
+    config = GliZNetConfig(
+        backbone_model=args.model_name,
+        projected_dim=args.projected_dim,
+        similarity_metric=args.similarity_metric,
+        dropout_rate=args.dropout_rate,
+        use_projection_layernorm=args.use_projection_layernorm,
+        scale_loss=args.scale_loss,
+        margin=args.margin,
+        contrastive_loss_weight=args.contrastive_loss_weight,
+        temperature=args.temperature,
+        temperature_scale_base=args.temperature_scale_base,
+        separation_loss_weight=args.separation_loss_weight,
+        positive_logit_margin=args.positive_logit_margin,
+        negative_logit_margin=args.negative_logit_margin,
+    )
+    model = GliZNetForSequenceClassification(config)
+    model.resize_token_embeddings(len(tokenizer))
+    return model, tokenizer
 
 
 def add_additional_ds(base_ds: datasets.Dataset):
@@ -76,19 +100,6 @@ def main():
             "Consider using '[LAB]' for separator pooling."
         )
 
-    # Create training configuration
-    training_config = GliZNetTrainingConfig(
-        projected_dim=model_args.projected_dim,
-        similarity_metric=model_args.similarity_metric,
-        dropout_rate=model_args.dropout_rate,
-        scale_loss=model_args.scale_loss,
-        margin=model_args.margin,
-        temperature=model_args.temperature,
-        contrastive_loss_weight=model_args.contrastive_loss_weight,
-        use_separator_pooling=model_args.use_separator_pooling,
-    )
-    logger.info(f"Training config: {training_config}")
-
     # Create data configuration
     data_config = GliZNetDataConfig(
         max_labels=model_args.max_labels,
@@ -125,17 +136,10 @@ def main():
 
     # Initialize tokenizer
     logger.info(f"Initializing tokenizer from {model_args.model_name}...")
-    tokenizer = GliZNETTokenizer.from_pretrained(
-        model_args.model_name,
-        use_fast=model_args.use_fast_tokenizer,
-        model_max_length=model_args.model_max_length,
-        max_length=model_args.model_max_length,
-        lab_cls_token=model_args.lab_cls_token,
-    )
-    logger.info(
-        f"Tokenizer initialized - Vocab size: {tokenizer.get_vocab_size()}, "
-        f"Pooling strategy: {tokenizer.pooling_strategy}"
-    )
+    # Initialize model
+    logger.info(f"Initializing model with {model_args.model_class}...")
+    model, tokenizer = create_model_tokenizer(model_args)
+    logger.info(f"Tokenizer initialized - Vocab size: {tokenizer.vocab_size}, ")
 
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
     logger.info("Tokenizing datasets...")
@@ -163,17 +167,6 @@ def main():
         as_transform=True,
     )
     logger.info("Datasets tokenized successfully")
-
-    # Initialize model
-    logger.info(f"Initializing model with {model_args.model_class}...")
-    pretrained_cls = create_gli_znet_for_sequence_classification(
-        get_transformers_class(model_args.model_class)
-    )
-    model = pretrained_cls.from_pretrained_with_tokenizer(
-        model_args.model_name,
-        tokenizer=tokenizer,
-        **training_config.to_model_kwargs(),
-    )
 
     # Log model configuration
     logger.info(f"Model initialized - Parameters: {model.num_parameters():,}")
