@@ -18,11 +18,11 @@ nohup uv run train_gliznet.py \
     --scale_loss 10.0 \
     --margin 0.1 \
     --temperature 1.0 \
-    --temperature_scale_base 1.0 \
+    --temperature_scale_base 10.0 \
     --contrastive_loss_weight 1.0 \
     --separation_loss_weight 0.1 \
-    --positive_logit_margin 1.0 \
-    --negative_logit_margin 0.0 \
+    --positive_logit_margin 0.9999 \
+    --negative_logit_margin 0.0001 \
     --use_separator_pooling \
     \
     `# Data Configuration` \
@@ -40,11 +40,11 @@ nohup uv run train_gliznet.py \
     \
     `# Training Arguments` \
     --run_name "gliznet_training" \
-    --output_dir "results/deberta-v3-small-sep-pooling" \
+    --output_dir "results/deberta-v3-small" \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 64 \
-    --per_device_eval_batch_size 128 \
-    --gradient_accumulation_steps 8 \
+    --per_device_train_batch_size 128 \
+    --per_device_eval_batch_size 256 \
+    --gradient_accumulation_steps 2 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \

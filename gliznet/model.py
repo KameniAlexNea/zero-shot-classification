@@ -362,6 +362,8 @@ class GliZNetLoss(nn.Module):
         self, logits: torch.Tensor, labels: torch.Tensor
     ) -> torch.Tensor:
         """Separation loss: encourage logits to be above/below thresholds."""
+        if self.config.separation_loss_weight == 0:
+            return torch.tensor(0.0, device=logits.device)
         logits = logits.view(-1)
         labels = labels.view(-1)
 
@@ -483,6 +485,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         attention_mask: torch.Tensor,
         lmask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
+        return_stats: bool = False,
         return_dict: bool = True,
         **kwargs,
     ) -> Union[Tuple, GliZNetOutput]:
@@ -520,8 +523,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         return GliZNetOutput(
             loss=loss,
             logits=logits,
-            batch_indices=batch_indices,
-            label_ids=label_ids,
+            batch_indices=batch_indices if return_stats else None,
+            label_ids=label_ids if return_stats else None,
         )
 
     @torch.inference_mode()
@@ -549,6 +552,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             input_ids=input_ids,
             attention_mask=attention_mask,
             lmask=lmask,
+            return_stats=True,
             return_dict=True,
         )
 
