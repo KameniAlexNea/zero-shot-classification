@@ -177,7 +177,7 @@ class LabelAggregator(nn.Module):
             batch_indices: Batch index for each score (N,)
             label_ids: Label ID for each score (N,)
         """
-        batch_size, seq_len, hidden_size = hidden_states.shape
+        batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
 
         # Project CLS tokens
@@ -296,15 +296,14 @@ class GliZNetLoss(nn.Module):
         total_loss = bce_loss
 
         # Contrastive loss
+        probs = valid_logits.sigmoid()
         if self.config.contrastive_loss_weight > 0:
-            contrastive = self._contrastive_loss(
-                valid_logits, valid_targets, valid_batch_ids
-            )
+            contrastive = self._contrastive_loss(probs, valid_targets, valid_batch_ids)
             total_loss = total_loss + contrastive
 
         # Separation loss
         if self.config.separation_loss_weight > 0:
-            separation = self._separation_loss(valid_logits, valid_targets)
+            separation = self._separation_loss(probs, valid_targets)
             total_loss = total_loss + separation
 
         return total_loss
@@ -485,6 +484,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         lmask: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        **kwargs,
     ) -> Union[Tuple, GliZNetOutput]:
         """Forward pass.
 

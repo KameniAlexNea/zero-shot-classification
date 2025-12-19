@@ -170,16 +170,26 @@ def add_tokenized_function(
         # Determine how many labels actually fit by checking lmask
         # lmask contains label IDs (1, 2, 3, ...) for each label's tokens
         truncated_labels = []
+        num_labels_per_text = []
+
         for lmask_row, label_tensor in zip(tokenized["lmask"], labels_batch):
             # Count unique non-zero label IDs to see how many labels fit
             num_fitted = int(lmask_row.max().item()) if lmask_row.any() else 0
             truncated_labels.append(label_tensor[:num_fitted])
+            num_labels_per_text.append(num_fitted)
+
+        # Pad labels to same length
+        labels_padded = pad_sequence(
+            truncated_labels, batch_first=True, padding_value=-100
+        )
+        num_labels_tensor = torch.tensor(num_labels_per_text, dtype=torch.long)
 
         return {
             "input_ids": tokenized["input_ids"],
             "attention_mask": tokenized["attention_mask"],
             "lmask": tokenized["lmask"],
-            "labels": truncated_labels,
+            "labels": labels_padded,
+            "num_labels": num_labels_tensor,
         }
 
     if as_transform:
@@ -222,13 +232,15 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
                 if isinstance(batch["lmask"], torch.Tensor)
                 else torch.tensor(batch["lmask"])
             ),
-            "labels": pad_sequence(
-                [
-                    lab if isinstance(lab, torch.Tensor) else torch.tensor(lab)
-                    for lab in batch["labels"]
-                ],
-                batch_first=True,
-                padding_value=-100,
+            "labels": (
+                batch["labels"]
+                if isinstance(batch["labels"], torch.Tensor)
+                else torch.tensor(batch["labels"])
+            ),
+            "num_labels": (
+                batch["num_labels"]
+                if isinstance(batch["num_labels"], torch.Tensor)
+                else torch.tensor(batch["num_labels"])
             ),
         }
 
@@ -236,8 +248,9 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     input_ids = torch.stack([item["input_ids"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
     lmask = torch.stack([item["lmask"] for item in batch])
+    num_labels = torch.stack([item["num_labels"] for item in batch])
 
-    # Pad labels (variable length per sample)
+    # Pad labels (variable length per sample) - already padded but may need re-padding
     labels = pad_sequence(
         [item["labels"] for item in batch], batch_first=True, padding_value=-100
     )
@@ -247,4 +260,5 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         "attention_mask": attention_mask,
         "lmask": lmask,
         "labels": labels,
+        "num_labels": num_labels,
     }
