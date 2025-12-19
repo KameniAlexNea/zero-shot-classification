@@ -80,7 +80,7 @@ class ModelArgs:
         default=512,
         metadata={"help": "Maximum sequence length for the model"},
     )
-    cls_separator_token: str = field(
+    lab_cls_token: str = field(
         default="[LAB]",
         metadata={"help": "Separator token for labels ([LAB] or ;)"},
     )

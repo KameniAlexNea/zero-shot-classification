@@ -290,3 +290,17 @@ class GliZNETTokenizer:
             )
             for k in ("input_ids", "attention_mask", "lmask")
         }
+
+    def save_pretrained(self, save_directory, **kwargs):
+        """Save the underlying tokenizer."""
+        return self.tokenizer.save_pretrained(save_directory, **kwargs)
+
+    def vocab_size(self):
+        return len(self.tokenizer)
+
+    def __len__(self):
+        return len(self.tokenizer)
+
+    @property
+    def vocab(self):
+        return self.tokenizer.vocab

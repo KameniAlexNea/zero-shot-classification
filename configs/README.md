@@ -46,7 +46,7 @@ data_config = GliZNetDataConfig(
 **Separator Pooling (Recommended for new models):**
 ```bash
 --use_separator_pooling \
---cls_separator_token "[LAB]"
+--lab_cls_token "[LAB]"
 ```
 - Uses separator token embeddings directly
 - Requires adding custom [LAB] token to vocabulary
@@ -55,7 +55,7 @@ data_config = GliZNetDataConfig(
 
 **Mean Pooling (Default):**
 ```bash
---cls_separator_token ";"
+--lab_cls_token ";"
 ```
 - Averages label content token embeddings
 - Works with any tokenizer without modification

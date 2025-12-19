@@ -70,9 +70,9 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Validate configuration
-    if model_args.use_separator_pooling and model_args.cls_separator_token == ";":
+    if model_args.use_separator_pooling and model_args.lab_cls_token == ";":
         logger.warning(
-            "use_separator_pooling=True but cls_separator_token=';'. "
+            "use_separator_pooling=True but lab_cls_token=';'. "
             "Consider using '[LAB]' for separator pooling."
         )
 
@@ -130,7 +130,7 @@ def main():
         use_fast=model_args.use_fast_tokenizer,
         model_max_length=model_args.model_max_length,
         max_length=model_args.model_max_length,
-        cls_separator_token=model_args.cls_separator_token,
+        lab_cls_token=model_args.lab_cls_token,
     )
     logger.info(
         f"Tokenizer initialized - Vocab size: {tokenizer.get_vocab_size()}, "

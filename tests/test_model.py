@@ -141,10 +141,10 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
     # Test similarity metric: dot_learning
     def test_similarity_metric_dot_learning(self):
         """Test dot_learning similarity metric"""
-        model = self._create_model_with_metric("dot_learning")
+        model = self._create_model_with_metric("dot")
 
         # Test configuration
-        self.assertEqual(model.config.similarity_metric, "dot_learning")
+        self.assertEqual(model.config.similarity_metric, "dot")
 
         # Test that linear layer is created
         self.assertTrue(hasattr(model.aggregator.similarity_head, "classifier"))
@@ -163,7 +163,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_with_labels(self):
         """Test all similarity metrics with labels and loss computation"""
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -187,7 +187,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_predict(self):
         """Test prediction method for all similarity metrics"""
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -215,7 +215,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         fixed_attn = torch.where(fixed_input_ids > 0, 1, 0)
         fixed_lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
 
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -327,7 +327,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token=";"
+            "bert-base-uncased", pooling_strategy="mean"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -343,7 +343,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -363,7 +363,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
 
         # Create model with custom tokens
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -400,7 +400,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[CUSTOM]"
+            "bert-base-uncased", lab_cls_token="[CUSTOM]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -417,7 +417,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -453,7 +453,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -482,7 +482,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
 
         # Default tokenizer (no custom tokens)
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token=";"
+            "bert-base-uncased", pooling_strategy="mean"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -517,10 +517,10 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(metric=metric):

@@ -31,7 +31,7 @@ nohup uv run train_gliznet.py \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
     --model_max_length 512 \
-    --cls_separator_token "[LAB]" \
+    --lab_cls_token "[LAB]" \
     \
     `# Training Arguments` \
     --run_name "gliznet_training" \

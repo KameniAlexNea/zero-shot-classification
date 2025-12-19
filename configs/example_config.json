@@ -5,7 +5,7 @@
     "model_name": "microsoft/deberta-v3-small",
     "model_class": "DebertaV2PreTrainedModel",
     "projected_dim": 1024,
-    "similarity_metric": "dot_learning",
+    "similarity_metric": "dot",
     "dropout_rate": 0.1
   },
   
@@ -18,8 +18,8 @@
   
   "pooling": {
     "use_separator_pooling": true,
-    "cls_separator_token": "[LAB]",
-    "note": "Set use_separator_pooling=false and cls_separator_token=';' for mean pooling"
+    "lab_cls_token": "[LAB]",
+    "note": "Set use_separator_pooling=false and lab_cls_token=';' for mean pooling"
   },
   
   "data": {

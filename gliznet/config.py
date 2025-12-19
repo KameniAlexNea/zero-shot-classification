@@ -45,7 +45,7 @@ class GliZNetTrainingConfig:
 
     def __post_init__(self):
         """Validate configuration parameters."""
-        if self.similarity_metric not in ["dot", "bilinear", "dot_learning"]:
+        if self.similarity_metric not in ["dot", "bilinear", "dot"]:
             raise ValueError(
                 f"Invalid similarity_metric: {self.similarity_metric}. "
                 f"Must be one of: 'dot', 'bilinear', 'dot_learning'"
