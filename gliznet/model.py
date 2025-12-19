@@ -7,9 +7,10 @@ from torch.nn import functional as F
 from transformers import AutoModel, DebertaV2Config, DebertaV2PreTrainedModel
 from transformers.modeling_outputs import BaseModelOutput, ModelOutput
 
-SimilarityMetric = Literal["dot", "bilinear", "dot_learning"]
 if TYPE_CHECKING:
     from .tokenizer import GliZNETTokenizer
+
+SimilarityMetric = Literal["dot", "bilinear"]
 
 
 class GlizNetConfig(DebertaV2Config):
@@ -43,18 +44,11 @@ class GliZNetSimilarityHead(nn.Module):
         self.config = config
         if self.config.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
-        elif self.config.similarity_metric == "dot_learning":
+        else:  # dot
             self.classifier = nn.Linear(projected_dim, 1)
-        else:
-            self.classifier = None
 
     def forward(self, text_repr, label_repr):
-        text_repr = F.normalize(text_repr, p=2, dim=-1)
-        label_repr = F.normalize(label_repr, p=2, dim=-1)
-
-        if self.config.similarity_metric == "dot":
-            return (text_repr * label_repr).sum(dim=1, keepdim=True)
-        elif self.config.similarity_metric == "bilinear":
+        if self.config.similarity_metric == "bilinear":
             return self.classifier(text_repr, label_repr)
         return self.classifier(text_repr * label_repr)
 
@@ -361,9 +355,9 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 negative_logit_margin: Maximum desired logit for negative labels
             """
             super().__init__(config)
-            if similarity_metric not in ["dot", "bilinear", "dot_learning"]:
+            if similarity_metric not in ["dot", "bilinear"]:
                 raise ValueError(
-                    f"Unsupported similarity metric: {similarity_metric}. Supported: 'dot', 'bilinear', 'dot_learning'."
+                    f"Unsupported similarity metric: {similarity_metric}. Supported: 'dot', 'bilinear'."
                 )
             setattr(self, self.base_model_prefix, AutoModel.from_config(config=config))
             self._initialize_config(

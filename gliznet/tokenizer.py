@@ -24,7 +24,8 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         min_text_token: int = 5,
-        cls_separator_token: str = "[LAB]",  # ;
+        lab_cls_token: str = "[LAB]",
+        pooling_strategy: str = "separator",
         *args,
         **kwargs,
     ):
@@ -33,54 +34,39 @@ class GliZNETTokenizer:
         Args:
             pretrained_model_name_or_path: HuggingFace model identifier or path
             min_text_token: Minimum number of text tokens (unused, kept for compatibility)
-            cls_separator_token: Token to separate labels. Use '[LAB]' for separator pooling
-                or ';' for mean pooling over label content tokens
-
-        Pooling Strategies:
-            - Separator pooling (cls_separator_token='[LAB]'): Uses the separator token
-              embedding directly. Marks separator positions in lmask.
-            - Mean pooling (cls_separator_token=';'): Averages embeddings of label content
-              tokens. Marks content token positions in lmask.
+            lab_cls_token: Label separator token (default: '[LAB]')
+            pooling_strategy: 'separator' uses [LAB] token embedding, 'mean' averages label tokens
         """
         self.tokenizer: BertTokenizerFast = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
 
         self.min_text_token = min_text_token
+        self.pooling_strategy = pooling_strategy
 
-        # Check if tokenizer already has custom tokens and detect [LAB] token
+        # Check if tokenizer already has the label token
         additional_special_tokens = getattr(
             self.tokenizer, "additional_special_tokens", []
         )
         self._auto_detected = False
 
         if additional_special_tokens:
-            # Look for [LAB] token or similar custom separator tokens
+            # Look for existing [LAB] token
             lab_tokens = [
                 token
                 for token in additional_special_tokens
                 if token.startswith("[") and token.endswith("]")
             ]
             if lab_tokens:
-                # Use the first bracket token found as the separator
-                detected_separator = lab_tokens[0]
-                if cls_separator_token == ";" and detected_separator != ";":
-                    # Auto-detect and use the found custom token
-                    cls_separator_token = detected_separator
-                    self._auto_detected = True
+                # Use the first bracket token found
+                lab_cls_token = lab_tokens[0]
+                self._auto_detected = True
 
-        self.cls_separator_token = cls_separator_token
+        self.lab_cls_token = lab_cls_token
 
-        # Determine pooling strategy based on separator token
-        self.pooling_strategy = "separator" if cls_separator_token != ";" else "mean"
-
-        # Add custom [LAB] token if not using default ";" separator and token doesn't exist
-        if (
-            cls_separator_token != ";"
-            and cls_separator_token not in additional_special_tokens
-        ):
-            # Add the custom token to the tokenizer
-            special_tokens_dict = {"additional_special_tokens": [cls_separator_token]}
+        # Add label token if it doesn't exist
+        if lab_cls_token not in additional_special_tokens:
+            special_tokens_dict = {"additional_special_tokens": [lab_cls_token]}
             self.tokenizer.add_special_tokens(special_tokens_dict)
 
         # Ensure max_length is reasonable (deberta can have very large default)
@@ -93,13 +79,13 @@ class GliZNETTokenizer:
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id
         self.mask_token_id = self.tokenizer.mask_token_id or self.tokenizer.unk_token_id
-        self.label_sep_id = self.tokenizer.convert_tokens_to_ids(cls_separator_token)
+        self.lab_cls_id = self.tokenizer.convert_tokens_to_ids(lab_cls_token)
 
         # Create LRU-cached tokenization function
         @functools.lru_cache(maxsize=10000)
         def _tokenize_label_cached(label: str) -> tuple:
             tokens = self.tokenizer(label, **tokenizer_config)["input_ids"]
-            return tuple(tokens + [self.label_sep_id])
+            return tuple(tokens + [self.lab_cls_id])
 
         self._tokenize_label_cached = _tokenize_label_cached
 
@@ -107,15 +93,17 @@ class GliZNETTokenizer:
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str = "bert-base-uncased",
-        min_text_token=5,
-        cls_separator_token: str = "[LAB]",
+        min_text_token: int = 5,
+        lab_cls_token: str = "[LAB]",
+        pooling_strategy: str = "separator",
         *args,
         **kwargs,
     ) -> "GliZNETTokenizer":
         return cls(
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             min_text_token=min_text_token,
-            cls_separator_token=cls_separator_token,
+            lab_cls_token=lab_cls_token,
+            pooling_strategy=pooling_strategy,
             *args,
             **kwargs,
         )
@@ -277,7 +265,7 @@ class GliZNETTokenizer:
 
     def has_custom_tokens(self) -> bool:
         """Check if custom tokens were added to the tokenizer."""
-        return self.cls_separator_token != ";"
+        return True
 
     def get_added_tokens_count(self) -> int:
         """Get the number of tokens added to the original vocabulary."""
@@ -291,17 +279,8 @@ class GliZNETTokenizer:
         return getattr(self.tokenizer, "additional_special_tokens", [])
 
     def was_auto_detected(self) -> bool:
-        """Check if the cls_separator_token was auto-detected from existing tokens."""
+        """Check if the lab_cls_token was auto-detected from existing tokens."""
         return hasattr(self, "_auto_detected") and self._auto_detected
-
-    def get_pooling_strategy(self) -> str:
-        """Get the pooling strategy used by this tokenizer.
-
-        Returns:
-            'separator': Uses separator token embeddings directly
-            'mean': Averages label content token embeddings
-        """
-        return self.pooling_strategy
 
     def _to_tensors(self, results: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         return {

@@ -14,6 +14,7 @@ from transformers import BertConfig
 from .config import (
     GliZNetDataConfig,
     GliZNetTrainingConfig,
+    get_mean_pooling_config,
     get_separator_pooling_config,
 )
 from .data import add_tokenized_function, load_dataset
@@ -52,8 +53,6 @@ def create_model_with_config(
         if use_custom_separator:
             training_config = get_separator_pooling_config()
         else:
-            from .config import get_mean_pooling_config
-
             training_config = get_mean_pooling_config()
 
     # Create model configuration
@@ -71,7 +70,7 @@ def create_model_with_config(
         model.config.vocab_size = new_vocab_size
         model.config.use_separator_pooling = True
 
-    print(f"✓ Model created with pooling strategy: {tokenizer.get_pooling_strategy()}")
+    print(f"✓ Model created with pooling strategy: {tokenizer.pooling_strategy}")
     print(f"✓ Vocabulary size: {tokenizer.get_vocab_size()}")
     print(f"✓ Loss configuration:")
     print(f"  - BCE scale: {training_config.scale_loss}")

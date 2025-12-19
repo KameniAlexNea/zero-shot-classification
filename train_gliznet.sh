@@ -10,7 +10,7 @@ nohup uv run train_gliznet.py \
     --model_name microsoft/deberta-v3-small \
     --model_class DebertaV2PreTrainedModel \
     --projected_dim 512 \
-    --similarity_metric dot_learning \
+    --similarity_metric dot \
     --dropout_rate 0.1 \
     \
     `# Loss Configuration` \

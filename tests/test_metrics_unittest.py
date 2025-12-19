@@ -319,7 +319,14 @@ class TestMainMetricsFunction(unittest.TestCase):
         metrics = compute_metrics(eval_pred, activated=False)
 
         # Should include basic metrics (data gets flattened to binary)
-        basic_metrics = ["accuracy", "precision", "recall", "f1", "jaccard", "hamming_loss"]
+        basic_metrics = [
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+            "jaccard",
+            "hamming_loss",
+        ]
         for metric in basic_metrics:
             self.assertIn(metric, metrics)
 

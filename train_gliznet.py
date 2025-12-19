@@ -134,7 +134,7 @@ def main():
     )
     logger.info(
         f"Tokenizer initialized - Vocab size: {tokenizer.get_vocab_size()}, "
-        f"Pooling strategy: {tokenizer.get_pooling_strategy()}"
+        f"Pooling strategy: {tokenizer.pooling_strategy}"
     )
 
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
