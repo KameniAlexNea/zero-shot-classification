@@ -42,6 +42,7 @@ def create_model_tokenizer(args: ModelArgs):
         args.model_name,
         lab_token=args.lab_cls_token,
         model_max_length=args.model_max_length,
+        fix_mistral_regex=True,
     )
 
     # Create GliZNet configuration
@@ -61,8 +62,8 @@ def create_model_tokenizer(args: ModelArgs):
         negative_logit_margin=args.negative_logit_margin,
     )
 
-    # Initialize model and resize embeddings for custom tokens
-    model = GliZNetForSequenceClassification(config)
+    # Initialize model with pretrained backbone and resize embeddings for custom tokens
+    model = GliZNetForSequenceClassification.from_backbone_pretrained(config)
     model.resize_token_embeddings(len(tokenizer))
 
     logger.info(f"Model configuration: {config.to_dict()}")

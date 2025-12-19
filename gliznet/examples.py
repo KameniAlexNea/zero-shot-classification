@@ -44,8 +44,7 @@ def create_model_with_config(
     # Create tokenizer with appropriate separator
     separator = "[LAB]" if use_custom_separator else ";"
     tokenizer = GliZNETTokenizer.from_pretrained(
-        pretrained_model_name,
-        lab_cls_token=separator,
+        pretrained_model_name, lab_cls_token=separator, fix_mistral_regex=True
     )
 
     # Use provided config or create default based on pooling strategy

@@ -4,6 +4,9 @@
 # This script trains a GliZNet model using the improved configuration system.
 # Run with: bash train_gliznet.sh
 
+# Generate timestamp for unique output directory
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
 nohup uv run train_gliznet.py \
     \
     `# Model Configuration` \
@@ -39,12 +42,12 @@ nohup uv run train_gliznet.py \
     --lab_cls_token "[LAB]" \
     \
     `# Training Arguments` \
-    --run_name "gliznet_training" \
-    --output_dir "results/deberta-v3-small" \
+    --run_name "gliznet_training_${TIMESTAMP}" \
+    --output_dir "results/deberta-v3-small_${TIMESTAMP}" \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 128 \
-    --per_device_eval_batch_size 256 \
-    --gradient_accumulation_steps 2 \
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 128 \
+    --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \

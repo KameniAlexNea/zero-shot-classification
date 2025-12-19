@@ -459,6 +459,33 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         return embeddings
 
     @classmethod
+    def from_backbone_pretrained(
+        cls,
+        config: GliZNetConfig,
+        **kwargs,
+    ) -> "GliZNetForSequenceClassification":
+        """Create a new GliZNet model with pretrained backbone weights.
+
+        Use this method when creating a NEW model (not loading a saved one).
+        The backbone will be initialized with pretrained weights.
+
+        Args:
+            config: GliZNetConfig with backbone_model specified
+            **kwargs: Additional arguments for backbone loading
+
+        Returns:
+            GliZNet model with pretrained backbone
+        """
+        # Create model (backbone initialized randomly via from_config)
+        model = cls(config)
+
+        # Load pretrained backbone weights
+        pretrained_backbone = AutoModel.from_pretrained(config.backbone_model, **kwargs)
+        model.backbone.load_state_dict(pretrained_backbone.state_dict())
+
+        return model
+
+    @classmethod
     def from_pretrained_with_tokenizer(
         cls,
         pretrained_path: str,
