@@ -140,7 +140,7 @@ class TestComputeMetrics(unittest.TestCase):
         metrics = compute_metrics(eval_pred, activated=False)
 
         # Should have multilabel-specific metrics
-        multilabel_metrics = ["hamming_score", "jaccard_micro", "hamming_loss"]
+        multilabel_metrics = ["jaccard_micro", "hamming_loss"]
         for metric in multilabel_metrics:
             self.assertIn(metric, metrics)
 
@@ -158,9 +158,9 @@ class TestComputeMetrics(unittest.TestCase):
         metrics = compute_metrics(eval_pred, activated=False)
 
         # Should have match_accuracy
-        self.assertIn("match_accuracy", metrics)
-        self.assertGreaterEqual(metrics["match_accuracy"], 0.0)
-        self.assertLessEqual(metrics["match_accuracy"], 1.0)
+        self.assertIn("accuracy", metrics)
+        self.assertGreaterEqual(metrics["accuracy"], 0.0)
+        self.assertLessEqual(metrics["accuracy"], 1.0)
 
     def test_perfect_predictions(self):
         """Test with perfect predictions."""

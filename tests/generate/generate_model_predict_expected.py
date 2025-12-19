@@ -21,7 +21,7 @@ def seed_everything(seed: int = 42):
 def main():
     seed_everything(42)
     # Initialize tokenizer and model (random weights)
-    model_name = "bert-base-uncased"
+    model_name = "microsoft/deberta-v3-small"
     tokenizer = GliZNETTokenizer.from_pretrained(model_name)
     model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
         model_name, tokenizer

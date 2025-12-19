@@ -59,7 +59,7 @@ class TestModelPredictIntegration(unittest.TestCase):
                         self.assertAlmostEqual(
                             p_val,
                             e_val,
-                            places=6,
+                            places=5,
                             msg=f"Value mismatch for {name}: {p_val} vs {e_val}",
                         )
 

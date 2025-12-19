@@ -83,7 +83,12 @@ class GliZNETTokenizer:
             special_tokens_dict = {"additional_special_tokens": [cls_separator_token]}
             self.tokenizer.add_special_tokens(special_tokens_dict)
 
-        self.max_length = self.tokenizer.model_max_length
+        # Ensure max_length is reasonable (deberta can have very large default)
+        model_max_length = self.tokenizer.model_max_length
+        if model_max_length > 100000:  # Likely unset, use 512 as default
+            model_max_length = 512
+        self.max_length = model_max_length
+        
         self.cls_token_id = self.tokenizer.cls_token_id
         self.sep_token_id = self.tokenizer.sep_token_id
         self.pad_token_id = self.tokenizer.pad_token_id

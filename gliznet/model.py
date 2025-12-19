@@ -215,26 +215,8 @@ class GliZNetLoss(nn.Module):
         contrastive_loss = torch.tensor(0.0, device=logits.device)
         if self.config.contrastive_loss_weight > 0:
             valid_batch_indices = batch_indices[valid_mask.view(-1)]
-            unique_batches, counts = torch.unique(
-                valid_batch_indices, return_counts=True
-            )
-
-            logits_splits = torch.split(valid_logits, counts.tolist())
-            targets_splits = torch.split(valid_targets, counts.tolist())
-
-            # Calculate temperature scaling based on average number of valid labels
-            avg_valid_labels = valid_logits.shape[0] / max(len(unique_batches), 1)
-            temperature_scale_base = getattr(
-                self.config, "temperature_scale_base", 10.0
-            )
-            temperature = self.config.temperature * (
-                temperature_scale_base / max(avg_valid_labels, 1)
-            )
-
-            contrastive_loss = (
-                sum(map(self._compute_contrastive_loss, logits_splits, targets_splits))
-                * temperature
-                * self.config.contrastive_loss_weight
+            contrastive_loss = self._compute_contrastive_loss(
+                valid_logits, valid_targets, valid_batch_indices
             )
 
         loss = bce_loss + contrastive_loss
@@ -245,16 +227,64 @@ class GliZNetLoss(nn.Module):
 
         return loss
 
-    def _compute_contrastive_loss(self, logits: torch.Tensor, labels: torch.Tensor):
-        positive_logits = logits[labels > 0.5]
-        negative_logits = logits[labels <= 0.5]
-
-        if positive_logits.numel() == 0 or negative_logits.numel() == 0:
+    def _compute_contrastive_loss(
+        self, 
+        logits: torch.Tensor, 
+        labels: torch.Tensor,
+        batch_indices: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute vectorized contrastive loss across batches.
+        
+        Args:
+            logits: Valid logits (N, 1)
+            labels: Valid labels (N, 1)
+            batch_indices: Batch index for each logit (N,)
+            
+        Returns:
+            Scalar contrastive loss tensor
+        """
+        batch_size = batch_indices.max() + 1
+        
+        # Vectorized computation without splits
+        logits_flat = logits.view(-1)
+        labels_flat = labels.view(-1)
+        
+        pos_mask = labels_flat > 0.5
+        neg_mask = labels_flat <= 0.5
+        
+        # Initialize with extreme values
+        min_pos_per_sample = torch.full((batch_size,), float('inf'), device=logits.device)
+        max_neg_per_sample = torch.full((batch_size,), float('-inf'), device=logits.device)
+        
+        # Scatter min for positives and max for negatives
+        if pos_mask.any():
+            min_pos_per_sample.scatter_reduce_(
+                0, batch_indices[pos_mask], logits_flat[pos_mask], 
+                reduce='amin', include_self=False
+            )
+        if neg_mask.any():
+            max_neg_per_sample.scatter_reduce_(
+                0, batch_indices[neg_mask], logits_flat[neg_mask], 
+                reduce='amax', include_self=False
+            )
+        
+        # Only compute loss for samples that have both positive and negative labels
+        valid_samples = (min_pos_per_sample < float('inf')) & (max_neg_per_sample > float('-inf'))
+        
+        if not valid_samples.any():
             return torch.tensor(0.0, device=logits.device)
-
-        min_pos = positive_logits.min()
-        max_neg = negative_logits.max()
-        return F.relu(self.margin + max_neg - min_pos)
+        
+        sample_losses = F.relu(
+            self.margin + max_neg_per_sample[valid_samples] - min_pos_per_sample[valid_samples]
+        )
+        
+        # Temperature scaling based on average labels per sample
+        num_valid_samples = valid_samples.sum()
+        avg_valid_labels = logits.shape[0] / max(num_valid_samples, 1)
+        temperature_scale_base = getattr(self.config, "temperature_scale_base", 10.0)
+        temperature = self.config.temperature * (temperature_scale_base / max(avg_valid_labels, 1))
+        
+        return sample_losses.sum() * temperature * self.config.contrastive_loss_weight
 
     def _compute_separation_loss(self, logits: torch.Tensor, labels: torch.Tensor):
         if logits.numel() == 0:
@@ -469,6 +499,7 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
             output_attentions: Optional[bool] = None,
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
+            return_indices: bool = False,
         ) -> Union[Tuple[torch.Tensor], GliZNetOutput]:
             return_dict = (
                 return_dict if return_dict is not None else self.config.use_return_dict
@@ -503,8 +534,8 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 loss=loss,
                 logits=logits,
                 hidden_states=None,
-                batch_indices=None,
-                label_ids=None,
+                batch_indices=batch_indices if return_indices else None,
+                label_ids=label_ids if return_indices else None,
             )
 
         def _get_hidden_states(
@@ -565,13 +596,16 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
                 List of score lists, one per sample in the batch
             """
             self.eval()
+            
+            # Get outputs with indices
             outputs = self.forward(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 lmask=lmask,
                 return_dict=True,
+                return_indices=True,
             )
-
+            
             logits = outputs.logits
             batch_indices = outputs.batch_indices
             label_ids = outputs.label_ids
