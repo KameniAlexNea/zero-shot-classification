@@ -63,7 +63,7 @@ class ModelArgs:
         metadata={"help": "Minimum desired logit for positive labels"},
     )
     negative_logit_margin: float = field(
-        default=-1.0,
+        default=0.0,
         metadata={"help": "Maximum desired logit for negative labels"},
     )
     use_separator_pooling: bool = field(

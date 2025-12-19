@@ -58,7 +58,7 @@ class GliZNetConfig(PretrainedConfig):
         temperature_scale_base: float = 10.0,
         separation_loss_weight: float = 0.1,
         positive_logit_margin: float = 1.0,
-        negative_logit_margin: float = -1.0,
+        negative_logit_margin: float = 0.0,
         **kwargs,
     ):
         super().__init__(**kwargs)

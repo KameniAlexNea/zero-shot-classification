@@ -29,9 +29,22 @@ from gliznet.training_data import additional_datasets
 
 
 def create_model_tokenizer(args: ModelArgs):
+    """Create GliZNet model and tokenizer from arguments.
+
+    Args:
+        args: ModelArgs containing model configuration
+
+    Returns:
+        Tuple of (model, tokenizer)
+    """
+    # Initialize tokenizer with new API
     tokenizer = GliZNETTokenizer.from_pretrained(
-        args.model_name, model_max_length=args.model_max_length
+        args.model_name,
+        lab_token=args.lab_cls_token,
+        model_max_length=args.model_max_length,
     )
+
+    # Create GliZNet configuration
     config = GliZNetConfig(
         backbone_model=args.model_name,
         projected_dim=args.projected_dim,
@@ -47,8 +60,13 @@ def create_model_tokenizer(args: ModelArgs):
         positive_logit_margin=args.positive_logit_margin,
         negative_logit_margin=args.negative_logit_margin,
     )
+
+    # Initialize model and resize embeddings for custom tokens
     model = GliZNetForSequenceClassification(config)
     model.resize_token_embeddings(len(tokenizer))
+
+    logger.info(f"Model configuration: {config.to_dict()}")
+
     return model, tokenizer
 
 
@@ -94,11 +112,11 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Validate configuration
-    if model_args.use_separator_pooling and model_args.lab_cls_token == ";":
-        logger.warning(
-            "use_separator_pooling=True but lab_cls_token=';'. "
-            "Consider using '[LAB]' for separator pooling."
-        )
+    logger.info("Validating configuration...")
+    logger.info(f"Model: {model_args.model_name}")
+    logger.info(f"Similarity metric: {model_args.similarity_metric}")
+    logger.info(f"Label separator token: {model_args.lab_cls_token}")
+    logger.info(f"Max sequence length: {model_args.model_max_length}")
 
     # Create data configuration
     data_config = GliZNetDataConfig(
@@ -134,12 +152,11 @@ def main():
         f"Dataset loaded - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(testing_data)}"
     )
 
-    # Initialize tokenizer
-    logger.info(f"Initializing tokenizer from {model_args.model_name}...")
-    # Initialize model
-    logger.info(f"Initializing model with {model_args.model_class}...")
+    # Initialize model and tokenizer
+    logger.info(f"Initializing model and tokenizer from {model_args.model_name}...")
     model, tokenizer = create_model_tokenizer(model_args)
-    logger.info(f"Tokenizer initialized - Vocab size: {tokenizer.vocab_size}, ")
+    logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
+    logger.info(f"Model parameters: {model.num_parameters():,}")
 
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
     logger.info("Tokenizing datasets...")
@@ -225,10 +242,12 @@ def main():
     logger.info("✓ Evaluation complete")
 
     # Save final model
-    logger.info(f"Saving final model to {training_args.output_dir}...")
-    trainer.save_model()
-    tokenizer.tokenizer.save_pretrained(training_args.output_dir)
-    logger.info("✓ Model saved successfully")
+    final_model_path = os.path.join(training_args.output_dir, "final_model")
+    logger.info(f"Saving final model to {final_model_path}...")
+    os.makedirs(final_model_path, exist_ok=True)
+    trainer.save_model(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
+    logger.info("✓ Model and tokenizer saved successfully")
 
 
 if __name__ == "__main__":

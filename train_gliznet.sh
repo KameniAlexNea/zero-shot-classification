@@ -12,12 +12,17 @@ nohup uv run train_gliznet.py \
     --projected_dim 512 \
     --similarity_metric dot \
     --dropout_rate 0.1 \
+    --use_projection_layernorm \
     \
     `# Loss Configuration` \
     --scale_loss 10.0 \
     --margin 0.1 \
     --temperature 1.0 \
+    --temperature_scale_base 1.0 \
     --contrastive_loss_weight 1.0 \
+    --separation_loss_weight 0.1 \
+    --positive_logit_margin 1.0 \
+    --negative_logit_margin 0.0 \
     --use_separator_pooling \
     \
     `# Data Configuration` \
