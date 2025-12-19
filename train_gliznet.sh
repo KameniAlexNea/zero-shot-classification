@@ -38,7 +38,7 @@ nohup uv run train_gliznet.py \
     --output_dir "results/deberta-v3-small-sep-pooling" \
     --num_train_epochs 4 \
     --per_device_train_batch_size 64 \
-    --per_device_eval_batch_size 64 \
+    --per_device_eval_batch_size 128 \
     --gradient_accumulation_steps 8 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.01 \

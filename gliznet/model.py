@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class GlizNetConfig(DebertaV2Config):
-    margin: float = 0.1
+    margin: float = 0.5
     projected_dim: Optional[int] = None
     similarity_metric: SimilarityMetric = "dot"
     temperature: float = 1.0
@@ -23,7 +23,7 @@ class GlizNetConfig(DebertaV2Config):
     use_separator_pooling: bool = False
     temperature_scale_base: float = 10.0
     use_projection_layernorm: bool = True
-    separation_loss_weight: float = 0.1
+    separation_loss_weight: float = 0.5
     positive_logit_margin: float = 1.0
     negative_logit_margin: float = -1.0
 
@@ -263,8 +263,8 @@ class GliZNetLoss(nn.Module):
         logits = logits.view(-1)
         labels = labels.view(-1)
 
-        pos_mask = labels == 1.0
-        neg_mask = labels == 0.0
+        pos_mask = labels > 0.5
+        neg_mask = labels <= 0.5
 
         loss = torch.tensor(0.0, device=logits.device)
 
@@ -438,21 +438,21 @@ def create_gli_znet_for_sequence_classification(base_class=DebertaV2PreTrainedMo
 
             # Separate projectors for CLS and label tokens
             if projected_dim != self.config.hidden_size or use_ln:
-                self.cls_proj = nn.Sequential(
+                cls_proj = nn.Sequential(
                     nn.Linear(self.config.hidden_size, projected_dim),
                     nn.LayerNorm(projected_dim) if use_ln else nn.Identity(),
                 )
-                self.label_proj = nn.Sequential(
+                label_proj = nn.Sequential(
                     nn.Linear(self.config.hidden_size, projected_dim),
                     nn.LayerNorm(projected_dim) if use_ln else nn.Identity(),
                 )
             else:
-                self.cls_proj = nn.Identity()
-                self.label_proj = nn.Identity()
+                cls_proj = nn.Identity()
+                label_proj = nn.Identity()
 
-            self.similarity_head = GliZNetSimilarityHead(self.config, projected_dim)
+            similarity_head = GliZNetSimilarityHead(self.config, projected_dim)
             self.aggregator = GliZNetRepresentationAggregator(
-                self.config, self.cls_proj, self.label_proj, self.similarity_head
+                self.config, cls_proj, label_proj, similarity_head
             )
             self.loss_module = GliZNetLoss(self.config)
 
