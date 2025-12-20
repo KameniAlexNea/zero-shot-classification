@@ -322,7 +322,7 @@ additional_datasets = {
     "onionmonster_dream": load_onionmonster_dream,
     "sagnikrayc_mctest": load_sagnikrayc_mctest,
     "ehovy_race": load_ehovy_race,
-    "sentence_transformers_wikihow": load_sentence_transformers_wikihow,
+    # "sentence_transformers_wikihow": load_sentence_transformers_wikihow,
     "tasksource_cycic_classification": load_tasksource_cycic_classification,
     "ml4pubmed_pubmed": load_ml4pubmed_pubmed_text_classification_cased,
     "alexneakameni_qa_africa": load_alexneakameni_qa_africa,

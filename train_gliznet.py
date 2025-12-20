@@ -237,6 +237,14 @@ def main():
     logger.info(f"Learning rate: {training_args.learning_rate}")
     logger.info("=" * 60)
 
+    # Save final model
+    final_model_path = os.path.join(training_args.output_dir, "init_model")
+    logger.info(f"Saving initial model to {final_model_path}...")
+    os.makedirs(final_model_path, exist_ok=True)
+    trainer.save_model(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
+    logger.info("✓ Model and tokenizer saved successfully")
+
     try:
         trainer.train()
         logger.info("✓ Training completed successfully")

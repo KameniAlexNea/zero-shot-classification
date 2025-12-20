@@ -81,6 +81,10 @@ class GliZNetConfig(PretrainedConfig):
         # Load and store backbone config
         if backbone_config is None:
             backbone_config = AutoConfig.from_pretrained(backbone_model)
+        elif isinstance(backbone_config, dict):
+            # Extract model name/path if present, otherwise use backbone_model
+            model_name_or_path = backbone_config.pop('_name_or_path', backbone_model)
+            backbone_config = AutoConfig.from_pretrained(model_name_or_path, **backbone_config)
         self.backbone_config = backbone_config
 
 
@@ -166,10 +170,11 @@ class SimilarityHead(nn.Module):
             label_norm = F.normalize(label_repr, p=2, dim=-1)
             # Cosine similarity: dot product of normalized vectors
             raw_sim = (text_norm * label_norm).sum(dim=-1, keepdim=True)
-            # Scale by learnable temperature
-            logits = raw_sim * self.logit_scale.exp()
+            # Scale by learnable temperature (clamp to prevent overflow)
+            scale = self.logit_scale.clamp(-10, 10).exp()
+            logits = raw_sim * scale
 
-        return logits, self.logit_scale
+        return logits, self.logit_scale.clamp(-10, 10)
 
 
 class LabelAggregator(nn.Module):
@@ -337,11 +342,13 @@ class GliZNetLoss(nn.Module):
             )
             current_labels = torch.cat([current_labels, padding], dim=1)
 
-        total_loss = torch.tensor(0.0, device=logits.device)
+        total_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
 
         # --- 1. Supervised Contrastive Loss (Primary) ---
         if self.config.supcon_loss_weight > 0:
             supcon_loss = self._supcon_loss(dense_logits, current_labels)
+            if torch.isnan(supcon_loss) or torch.isinf(supcon_loss):
+                supcon_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
             total_loss = total_loss + supcon_loss * self.config.supcon_loss_weight
 
         # --- 2. Label Repulsion Loss (Refined: same-sample only) ---
@@ -349,6 +356,8 @@ class GliZNetLoss(nn.Module):
             repulsion_loss = self._label_repulsion_loss(
                 label_embeddings, label_ids, batch_indices
             )
+            if torch.isnan(repulsion_loss) or torch.isinf(repulsion_loss):
+                repulsion_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
             total_loss = (
                 total_loss + repulsion_loss * self.config.label_repulsion_weight
             )
@@ -356,6 +365,8 @@ class GliZNetLoss(nn.Module):
         # --- 3. Auxiliary BCE (Decoupled Temperature) ---
         if self.config.bce_loss_weight > 0:
             bce_loss = self._bce_loss(dense_logits, current_labels, logit_scale)
+            if torch.isnan(bce_loss) or torch.isinf(bce_loss):
+                bce_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
             total_loss = total_loss + bce_loss * self.config.bce_loss_weight
 
         return total_loss
@@ -373,25 +384,49 @@ class GliZNetLoss(nn.Module):
         # Only compute for samples that have at least one positive
         has_positives = (targets_clean > 0.5).any(dim=1)
         if not has_positives.any():
-            return torch.tensor(0.0, device=logits.device)
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
         logits = logits[has_positives]
         targets_clean = targets_clean[has_positives]
         mask_valid_filtered = mask_valid[has_positives]
 
+        # Check if any sample has all invalid logits
+        has_valid_labels = mask_valid_filtered.any(dim=1)
+        if not has_valid_labels.any():
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+        logits = logits[has_valid_labels]
+        targets_clean = targets_clean[has_valid_labels]
+        mask_valid_filtered = mask_valid_filtered[has_valid_labels]
+
         # Mask out invalid positions for softmax
         logits_masked = logits.clone()
         logits_masked[~mask_valid_filtered] = float("-inf")
 
+        # Check if any sample has ALL -inf logits (would cause NaN in log_softmax)
+        all_inf = torch.isinf(logits_masked).all(dim=1)
+        if all_inf.any():
+            # Filter out samples with all -inf logits
+            valid_samples = ~all_inf
+            if not valid_samples.any():
+                return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            logits_masked = logits_masked[valid_samples]
+            targets_clean = targets_clean[valid_samples]
+            mask_valid_filtered = mask_valid_filtered[valid_samples]
+
         # Log-softmax over valid labels for each sample
         log_probs = F.log_softmax(logits_masked, dim=1)
+
+        # Check for NaN/inf in log_probs
+        if torch.isnan(log_probs).any() or torch.isinf(log_probs).all():
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
         # Compute loss: -mean(log_prob of positive labels)
         pos_mask = (targets_clean > 0.5).float()
         sum_log_prob_pos = (log_probs * pos_mask).sum(dim=1)
-        num_pos = pos_mask.sum(dim=1)
+        num_pos = pos_mask.sum(dim=1).clamp(min=1e-6)
 
-        loss_per_sample = -sum_log_prob_pos / (num_pos + 1e-9)
+        loss_per_sample = -sum_log_prob_pos / num_pos
         return loss_per_sample.mean()
 
     def _label_repulsion_loss(
@@ -405,7 +440,7 @@ class GliZNetLoss(nn.Module):
         This prevents label embedding collapse while respecting contextual embeddings.
         """
         if embeddings.numel() == 0:
-            return torch.tensor(0.0, device=embeddings.device)
+            return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
 
         # Normalize embeddings for cosine similarity
         embeddings_norm = F.normalize(embeddings, p=2, dim=-1)
@@ -422,7 +457,7 @@ class GliZNetLoss(nn.Module):
         final_mask = diff_label_mask & same_batch_mask
 
         if not final_mask.any():
-            return torch.tensor(0.0, device=embeddings.device)
+            return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
 
         valid_sims = sim_matrix[final_mask]
 
@@ -443,15 +478,24 @@ class GliZNetLoss(nn.Module):
         """
         mask = targets != -100
         if not mask.any():
-            return torch.tensor(0.0, device=logits.device)
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
         valid_logits = logits[mask]
         valid_targets = targets[mask]
 
+        # Filter out -inf logits (samples that had no valid labels)
+        finite_mask = torch.isfinite(valid_logits)
+        if not finite_mask.any():
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+        
+        valid_logits = valid_logits[finite_mask]
+        valid_targets = valid_targets[finite_mask]
+
         # Decoupling: unscale main logits, then apply BCE-specific scale
         # This prevents SupCon temperature from dominating BCE gradients
-        raw_logits = valid_logits / (main_logit_scale.exp() + 1e-9)
-        bce_logits = raw_logits * self.bce_scale.abs().clamp(min=0.1)
+        scale_clamped = main_logit_scale.clamp(-10, 10).exp().clamp(min=1e-6)
+        raw_logits = valid_logits / scale_clamped
+        bce_logits = raw_logits * self.bce_scale.abs().clamp(min=0.1, max=10.0)
 
         return F.binary_cross_entropy_with_logits(
             bce_logits, valid_targets, reduction="mean"

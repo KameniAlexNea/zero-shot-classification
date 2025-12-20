@@ -64,13 +64,16 @@ class GliZNETTokenizer:
         self, text: str, labels: List[str]
     ) -> Tuple[List[int], List[int]]:
         """Build sequence: [CLS] text [SEP] label1 [LAB] label2 [LAB] ..."""
-        # Tokenize text (no special tokens)
+        # Tokenize text (no special tokens, no truncation warnings)
         text_ids = self.tokenizer.encode(
-            text, add_special_tokens=False, truncation=False
+            text, add_special_tokens=False, truncation=True, max_length=self.max_length
         )
 
-        # Tokenize all labels (cached)
-        label_ids_list = [list(self._tokenize_label_cached(label)) for label in labels]
+        # Tokenize all labels (cached, truncate individual labels)
+        label_ids_list = [
+            list(self.tokenizer.encode(label, add_special_tokens=False, truncation=True, max_length=128))
+            for label in labels
+        ]
 
         # Calculate space: [CLS] + text + [SEP] + labels + [LAB] separators
         overhead = 2  # [CLS] and [SEP]
