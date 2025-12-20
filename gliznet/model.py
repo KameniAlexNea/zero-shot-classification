@@ -16,6 +16,18 @@ if TYPE_CHECKING:
     from gliznet.tokenizer import GliZNETTokenizer
 
 
+@dataclass
+class LabelScore:
+    label: str
+    score: float
+
+
+@dataclass
+class PredictionOutput:
+    text: str
+    labels: list[LabelScore]
+
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -83,8 +95,7 @@ class GliZNetConfig(PretrainedConfig):
             backbone_config = AutoConfig.from_pretrained(backbone_model)
         elif isinstance(backbone_config, dict):
             # Extract model name/path if present, otherwise use backbone_model
-            model_name_or_path = backbone_config.pop('_name_or_path', backbone_model)
-            backbone_config = AutoConfig.from_pretrained(model_name_or_path, **backbone_config)
+            backbone_config = AutoConfig.for_model(**backbone_config)
         self.backbone_config = backbone_config
 
 
@@ -348,7 +359,9 @@ class GliZNetLoss(nn.Module):
         if self.config.supcon_loss_weight > 0:
             supcon_loss = self._supcon_loss(dense_logits, current_labels)
             if torch.isnan(supcon_loss) or torch.isinf(supcon_loss):
-                supcon_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+                supcon_loss = torch.tensor(
+                    0.0, device=logits.device, requires_grad=True
+                )
             total_loss = total_loss + supcon_loss * self.config.supcon_loss_weight
 
         # --- 2. Label Repulsion Loss (Refined: same-sample only) ---
@@ -357,7 +370,9 @@ class GliZNetLoss(nn.Module):
                 label_embeddings, label_ids, batch_indices
             )
             if torch.isnan(repulsion_loss) or torch.isinf(repulsion_loss):
-                repulsion_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+                repulsion_loss = torch.tensor(
+                    0.0, device=logits.device, requires_grad=True
+                )
             total_loss = (
                 total_loss + repulsion_loss * self.config.label_repulsion_weight
             )
@@ -487,7 +502,7 @@ class GliZNetLoss(nn.Module):
         finite_mask = torch.isfinite(valid_logits)
         if not finite_mask.any():
             return torch.tensor(0.0, device=logits.device, requires_grad=True)
-        
+
         valid_logits = valid_logits[finite_mask]
         valid_targets = valid_targets[finite_mask]
 
@@ -565,7 +580,48 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
     def resize_token_embeddings(self, new_num_tokens: int) -> nn.Embedding:
         """Resize token embeddings (for custom tokens)."""
+        if self.config.backbone_config.vocab_size != new_num_tokens:
+            self.config.backbone_config.vocab_size = new_num_tokens
+            self.backbone.config.vocab_size = new_num_tokens
         return self.backbone.resize_token_embeddings(new_num_tokens)
+
+    @classmethod
+    def from_pretrained_with_tokenizer(
+        cls,
+        pretrained_model_name_or_path: str,
+        **kwargs,
+    ):
+        """Load a saved GliZNet model with its tokenizer.
+
+        This is the CORRECT way to load a saved GliZNet model.
+        Use this instead of from_pretrained() directly.
+
+        Args:
+            pretrained_model_name_or_path: Path to saved model directory
+            **kwargs: Additional arguments for loading
+
+        Returns:
+            Tuple of (model, tokenizer)
+        """
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        # Load tokenizer first to get correct vocab size
+        tokenizer = GliZNETTokenizer.from_pretrained(
+            pretrained_model_name_or_path, fix_mistral_regex=True
+        )
+
+        # Load config
+        config = GliZNetConfig.from_pretrained(pretrained_model_name_or_path)
+
+        # CRITICAL: Update backbone_config vocab size to match tokenizer
+        config.backbone_config.vocab_size = len(tokenizer)
+
+        # Now load model normally - backbone will be created with correct vocab size
+        model = cls.from_pretrained(
+            pretrained_model_name_or_path, config=config, **kwargs
+        )
+
+        return model, tokenizer
 
     @classmethod
     def from_backbone_pretrained(
@@ -724,5 +780,105 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                     ).tolist()
 
                 results[batch_id] = final_scores
+
+        return results
+
+    @torch.inference_mode()
+    def predict_example(
+        self,
+        text: str,
+        labels: List[str],
+        tokenizer: "GliZNETTokenizer",
+        device: str = None,
+        activation: Literal["sigmoid", "softmax"] = "sigmoid",
+    ) -> PredictionOutput:
+        """Predict scores for a single text with given labels.
+
+        Args:
+            text: Input text to classify
+            labels: List of candidate labels
+            tokenizer: GliZNETTokenizer instance
+            device: Device to run inference on ("cpu" or "cuda")
+            activation: Activation function to apply
+
+        Returns:
+            PredictionOutput instance mapping labels to scores
+        """
+        self.eval()
+        if device is None:
+            device = self.device
+
+        # Tokenize
+        batch = tokenizer([(text, labels)])
+
+        # Move to device
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        lmask = batch["lmask"].to(device)
+
+        # Get predictions
+        predictions = self.predict(
+            input_ids, attention_mask, lmask, activation=activation
+        )
+        scores = predictions[0]
+
+        return PredictionOutput(
+            text=text,
+            labels=[
+                LabelScore(label=label, score=score)
+                for label, score in zip(labels, scores)
+            ],
+        )
+
+    @torch.inference_mode()
+    def predict_batch(
+        self,
+        texts: List[str],
+        all_labels: List[List[str]],
+        tokenizer: "GliZNETTokenizer",
+        device: str = None,
+        activation: Literal["sigmoid", "softmax"] = "sigmoid",
+    ) -> List[PredictionOutput]:
+        """Predict scores for multiple texts with their respective labels.
+
+        Args:
+            texts: List of input texts to classify
+            all_labels: List of label lists (one per text)
+            tokenizer: GliZNETTokenizer instance
+            device: Device to run inference on ("cpu" or "cuda")
+            activation: Activation function to apply
+            return_sorted: If True, return results sorted by score (descending)
+
+        Returns:
+            List of PredictionOutput instances mapping labels to scores
+        """
+        self.eval()
+        if device is None:
+            device = self.device
+
+        # Tokenize batch
+        batch = tokenizer([(text, labels) for text, labels in zip(texts, all_labels)])
+
+        # Move to device
+        input_ids = batch["input_ids"].to(device)
+        attention_mask = batch["attention_mask"].to(device)
+        lmask = batch["lmask"].to(device)
+
+        # Get predictions
+        predictions = self.predict(
+            input_ids, attention_mask, lmask, activation=activation
+        )
+
+        # Build results
+        results = [
+            PredictionOutput(
+                text=text,
+                labels=[
+                    LabelScore(label=label, score=score)
+                    for label, score in zip(labels, scores)
+                ],
+            )
+            for text, labels, scores in zip(texts, all_labels, predictions)
+        ]
 
         return results

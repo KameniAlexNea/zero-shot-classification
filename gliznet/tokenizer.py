@@ -71,7 +71,11 @@ class GliZNETTokenizer:
 
         # Tokenize all labels (cached, truncate individual labels)
         label_ids_list = [
-            list(self.tokenizer.encode(label, add_special_tokens=False, truncation=True, max_length=128))
+            list(
+                self.tokenizer.encode(
+                    label, add_special_tokens=False, truncation=True, max_length=128
+                )
+            )
             for label in labels
         ]
 
