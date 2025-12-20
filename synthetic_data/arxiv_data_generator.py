@@ -5,7 +5,7 @@ import json
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List
+from typing import List
 
 from datasets import Dataset, load_dataset
 from litellm import completion

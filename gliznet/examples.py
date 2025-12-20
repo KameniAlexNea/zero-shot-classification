@@ -14,6 +14,7 @@ from transformers import BertConfig
 from .config import (
     GliZNetDataConfig,
     GliZNetTrainingConfig,
+    get_mean_pooling_config,
     get_separator_pooling_config,
 )
 from .data import add_tokenized_function, load_dataset
@@ -43,8 +44,7 @@ def create_model_with_config(
     # Create tokenizer with appropriate separator
     separator = "[LAB]" if use_custom_separator else ";"
     tokenizer = GliZNETTokenizer.from_pretrained(
-        pretrained_model_name,
-        cls_separator_token=separator,
+        pretrained_model_name, lab_cls_token=separator, fix_mistral_regex=True
     )
 
     # Use provided config or create default based on pooling strategy
@@ -52,8 +52,6 @@ def create_model_with_config(
         if use_custom_separator:
             training_config = get_separator_pooling_config()
         else:
-            from .config import get_mean_pooling_config
-
             training_config = get_mean_pooling_config()
 
     # Create model configuration
@@ -71,12 +69,11 @@ def create_model_with_config(
         model.config.vocab_size = new_vocab_size
         model.config.use_separator_pooling = True
 
-    print(f"✓ Model created with pooling strategy: {tokenizer.get_pooling_strategy()}")
+    print(f"✓ Model created with pooling strategy: {tokenizer.pooling_strategy}")
     print(f"✓ Vocabulary size: {tokenizer.get_vocab_size()}")
     print(f"✓ Loss configuration:")
     print(f"  - BCE scale: {training_config.scale_loss}")
     print(f"  - Contrastive weight: {training_config.contrastive_loss_weight}")
-    print(f"  - Barlow weight: {training_config.barlow_loss_weight}")
 
     return model, tokenizer
 
@@ -123,7 +120,7 @@ def prepare_dataset(
         tokenizer=tokenizer,
         max_labels=data_config.max_labels,
         shuffle_labels=data_config.shuffle_labels,
-        as_transform=True,  # Use lazy transform for efficiency
+        as_transform=True,
     )
 
     print(f"✓ Dataset prepared: {len(tokenized_dataset)} samples")
@@ -144,7 +141,6 @@ def example_training_setup():
         projected_dim=256,  # Project to 256 dimensions
         similarity_metric="dot",
         scale_loss=10.0,
-        barlow_loss_weight=0.05,
         contrastive_loss_weight=1.0,
         use_separator_pooling=True,  # Use separator token pooling
     )
@@ -161,6 +157,73 @@ def example_training_setup():
         use_custom_separator=True,
         training_config=training_config,
     )
+
+    # 2a. Tokenizer structure visualization
+    print("\n2a. Tokenizer Structure Visualization:")
+    example_text = "The researchers discovered ancient tools."
+    example_labels = ["archaeology", "science", "cooking"]
+
+    # Single tokenization
+    single_inputs = tokenizer(example_text, example_labels)
+
+    # Decode to show structure
+    tokens_decoded = []
+    for i, (token_id, lmask_val) in enumerate(
+        zip(single_inputs["input_ids"].tolist(), single_inputs["lmask"].tolist())
+    ):
+        if token_id == tokenizer.pad_token_id:
+            break
+        token_str = tokenizer.tokenizer.decode([token_id])
+        tokens_decoded.append(f"{token_str}(lmask={lmask_val})")
+
+    print(f"   Text: {example_text}")
+    print(f"   Labels: {example_labels}")
+    print(f"   Token structure: {' '.join(tokens_decoded)}")
+    print(
+        f"   Input IDs (non-pad): {single_inputs['input_ids'][single_inputs['input_ids'] != tokenizer.pad_token_id].tolist()}"
+    )
+    print(
+        f"   Lmask (non-pad): {single_inputs['lmask'][single_inputs['lmask'] != 0].tolist()}"
+    )
+
+    # 2b. Compare single vs batch tokenization
+    print("\n2b. Single vs Batch Tokenization Comparison:")
+    texts = [example_text, "Another test sentence here."]
+    labels_batch = [example_labels, ["testing", "comparison"]]
+
+    # Single processing
+    single_results = []
+    for text, labels in zip(texts, labels_batch):
+        result = tokenizer(text, labels)
+        single_results.append(result)
+
+    # Batch processing
+    batch_results = tokenizer(texts, labels_batch)
+
+    # Compare
+    print("   Comparing single vs batch tokenization:")
+    for idx in range(len(texts)):
+        single_ids = single_results[idx]["input_ids"]
+        batch_ids = batch_results["input_ids"][idx]
+        single_lmask = single_results[idx]["lmask"]
+        batch_lmask = batch_results["lmask"][idx]
+
+        ids_match = torch.equal(single_ids, batch_ids)
+        lmask_match = torch.equal(single_lmask, batch_lmask)
+
+        print(
+            f"   Sample {idx}: input_ids match={ids_match}, lmask match={lmask_match}"
+        )
+        if not ids_match:
+            print(
+                f"      Single IDs: {single_ids[single_ids != tokenizer.pad_token_id].tolist()}"
+            )
+            print(
+                f"      Batch IDs:  {batch_ids[batch_ids != tokenizer.pad_token_id].tolist()}"
+            )
+        if not lmask_match:
+            print(f"      Single lmask: {single_lmask[single_lmask != 0].tolist()}")
+            print(f"      Batch lmask:  {batch_lmask[batch_lmask != 0].tolist()}")
 
     # 3. Prepare data configuration
     data_config = GliZNetDataConfig(
@@ -219,10 +282,12 @@ def example_inference():
     texts = [
         "SpaceX launches new satellite into orbit",
         "New restaurant opens downtown",
+        "The World Health Organization has released a comprehensive report detailing the latest advances in medical research and public health initiatives across multiple continents. The report highlights significant progress in vaccine development, disease prevention strategies, and healthcare infrastructure improvements in developing nations. Researchers have identified several key factors contributing to improved health outcomes, including increased access to clean water, better nutrition programs, and enhanced medical training for healthcare workers in remote areas. The document also addresses ongoing challenges such as antimicrobial resistance, emerging infectious diseases, and the need for sustainable funding mechanisms to support long-term health programs. International collaboration between governments, non-governmental organizations, and private sector partners has been instrumental in achieving these milestones, demonstrating the power of coordinated global efforts in addressing complex health challenges.",
     ]
 
     labels_batch = [
         ["space", "technology", "food", "sports"],
+        ["food", "business", "technology", "entertainment"],
         ["food", "business", "technology", "entertainment"],
     ]
 

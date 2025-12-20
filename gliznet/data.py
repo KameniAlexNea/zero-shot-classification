@@ -68,6 +68,10 @@ def load_dataset(
         }
 
     ds = datasets.load_dataset(path, name)[split]
+    if split == "train":
+        arxiv_ds = datasets.load_from_disk("arxiv_synthetic_data/dataset")
+        ds: datasets.Dataset = datasets.concatenate_datasets([ds, arxiv_ds])
+        ds = ds.shuffle(seed=42)
     text_column = "text" if "text" in ds.column_names else "sentence"
     ds = ds.map(mapper)
 
@@ -78,7 +82,11 @@ def load_dataset(
 
 
 def limit_labels(
-    labels_text: List[str], labels_int: List[int], shuffle_labels: bool, max_labels: int
+    labels_text: List[str],
+    labels_int: List[int],
+    shuffle_labels: bool,
+    max_labels: int,
+    remove_underscores: float = 0.9,
 ):
     """Limit the number of labels while maintaining natural proportion.
 
@@ -96,7 +104,10 @@ def limit_labels(
         2. Take first max_labels samples
         3. This naturally maintains the original proportion of positive/negative labels
     """
-    labels_text = [i.replace("_", " ") for i in labels_text]
+    labels_text = [
+        i.replace("_", " ") if random.random() < remove_underscores else i
+        for i in labels_text
+    ]
 
     # Combine labels into pairs
     combined = list(zip(labels_text, labels_int))
@@ -139,51 +150,60 @@ def add_tokenized_function(
 
     Returns:
         Tokenized dataset
-
-    Note:
-        Token dropout should be applied dynamically in collate_fn, not here,
-        to ensure different dropout masks across epochs.
     """
 
     def tokenize_function(examples):
-        # Handle batched input format: text=['hello'], ltext=[[...]], lint=[[...]]
+        # Handle batched input format
         texts = examples[text_column]
         raw_texts_batch = examples[labels_text_column]
         raw_ints_batch = examples[labels_int_column]
 
-        # First step: prepare all labels data
-        processed_lints_batch = []
-        processed_ltexts_batch = []
+        # Prepare (text, labels) tuples for tokenizer
+        tokenizer_inputs = []
+        labels_batch = []
 
-        for raw_texts, raw_ints in zip(raw_texts_batch, raw_ints_batch):
+        for text, raw_texts, raw_ints in zip(texts, raw_texts_batch, raw_ints_batch):
             # Process labels for this example
-            txts, ints = limit_labels(raw_texts, raw_ints, shuffle_labels, max_labels)
-            processed_ltexts_batch.append(txts)
-            processed_lints_batch.append(torch.tensor(ints, dtype=torch.float32))
+            label_texts, label_ints = limit_labels(
+                raw_texts, raw_ints, shuffle_labels, max_labels
+            )
 
-        # Second step: batch tokenize everything at once (without token dropout)
-        tokenized = tokenizer(texts, processed_ltexts_batch, token_dropout=0.0)
+            tokenizer_inputs.append((text, label_texts))
+            labels_batch.append(torch.tensor(label_ints, dtype=torch.float32))
 
-        # Third step: truncate labels to match what actually fit after tokenization
+        # Tokenize all examples in batch
+        tokenized: dict[str, torch.Tensor] = tokenizer(
+            tokenizer_inputs, return_tensors="pt"
+        )
+
+        # Determine how many labels actually fit by checking lmask
+        # lmask contains label IDs (1, 2, 3, ...) for each label's tokens
         truncated_labels = []
-        for label_tensor, num_fitted in zip(
-            processed_lints_batch, tokenized["num_labels_fitted"]
-        ):
-            # Only keep labels that actually fit in the tokenized sequence
-            truncated_labels.append(label_tensor[:num_fitted])
+        num_labels_per_text = []
 
-        # Return the results (without num_labels_fitted in the dataset)
+        for lmask_row, label_tensor in zip(tokenized["lmask"], labels_batch):
+            # Count unique non-zero label IDs to see how many labels fit
+            num_fitted = int(lmask_row.max().item()) if lmask_row.any() else 0
+            truncated_labels.append(label_tensor[:num_fitted])
+            num_labels_per_text.append(num_fitted)
+
+        # Pad labels to same length
+        labels_padded = pad_sequence(
+            truncated_labels, batch_first=True, padding_value=-100
+        )
+        num_labels_tensor = torch.tensor(num_labels_per_text, dtype=torch.long)
+
         return {
             "input_ids": tokenized["input_ids"],
             "attention_mask": tokenized["attention_mask"],
             "lmask": tokenized["lmask"],
-            "labels": truncated_labels,
+            "labels": labels_padded,
+            "num_labels": num_labels_tensor,
         }
 
     if as_transform:
-        return hf_dataset.with_transform(
-            tokenize_function,
-        )
+        return hf_dataset.with_transform(tokenize_function)
+
     return hf_dataset.map(
         tokenize_function,
         batched=True,
@@ -198,32 +218,48 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     """Collate function for batching samples.
 
     Args:
-        batch: List of tokenized samples or single dict (from with_transform)
+        batch: List of tokenized samples
 
     Returns:
         Batched tensors with proper padding
-
-    Note:
-        If you need token dropout, apply it here by masking input_ids randomly.
-        This ensures different dropout masks across epochs.
     """
+    # Handle single dict (from with_transform)
     if isinstance(batch, dict):
         return {
-            "input_ids": torch.tensor(batch["input_ids"]),
-            "attention_mask": torch.tensor(batch["attention_mask"]),
-            "lmask": torch.tensor(batch["lmask"]),
-            "labels": pad_sequence(
-                [torch.tensor(lab) for lab in batch["labels"]],
-                batch_first=True,
-                padding_value=-100,
+            "input_ids": (
+                batch["input_ids"]
+                if isinstance(batch["input_ids"], torch.Tensor)
+                else torch.tensor(batch["input_ids"])
+            ),
+            "attention_mask": (
+                batch["attention_mask"]
+                if isinstance(batch["attention_mask"], torch.Tensor)
+                else torch.tensor(batch["attention_mask"])
+            ),
+            "lmask": (
+                batch["lmask"]
+                if isinstance(batch["lmask"], torch.Tensor)
+                else torch.tensor(batch["lmask"])
+            ),
+            "labels": (
+                batch["labels"]
+                if isinstance(batch["labels"], torch.Tensor)
+                else torch.tensor(batch["labels"])
+            ),
+            "num_labels": (
+                batch["num_labels"]
+                if isinstance(batch["num_labels"], torch.Tensor)
+                else torch.tensor(batch["num_labels"])
             ),
         }
-    # Stack regular tensors
+
+    # Stack regular tensors (already tensors from tokenizer)
     input_ids = torch.stack([item["input_ids"] for item in batch])
     attention_mask = torch.stack([item["attention_mask"] for item in batch])
     lmask = torch.stack([item["lmask"] for item in batch])
+    num_labels = torch.stack([item["num_labels"] for item in batch])
 
-    # Handle labels which can have different lengths per sample
+    # Pad labels (variable length per sample) - already padded but may need re-padding
     labels = pad_sequence(
         [item["labels"] for item in batch], batch_first=True, padding_value=-100
     )
@@ -233,4 +269,5 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         "attention_mask": attention_mask,
         "lmask": lmask,
         "labels": labels,
+        "num_labels": num_labels,
     }

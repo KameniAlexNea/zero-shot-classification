@@ -74,8 +74,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         )
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
-        self.model.cls_proj = nn.Identity()
-        self.model.label_proj = nn.Identity()
+        self.model.aggregator.cls_proj = nn.Identity()
+        self.model.aggregator.label_proj = nn.Identity()
         # sample inputs: batch=2, seq_len=4
         self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
@@ -94,15 +94,9 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
         model.hidden_size = self.hidden_size
-        model.cls_proj = nn.Identity()
-        model.label_proj = nn.Identity()
+        model.aggregator.cls_proj = nn.Identity()
+        model.aggregator.label_proj = nn.Identity()
         return model
-
-    def test_compute_similarity_dot(self):
-        t = torch.tensor([[1.0, 2.0]])
-        lab = torch.tensor([[3.0, 4.0]])
-        sim = self.model.compute_similarity(t, lab)  # dot / temp
-        self.assertTrue(torch.allclose(sim, torch.tensor([[5.5]])))
 
     # Test similarity metric: dot
     def test_similarity_metric_dot(self):
@@ -111,13 +105,6 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
         # Test configuration
         self.assertEqual(model.config.similarity_metric, "dot")
-
-        # Test compute_similarity method
-        t = torch.tensor([[1.0, 2.0, 3.0]])
-        lab = torch.tensor([[2.0, 1.0, 1.0]])
-        expected = torch.tensor([[2.33333]])
-        sim = model.compute_similarity(t, lab)
-        self.assertTrue(torch.allclose(sim, expected))
 
         # Test forward pass
         out = model(
@@ -138,8 +125,8 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         self.assertEqual(model.config.similarity_metric, "bilinear")
 
         # Test that bilinear layer is created
-        self.assertTrue(hasattr(model, "classifier"))
-        self.assertIsInstance(model.classifier, nn.Bilinear)
+        self.assertTrue(hasattr(model.aggregator.similarity_head, "classifier"))
+        self.assertIsInstance(model.aggregator.similarity_head.classifier, nn.Bilinear)
 
         # Test forward pass
         out = model(
@@ -154,16 +141,15 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
     # Test similarity metric: dot_learning
     def test_similarity_metric_dot_learning(self):
         """Test dot_learning similarity metric"""
-        model = self._create_model_with_metric("dot_learning")
+        model = self._create_model_with_metric("dot")
 
         # Test configuration
-        self.assertEqual(model.config.similarity_metric, "dot_learning")
+        self.assertEqual(model.config.similarity_metric, "dot")
 
         # Test that linear layer is created
-        self.assertTrue(hasattr(model, "classifier"))
-        self.assertIsInstance(model.classifier, nn.Linear)
-        self.assertEqual(model.classifier.out_features, 1)
-        # self.assertIsNone(model.classifier.bias)  # Should be bias=False
+        self.assertTrue(hasattr(model.aggregator.similarity_head, "classifier"))
+        self.assertIsInstance(model.aggregator.similarity_head.classifier, nn.Linear)
+        self.assertEqual(model.aggregator.similarity_head.classifier.out_features, 1)
 
         # Test forward pass
         out = model(
@@ -177,7 +163,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_with_labels(self):
         """Test all similarity metrics with labels and loss computation"""
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -201,7 +187,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_predict(self):
         """Test prediction method for all similarity metrics"""
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -229,7 +215,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         fixed_attn = torch.where(fixed_input_ids > 0, 1, 0)
         fixed_lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
 
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -237,8 +223,13 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
                 model2 = self._create_model_with_metric(metric)
 
                 # Copy weights from model1 to model2 to ensure identical parameters
-                if hasattr(model1, "classifier"):
-                    model2.classifier.load_state_dict(model1.classifier.state_dict())
+                if (
+                    hasattr(model1.aggregator.similarity_head, "classifier")
+                    and model1.aggregator.similarity_head.classifier is not None
+                ):
+                    model2.aggregator.similarity_head.classifier.load_state_dict(
+                        model1.aggregator.similarity_head.classifier.state_dict()
+                    )
 
                 # Forward pass on both models
                 out1 = model1(
@@ -328,23 +319,23 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         self.assertEqual(new_embeddings.num_embeddings, new_vocab_size)
         self.assertEqual(model.get_input_embeddings().num_embeddings, new_vocab_size)
 
-        # Original config should still be unchanged (this is the issue we identified)
-        self.assertEqual(model.config.vocab_size, original_vocab_size)
+        # Config gets updated by transformers' resize_token_embeddings
+        self.assertEqual(model.config.vocab_size, new_vocab_size)
 
     def test_from_pretrained_with_tokenizer_default(self):
         """Test model creation with default tokenizer (no custom tokens)"""
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token=";"
+            "bert-base-uncased", pooling_strategy="mean"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
             "bert-base-uncased", tokenizer
         )
 
-        # Should not resize embeddings
-        self.assertFalse(getattr(model.config, "resized_token_embeddings", False))
+        # Should not resize embeddings or set separator pooling
+        self.assertFalse(model.config.use_separator_pooling)
         self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
 
     def test_from_pretrained_with_tokenizer_custom(self):
@@ -352,27 +343,27 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
             "bert-base-uncased", tokenizer
         )
 
-        # Should resize embeddings and update config
-        self.assertTrue(getattr(model.config, "resized_token_embeddings", False))
+        # Should resize embeddings and set separator pooling
+        self.assertTrue(model.config.use_separator_pooling)
         self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
         self.assertEqual(
             model.get_input_embeddings().num_embeddings, tokenizer.get_vocab_size()
         )
 
     def test_compute_batch_logits_method_selection(self):
-        """Test that correct computation method is selected based on resized_token_embeddings"""
+        """Test that correct computation method is selected based on use_separator_pooling"""
         from gliznet.tokenizer import GliZNETTokenizer
 
         # Create model with custom tokens
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -382,11 +373,11 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         # Replace with dummy encoder for testing
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
-        model.cls_proj = nn.Identity()
-        model.label_proj = nn.Identity()
+        model.aggregator.cls_proj = nn.Identity()
+        model.aggregator.label_proj = nn.Identity()
 
-        # Test that resized_token_embeddings flag is set
-        self.assertTrue(getattr(model.config, "resized_token_embeddings", False))
+        # Test that use_separator_pooling flag is set
+        self.assertTrue(model.config.use_separator_pooling)
 
         # Create test inputs
         text = "Test text"
@@ -409,7 +400,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[CUSTOM]"
+            "bert-base-uncased", lab_cls_token="[CUSTOM]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -417,8 +408,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         )
 
         # Check that config has been updated properly
-        self.assertTrue(hasattr(model.config, "resized_token_embeddings"))
-        self.assertTrue(model.config.resized_token_embeddings)
+        self.assertTrue(hasattr(model.config, "use_separator_pooling"))
+        self.assertTrue(model.config.use_separator_pooling)
         self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
 
     def test_model_inference_with_custom_tokens(self):
@@ -426,7 +417,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -436,8 +427,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         # Replace with dummy encoder
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
-        model.cls_proj = nn.Identity()
-        model.label_proj = nn.Identity()
+        model.aggregator.cls_proj = nn.Identity()
+        model.aggregator.label_proj = nn.Identity()
 
         # Test prediction
         texts = ["Great movie!", "Terrible film."]
@@ -462,7 +453,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -491,7 +482,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
 
         # Default tokenizer (no custom tokens)
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token=";"
+            "bert-base-uncased", pooling_strategy="mean"
         )
 
         model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
@@ -501,11 +492,11 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         # Replace with dummy encoder
         setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
         model.config.hidden_size = self.hidden_size
-        model.cls_proj = nn.Identity()
-        model.label_proj = nn.Identity()
+        model.aggregator.cls_proj = nn.Identity()
+        model.aggregator.label_proj = nn.Identity()
 
-        # Should use original computation method
-        self.assertFalse(getattr(model.config, "resized_token_embeddings", False))
+        # Should not use separator pooling
+        self.assertFalse(model.config.use_separator_pooling)
 
         # Test inference still works
         text = "Test text"
@@ -526,10 +517,10 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
         from gliznet.tokenizer import GliZNETTokenizer
 
         tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", cls_separator_token="[LAB]"
+            "bert-base-uncased", lab_cls_token="[LAB]"
         )
 
-        metrics = ["dot", "bilinear", "dot_learning"]
+        metrics = ["dot", "bilinear", "dot"]
 
         for metric in metrics:
             with self.subTest(metric=metric):
@@ -543,8 +534,8 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
                 # Replace with dummy encoder
                 setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
                 model.config.hidden_size = self.hidden_size
-                model.cls_proj = nn.Identity()
-                model.label_proj = nn.Identity()
+                model.aggregator.cls_proj = nn.Identity()
+                model.aggregator.label_proj = nn.Identity()
 
                 # Test forward pass
                 text = "Test text"

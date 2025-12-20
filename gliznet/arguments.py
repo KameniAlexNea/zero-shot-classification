@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 
 @dataclass
@@ -20,39 +20,45 @@ class ModelArgs:
     projected_dim: Optional[int] = field(
         default=None, metadata={"help": "Projection dimension (None = use hidden_size)"}
     )
-    similarity_metric: str = field(
-        default="dot",
-        metadata={"help": "Similarity metric: dot, bilinear, dot_learning"},
+    similarity_metric: Literal["dot", "bilinear", "cosine"] = field(
+        default="cosine",
+        metadata={"help": "Similarity metric: dot, bilinear, cosine"},
     )
     dropout_rate: float = field(
         default=0.1,
         metadata={"help": "Dropout rate for model"},
     )
+    use_projection_layernorm: bool = field(
+        default=True,
+        metadata={"help": "Whether to apply LayerNorm after projection"},
+    )
 
     # Loss configuration
-    scale_loss: float = field(
-        default=10.0,
-        metadata={"help": "Multiplier for BCE loss"},
-    )
-    margin: float = field(
-        default=0.1,
-        metadata={"help": "Margin for contrastive loss"},
-    )
-    temperature: float = field(
+    bce_loss_weight: float = field(
         default=1.0,
-        metadata={"help": "Base temperature for loss scaling"},
+        metadata={"help": "Weight for binary cross-entropy loss"},
     )
-    barlow_loss_weight: float = field(
-        default=0.1,
-        metadata={"help": "Weight for Barlow Twins regularization loss"},
-    )
-    contrastive_loss_weight: float = field(
+    supcon_loss_weight: float = field(
         default=1.0,
-        metadata={"help": "Weight for hard negative mining contrastive loss"},
+        metadata={"help": "Weight for supervised contrastive loss"},
     )
-    use_separator_pooling: bool = field(
-        default=False,
-        metadata={"help": "Use separator token pooling (requires custom [LAB] token)"},
+    label_repulsion_weight: float = field(
+        default=0.1,
+        metadata={
+            "help": "Weight for label repulsion loss (prevents embedding collapse)"
+        },
+    )
+    logit_scale_init: float = field(
+        default=2.0,
+        metadata={"help": "Initial value for learnable logit scale (exp(2) ≈ 7.4)"},
+    )
+    learn_temperature: bool = field(
+        default=True,
+        metadata={"help": "Whether to learn temperature/scale parameter"},
+    )
+    repulsion_threshold: float = field(
+        default=0.3,
+        metadata={"help": "Cosine similarity threshold for repulsion penalty"},
     )
 
     # Data configuration
@@ -74,6 +80,10 @@ class ModelArgs:
         default=2,
         metadata={"help": "Minimum character length for valid labels"},
     )
+    max_extended_ds_size: int = field(
+        default=50_000,
+        metadata={"help": "Max size of the extended dataset added for training"},
+    )
 
     # Tokenizer configuration
     use_fast_tokenizer: bool = field(
@@ -84,7 +94,7 @@ class ModelArgs:
         default=512,
         metadata={"help": "Maximum sequence length for the model"},
     )
-    cls_separator_token: str = field(
+    lab_cls_token: str = field(
         default="[LAB]",
         metadata={"help": "Separator token for labels ([LAB] or ;)"},
     )

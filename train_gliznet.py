@@ -5,9 +5,8 @@ import os
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
-import importlib
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import random
 
 import datasets
 import torch
@@ -20,24 +19,72 @@ from transformers import (
 )
 
 from gliznet.arguments import ModelArgs
-from gliznet.config import GliZNetDataConfig, GliZNetTrainingConfig
+from gliznet.config import GliZNetDataConfig
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
-from gliznet.model import create_gli_znet_for_sequence_classification
+from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_data import additional_datasets
 
 
-def add_additional_ds(base_ds: datasets.Dataset):
+def create_model_tokenizer(args: ModelArgs):
+    """Create GliZNet model and tokenizer from arguments.
+
+    Args:
+        args: ModelArgs containing model configuration
+
+    Returns:
+        Tuple of (model, tokenizer)
+    """
+    # Initialize tokenizer with new API
+    tokenizer = GliZNETTokenizer.from_pretrained(
+        args.model_name,
+        lab_token=args.lab_cls_token,
+        model_max_length=args.model_max_length,
+        fix_mistral_regex=True,
+    )
+
+    # Create GliZNet configuration
+    config = GliZNetConfig(
+        backbone_model=args.model_name,
+        projected_dim=args.projected_dim,
+        similarity_metric=args.similarity_metric,
+        dropout_rate=args.dropout_rate,
+        use_projection_layernorm=args.use_projection_layernorm,
+        # Loss configuration
+        bce_loss_weight=args.bce_loss_weight,
+        supcon_loss_weight=args.supcon_loss_weight,
+        label_repulsion_weight=args.label_repulsion_weight,
+        logit_scale_init=args.logit_scale_init,
+        learn_temperature=args.learn_temperature,
+        repulsion_threshold=args.repulsion_threshold,
+    )
+
+    # Initialize model with pretrained backbone and resize embeddings for custom tokens
+    model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
+    logger.info(f"Model configuration: {config.to_dict()}")
+
+    return model, tokenizer
+
+
+def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
+    if len(ds) < max_size:
+        return ds
+    index = list(range(len(ds)))
+    rand = random.Random(42)
+    rand.shuffle(index)
+    return ds.select(index[:max_size])
+
+
+def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000):
     ds = datasets.concatenate_datasets(
-        [base_ds] + [ds_loader() for ds_loader in additional_datasets.values()]
+        [base_ds]
+        + [
+            sample_dataset(ds_loader(), max_size)
+            for ds_loader in additional_datasets.values()
+        ]
     )
     return ds
-
-
-def get_transformers_class(class_name):
-    transformers_module = importlib.import_module("transformers")
-    return getattr(transformers_module, class_name)
 
 
 def seed_everything(seed: int = 42):
@@ -70,25 +117,11 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Validate configuration
-    if model_args.use_separator_pooling and model_args.cls_separator_token == ";":
-        logger.warning(
-            "use_separator_pooling=True but cls_separator_token=';'. "
-            "Consider using '[LAB]' for separator pooling."
-        )
-
-    # Create training configuration
-    training_config = GliZNetTrainingConfig(
-        projected_dim=model_args.projected_dim,
-        similarity_metric=model_args.similarity_metric,
-        dropout_rate=model_args.dropout_rate,
-        scale_loss=model_args.scale_loss,
-        margin=model_args.margin,
-        temperature=model_args.temperature,
-        barlow_loss_weight=model_args.barlow_loss_weight,
-        contrastive_loss_weight=model_args.contrastive_loss_weight,
-        use_separator_pooling=model_args.use_separator_pooling,
-    )
-    logger.info(f"Training config: {training_config}")
+    logger.info("Validating configuration...")
+    logger.info(f"Model: {model_args.model_name}")
+    logger.info(f"Similarity metric: {model_args.similarity_metric}")
+    logger.info(f"Label separator token: {model_args.lab_cls_token}")
+    logger.info(f"Max sequence length: {model_args.model_max_length}")
 
     # Create data configuration
     data_config = GliZNetDataConfig(
@@ -117,26 +150,22 @@ def main():
 
     train_split = splits["train"]
     train_data = train_split
-    # train_data = add_additional_ds(train_split)  # Uncomment to add additional datasets
+    size_before = len(train_data)
+    train_data = add_additional_ds(
+        train_split, model_args.max_extended_ds_size
+    )  # Uncomment to add additional datasets
+    added_size = len(train_data) - size_before
     val_data = splits["test"]
 
     logger.info(
-        f"Dataset loaded - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(testing_data)}"
+        f"Dataset loaded - Train: {len(train_data)} with {added_size} added, Val: {len(val_data)}, Test: {len(testing_data)}"
     )
 
-    # Initialize tokenizer
-    logger.info(f"Initializing tokenizer from {model_args.model_name}...")
-    tokenizer = GliZNETTokenizer.from_pretrained(
-        model_args.model_name,
-        use_fast=model_args.use_fast_tokenizer,
-        model_max_length=model_args.model_max_length,
-        max_length=model_args.model_max_length,
-        cls_separator_token=model_args.cls_separator_token,
-    )
-    logger.info(
-        f"Tokenizer initialized - Vocab size: {tokenizer.get_vocab_size()}, "
-        f"Pooling strategy: {tokenizer.get_pooling_strategy()}"
-    )
+    # Initialize model and tokenizer
+    logger.info(f"Initializing model and tokenizer from {model_args.model_name}...")
+    model, tokenizer = create_model_tokenizer(model_args)
+    logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
+    logger.info(f"Model parameters: {model.num_parameters():,}")
 
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
     logger.info("Tokenizing datasets...")
@@ -165,17 +194,6 @@ def main():
     )
     logger.info("Datasets tokenized successfully")
 
-    # Initialize model
-    logger.info(f"Initializing model with {model_args.model_class}...")
-    pretrained_cls = create_gli_znet_for_sequence_classification(
-        get_transformers_class(model_args.model_class)
-    )
-    model = pretrained_cls.from_pretrained_with_tokenizer(
-        model_args.model_name,
-        tokenizer=tokenizer,
-        **training_config.to_model_kwargs(),
-    )
-
     # Log model configuration
     logger.info(f"Model initialized - Parameters: {model.num_parameters():,}")
     logger.info(f"Model config: {model.config}")
@@ -186,11 +204,6 @@ def main():
 
     # Configure metrics computation
     metrics = compute_metrics
-    if len(train_dataset) > 100_000:
-        logger.info(
-            "Disabling metrics computation for large dataset to speed up training"
-        )
-        metrics = None
 
     # Initialize trainer
     logger.info("Initializing Trainer...")
@@ -224,6 +237,14 @@ def main():
     logger.info(f"Learning rate: {training_args.learning_rate}")
     logger.info("=" * 60)
 
+    # Save final model
+    final_model_path = os.path.join(training_args.output_dir, "init_model")
+    logger.info(f"Saving initial model to {final_model_path}...")
+    os.makedirs(final_model_path, exist_ok=True)
+    trainer.save_model(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
+    logger.info("✓ Model and tokenizer saved successfully")
+
     try:
         trainer.train()
         logger.info("✓ Training completed successfully")
@@ -238,10 +259,12 @@ def main():
     logger.info("✓ Evaluation complete")
 
     # Save final model
-    logger.info(f"Saving final model to {training_args.output_dir}...")
-    trainer.save_model()
-    tokenizer.tokenizer.save_pretrained(training_args.output_dir)
-    logger.info("✓ Model saved successfully")
+    final_model_path = os.path.join(training_args.output_dir, "final_model")
+    logger.info(f"Saving final model to {final_model_path}...")
+    os.makedirs(final_model_path, exist_ok=True)
+    trainer.save_model(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
+    logger.info("✓ Model and tokenizer saved successfully")
 
 
 if __name__ == "__main__":

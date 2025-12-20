@@ -4,22 +4,26 @@
 # This script trains a GliZNet model using the improved configuration system.
 # Run with: bash train_gliznet.sh
 
+# Generate timestamp for unique output directory
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+
 nohup uv run train_gliznet.py \
     \
     `# Model Configuration` \
     --model_name microsoft/deberta-v3-small \
     --model_class DebertaV2PreTrainedModel \
     --projected_dim 512 \
-    --similarity_metric dot_learning \
+    --similarity_metric cosine \
     --dropout_rate 0.1 \
+    --use_projection_layernorm \
     \
-    `# Loss Configuration` \
-    --scale_loss 10.0 \
-    --margin 0.1 \
-    --temperature 1.0 \
-    --barlow_loss_weight 0.1 \
-    --contrastive_loss_weight 1.0 \
-    --use_separator_pooling \
+    `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
+    --bce_loss_weight 1.0 \
+    --supcon_loss_weight 1.0 \
+    --label_repulsion_weight 0.1 \
+    --logit_scale_init 2.0 \
+    --learn_temperature \
+    --repulsion_threshold 0.3 \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET \
@@ -32,15 +36,15 @@ nohup uv run train_gliznet.py \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
     --model_max_length 512 \
-    --cls_separator_token "[LAB]" \
+    --lab_cls_token "[LAB]" \
     \
     `# Training Arguments` \
-    --run_name "gliznet_training" \
-    --output_dir "results/deberta-v3-small-sep-pooling" \
+    --run_name "gliznet_training_${TIMESTAMP}" \
+    --output_dir "results/deberta-v3-small_${TIMESTAMP}" \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 8 \
-    --per_device_eval_batch_size 8 \
-    --gradient_accumulation_steps 16 \
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 128 \
+    --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.01 \
     --weight_decay 1e-3 \
@@ -60,7 +64,7 @@ nohup uv run train_gliznet.py \
     \
     `# Performance Optimization` \
     --dataloader_pin_memory \
-    --dataloader_num_workers 8 \
+    --dataloader_num_workers 16 \
     --dataloader_prefetch_factor 2 \
     --dataloader_drop_last \
     --fp16 \

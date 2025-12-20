@@ -318,9 +318,16 @@ class TestMainMetricsFunction(unittest.TestCase):
         eval_pred = (logits, labels)
         metrics = compute_metrics(eval_pred, activated=False)
 
-        # Should include multilabel-specific metrics
-        multilabel_metrics = ["hamming_score", "jaccard_micro", "coverage_error"]
-        for metric in multilabel_metrics:
+        # Should include basic metrics (data gets flattened to binary)
+        basic_metrics = [
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+            "jaccard",
+            "hamming_loss",
+        ]
+        for metric in basic_metrics:
             self.assertIn(metric, metrics)
 
     def test_compute_metrics_single_label_multiclass(self):
@@ -331,9 +338,10 @@ class TestMainMetricsFunction(unittest.TestCase):
         eval_pred = (logits, labels)
         metrics = compute_metrics(eval_pred, activated=False)
 
-        # Should include match_accuracy for one-hot classification
-        self.assertIn("match_accuracy", metrics)
+        # Should include basic metrics (data gets flattened)
         self.assertIn("accuracy", metrics)
+        self.assertIn("precision", metrics)
+        self.assertIn("recall", metrics)
 
     def test_compute_metrics_activated_vs_non_activated(self):
         """Test that activated flag works correctly."""

@@ -9,7 +9,7 @@ Architecture:
     - BERT backbone for encoding text and labels
     - Dual projection heads for text (CLS) and label embeddings
     - Similarity computation (dot product, bilinear, or learned)
-    - Multi-component loss (BCE + contrastive + optional Barlow regularization)
+    - Multi-component loss (BCE + contrastive + optional logit separation)
 
 Key Features:
     - Two pooling strategies: separator token vs. mean pooling

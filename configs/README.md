@@ -27,7 +27,6 @@ from gliznet.config import GliZNetTrainingConfig, GliZNetDataConfig
 training_config = GliZNetTrainingConfig(
     projected_dim=512,
     similarity_metric="dot",
-    barlow_loss_weight=0.05,
     use_separator_pooling=True,
 )
 
@@ -47,7 +46,7 @@ data_config = GliZNetDataConfig(
 **Separator Pooling (Recommended for new models):**
 ```bash
 --use_separator_pooling \
---cls_separator_token "[LAB]"
+--lab_cls_token "[LAB]"
 ```
 - Uses separator token embeddings directly
 - Requires adding custom [LAB] token to vocabulary
@@ -56,7 +55,7 @@ data_config = GliZNetDataConfig(
 
 **Mean Pooling (Default):**
 ```bash
---cls_separator_token ";"
+--lab_cls_token ";"
 ```
 - Averages label content token embeddings
 - Works with any tokenizer without modification
@@ -77,12 +76,6 @@ Binary cross-entropy between predictions and labels.
 --temperature 1.0
 ```
 Separates positive and negative labels using hardest examples.
-
-**Barlow Loss (Regularization):**
-```bash
---barlow_loss_weight 0.1
-```
-Decorrelates label predictions to prevent redundancy.
 
 ### Similarity Metrics
 
@@ -161,7 +154,7 @@ Decorrelates label predictions to prevent redundancy.
 ### Poor Convergence
 1. Adjust `learning_rate` (try 5e-5 to 2e-4)
 2. Increase `warmup_ratio` to 0.05-0.1
-3. Adjust loss weights (`barlow_loss_weight`, `contrastive_loss_weight`)
+3. Adjust loss weights (`contrastive_loss_weight`, `scale_loss`)
 4. Try different `similarity_metric`
 
 ## Best Practices
