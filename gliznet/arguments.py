@@ -33,7 +33,7 @@ class ModelArgs:
         metadata={"help": "Whether to apply LayerNorm after projection"},
     )
 
-    # New loss configuration (improved)
+    # Loss configuration
     bce_loss_weight: float = field(
         default=1.0,
         metadata={"help": "Weight for binary cross-entropy loss"},
@@ -44,7 +44,9 @@ class ModelArgs:
     )
     label_repulsion_weight: float = field(
         default=0.1,
-        metadata={"help": "Weight for label repulsion loss (prevents embedding collapse)"},
+        metadata={
+            "help": "Weight for label repulsion loss (prevents embedding collapse)"
+        },
     )
     logit_scale_init: float = field(
         default=2.0,
@@ -57,44 +59,6 @@ class ModelArgs:
     repulsion_threshold: float = field(
         default=0.3,
         metadata={"help": "Cosine similarity threshold for repulsion penalty"},
-    )
-
-    # Legacy loss configuration (kept for backward compatibility)
-    scale_loss: float = field(
-        default=10.0,
-        metadata={"help": "[Legacy] Multiplier for BCE loss"},
-    )
-    margin: float = field(
-        default=0.1,
-        metadata={"help": "[Legacy] Margin for contrastive loss"},
-    )
-    temperature: float = field(
-        default=1.0,
-        metadata={"help": "[Legacy] Base temperature for loss scaling"},
-    )
-    temperature_scale_base: float = field(
-        default=10.0,
-        metadata={"help": "[Legacy] Base value for temperature scaling"},
-    )
-    contrastive_loss_weight: float = field(
-        default=1.0,
-        metadata={"help": "[Legacy] Weight for hard negative mining contrastive loss"},
-    )
-    separation_loss_weight: float = field(
-        default=0.1,
-        metadata={"help": "[Legacy] Weight for logit separation regularization"},
-    )
-    positive_logit_margin: float = field(
-        default=1.0,
-        metadata={"help": "[Legacy] Minimum desired logit for positive labels"},
-    )
-    negative_logit_margin: float = field(
-        default=0.0,
-        metadata={"help": "[Legacy] Maximum desired logit for negative labels"},
-    )
-    use_separator_pooling: bool = field(
-        default=False,
-        metadata={"help": "Use separator token pooling (requires custom [LAB] token)"},
     )
 
     # Data configuration

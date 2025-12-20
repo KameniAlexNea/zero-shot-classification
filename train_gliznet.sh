@@ -17,24 +17,13 @@ nohup uv run train_gliznet.py \
     --dropout_rate 0.1 \
     --use_projection_layernorm \
     \
-    `# New Improved Loss Configuration (SupCon + Label Repulsion)` \
+    `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
     --bce_loss_weight 1.0 \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
     --logit_scale_init 2.0 \
     --learn_temperature \
     --repulsion_threshold 0.3 \
-    \
-    `# Legacy Loss Configuration (for backward compatibility)` \
-    --scale_loss 10.0 \
-    --margin 0.1 \
-    --temperature 1.0 \
-    --temperature_scale_base 10.0 \
-    --contrastive_loss_weight 0.0 \
-    --separation_loss_weight 0.0 \
-    --positive_logit_margin 0.9999 \
-    --negative_logit_margin 0.0001 \
-    --use_separator_pooling \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET \

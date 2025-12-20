@@ -60,15 +60,6 @@ class GliZNetConfig(PretrainedConfig):
         learn_temperature: bool = True,
         # Repulsion settings
         repulsion_threshold: float = 0.3,  # Penalize if cosine sim > this
-        # Legacy (kept for backward compatibility)
-        scale_loss: float = 10.0,
-        margin: float = 0.1,
-        contrastive_loss_weight: float = 1.0,
-        temperature: float = 1.0,
-        temperature_scale_base: float = 10.0,
-        separation_loss_weight: float = 0.1,
-        positive_logit_margin: float = 1.0,
-        negative_logit_margin: float = 0.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -79,23 +70,13 @@ class GliZNetConfig(PretrainedConfig):
         self.dropout_rate = dropout_rate
         self.use_projection_layernorm = use_projection_layernorm
 
-        # New loss configuration
+        # Loss configuration
         self.bce_loss_weight = bce_loss_weight
         self.supcon_loss_weight = supcon_loss_weight
         self.label_repulsion_weight = label_repulsion_weight
         self.logit_scale_init = logit_scale_init
         self.learn_temperature = learn_temperature
         self.repulsion_threshold = repulsion_threshold
-
-        # Legacy loss configuration (kept for backward compat)
-        self.scale_loss = scale_loss
-        self.margin = margin
-        self.contrastive_loss_weight = contrastive_loss_weight
-        self.temperature = temperature
-        self.temperature_scale_base = temperature_scale_base
-        self.separation_loss_weight = separation_loss_weight
-        self.positive_logit_margin = positive_logit_margin
-        self.negative_logit_margin = negative_logit_margin
 
         # Load and store backbone config
         if backbone_config is None:
@@ -146,7 +127,8 @@ class SimilarityHead(nn.Module):
             )
         else:
             self.register_buffer(
-                "logit_scale", torch.tensor(config.logit_scale_init, dtype=torch.float32)
+                "logit_scale",
+                torch.tensor(config.logit_scale_init, dtype=torch.float32),
             )
 
         if config.similarity_metric == "bilinear":
@@ -367,20 +349,18 @@ class GliZNetLoss(nn.Module):
             repulsion_loss = self._label_repulsion_loss(
                 label_embeddings, label_ids, batch_indices
             )
-            total_loss = total_loss + repulsion_loss * self.config.label_repulsion_weight
+            total_loss = (
+                total_loss + repulsion_loss * self.config.label_repulsion_weight
+            )
 
         # --- 3. Auxiliary BCE (Decoupled Temperature) ---
         if self.config.bce_loss_weight > 0:
-            bce_loss = self._bce_loss(
-                dense_logits, current_labels, logit_scale
-            )
+            bce_loss = self._bce_loss(dense_logits, current_labels, logit_scale)
             total_loss = total_loss + bce_loss * self.config.bce_loss_weight
 
         return total_loss
 
-    def _supcon_loss(
-        self, logits: torch.Tensor, targets: torch.Tensor
-    ) -> torch.Tensor:
+    def _supcon_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Supervised Contrastive Loss over all label pairs.
 
         For each sample, treats positive labels as "anchors" and computes
@@ -606,8 +586,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         hidden_states = encoder_outputs.last_hidden_state
 
         # Aggregate labels and compute similarities
-        logits, batch_indices, label_ids, label_embeddings, logit_scale = self.aggregator(
-            hidden_states, lmask
+        logits, batch_indices, label_ids, label_embeddings, logit_scale = (
+            self.aggregator(hidden_states, lmask)
         )
 
         # Compute loss
