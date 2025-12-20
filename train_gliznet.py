@@ -6,7 +6,7 @@ os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
+import random
 
 import datasets
 import torch
@@ -67,9 +67,22 @@ def create_model_tokenizer(args: ModelArgs):
     return model, tokenizer
 
 
-def add_additional_ds(base_ds: datasets.Dataset):
+def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
+    if len(ds) < max_size:
+        return ds
+    index = list(range(len(ds)))
+    rand = random.Random(42)
+    rand.shuffle(index)
+    return ds.select(index[:max_size])
+
+
+def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000):
     ds = datasets.concatenate_datasets(
-        [base_ds] + [ds_loader() for ds_loader in additional_datasets.values()]
+        [base_ds]
+        + [
+            sample_dataset(ds_loader(), max_size)
+            for ds_loader in additional_datasets.values()
+        ]
     )
     return ds
 
@@ -137,11 +150,15 @@ def main():
 
     train_split = splits["train"]
     train_data = train_split
-    train_data = add_additional_ds(train_split)  # Uncomment to add additional datasets
+    size_before = len(train_data)
+    train_data = add_additional_ds(
+        train_split, model_args.max_extended_ds_size
+    )  # Uncomment to add additional datasets
+    added_size = len(train_data) - size_before
     val_data = splits["test"]
 
     logger.info(
-        f"Dataset loaded - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(testing_data)}"
+        f"Dataset loaded - Train: {len(train_data)} with {added_size} added, Val: {len(val_data)}, Test: {len(testing_data)}"
     )
 
     # Initialize model and tokenizer

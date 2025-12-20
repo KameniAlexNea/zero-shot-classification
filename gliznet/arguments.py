@@ -80,6 +80,10 @@ class ModelArgs:
         default=2,
         metadata={"help": "Minimum character length for valid labels"},
     )
+    max_extended_ds_size: int = field(
+        default=50_000,
+        metadata={"help": "Max size of the extended dataset added for training"},
+    )
 
     # Tokenizer configuration
     use_fast_tokenizer: bool = field(
