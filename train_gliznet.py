@@ -7,7 +7,6 @@ os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-import importlib
 
 import datasets
 import torch
@@ -63,9 +62,7 @@ def create_model_tokenizer(args: ModelArgs):
     )
 
     # Initialize model with pretrained backbone and resize embeddings for custom tokens
-    model = GliZNetForSequenceClassification.from_backbone_pretrained(config)
-    model.resize_token_embeddings(len(tokenizer))
-
+    model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
     logger.info(f"Model configuration: {config.to_dict()}")
 
     return model, tokenizer
@@ -76,11 +73,6 @@ def add_additional_ds(base_ds: datasets.Dataset):
         [base_ds] + [ds_loader() for ds_loader in additional_datasets.values()]
     )
     return ds
-
-
-def get_transformers_class(class_name):
-    transformers_module = importlib.import_module("transformers")
-    return getattr(transformers_module, class_name)
 
 
 def seed_everything(seed: int = 42):
@@ -146,7 +138,7 @@ def main():
 
     train_split = splits["train"]
     train_data = train_split
-    # train_data = add_additional_ds(train_split)  # Uncomment to add additional datasets
+    train_data = add_additional_ds(train_split)  # Uncomment to add additional datasets
     val_data = splits["test"]
 
     logger.info(

@@ -46,7 +46,7 @@ class GliZNetConfig(PretrainedConfig):
     def __init__(
         self,
         backbone_model: str = "microsoft/deberta-v3-small",
-        backbone_config: Optional[dict] = None,
+        backbone_config: Optional[PretrainedConfig] = None,
         projected_dim: Optional[int] = None,
         similarity_metric: Literal["dot", "bilinear"] = "dot",
         dropout_rate: float = 0.1,
@@ -81,7 +81,7 @@ class GliZNetConfig(PretrainedConfig):
 
         # Load and store backbone config
         if backbone_config is None:
-            backbone_config = AutoConfig.from_pretrained(backbone_model).to_dict()
+            backbone_config = AutoConfig.from_pretrained(backbone_model)
         self.backbone_config = backbone_config
 
 
@@ -362,7 +362,7 @@ class GliZNetLoss(nn.Module):
         self, logits: torch.Tensor, labels: torch.Tensor
     ) -> torch.Tensor:
         """Separation loss: encourage logits to be above/below thresholds."""
-        if self.config.separation_loss_weight == 0:
+        if self.config.separation_loss_weight <= 0:
             return torch.tensor(0.0, device=logits.device)
         logits = logits.view(-1)
         labels = labels.view(-1)
@@ -415,15 +415,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         super().__init__(config)
         self.config = config
 
-        # Load backbone model from config
-        if isinstance(config.backbone_config, dict):
-            # Get the config class from model_type and instantiate
-            backbone_config = AutoConfig.for_model(**config.backbone_config)
-        else:
-            backbone_config = config.backbone_config
-
-        self.backbone = AutoModel.from_config(backbone_config)
-        hidden_size = backbone_config.hidden_size
+        self.backbone: PreTrainedModel = AutoModel.from_config(config.backbone_config)
+        hidden_size = config.backbone_config.hidden_size
         projected_dim = config.projected_dim or hidden_size
 
         # Build projection layers (stored only in aggregator to avoid shared tensors)
@@ -453,15 +446,13 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
     def resize_token_embeddings(self, new_num_tokens: int) -> nn.Embedding:
         """Resize token embeddings (for custom tokens)."""
-        embeddings = self.backbone.resize_token_embeddings(new_num_tokens)
-        # Update config to reflect new vocab size
-        self.config.backbone_config["vocab_size"] = new_num_tokens
-        return embeddings
+        return self.backbone.resize_token_embeddings(new_num_tokens)
 
     @classmethod
     def from_backbone_pretrained(
         cls,
         config: GliZNetConfig,
+        tokenizer: "GliZNETTokenizer",
         **kwargs,
     ) -> "GliZNetForSequenceClassification":
         """Create a new GliZNet model with pretrained backbone weights.
@@ -480,30 +471,13 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         model = cls(config)
 
         # Load pretrained backbone weights
-        pretrained_backbone = AutoModel.from_pretrained(config.backbone_model, **kwargs)
+        pretrained_backbone: PreTrainedModel = AutoModel.from_pretrained(
+            config.backbone_model, **kwargs
+        )
         model.backbone.load_state_dict(pretrained_backbone.state_dict())
-
-        return model
-
-    @classmethod
-    def from_pretrained_with_tokenizer(
-        cls,
-        pretrained_path: str,
-        tokenizer: "GliZNETTokenizer",
-        **kwargs,
-    ) -> "GliZNetForSequenceClassification":
-        """Load pretrained model and resize embeddings for tokenizer.
-
-        Args:
-            pretrained_path: Path to saved model
-            tokenizer: GliZNETTokenizer instance
-            **kwargs: Additional arguments for from_pretrained
-
-        Returns:
-            Model with resized embeddings
-        """
-        model = cls.from_pretrained(pretrained_path, **kwargs)
+        model.config.backbone_config = pretrained_backbone.config
         model.resize_token_embeddings(len(tokenizer))
+
         return model
 
     def forward(

@@ -82,7 +82,11 @@ def load_dataset(
 
 
 def limit_labels(
-    labels_text: List[str], labels_int: List[int], shuffle_labels: bool, max_labels: int
+    labels_text: List[str],
+    labels_int: List[int],
+    shuffle_labels: bool,
+    max_labels: int,
+    remove_underscores: float = 0.9,
 ):
     """Limit the number of labels while maintaining natural proportion.
 
@@ -100,7 +104,10 @@ def limit_labels(
         2. Take first max_labels samples
         3. This naturally maintains the original proportion of positive/negative labels
     """
-    labels_text = [i.replace("_", " ") for i in labels_text]
+    labels_text = [
+        i.replace("_", " ") if random.random() < remove_underscores else i
+        for i in labels_text
+    ]
 
     # Combine labels into pairs
     combined = list(zip(labels_text, labels_int))
@@ -165,7 +172,9 @@ def add_tokenized_function(
             labels_batch.append(torch.tensor(label_ints, dtype=torch.float32))
 
         # Tokenize all examples in batch
-        tokenized = tokenizer(tokenizer_inputs, return_tensors="pt")
+        tokenized: dict[str, torch.Tensor] = tokenizer(
+            tokenizer_inputs, return_tensors="pt"
+        )
 
         # Determine how many labels actually fit by checking lmask
         # lmask contains label IDs (1, 2, 3, ...) for each label's tokens
