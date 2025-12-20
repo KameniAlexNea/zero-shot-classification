@@ -20,9 +20,9 @@ class ModelArgs:
     projected_dim: Optional[int] = field(
         default=None, metadata={"help": "Projection dimension (None = use hidden_size)"}
     )
-    similarity_metric: Literal["dot", "bilinear"] = field(
-        default="dot",
-        metadata={"help": "Similarity metric: dot, bilinear"},
+    similarity_metric: Literal["dot", "bilinear", "cosine"] = field(
+        default="cosine",
+        metadata={"help": "Similarity metric: dot, bilinear, cosine"},
     )
     dropout_rate: float = field(
         default=0.1,
@@ -33,38 +33,64 @@ class ModelArgs:
         metadata={"help": "Whether to apply LayerNorm after projection"},
     )
 
-    # Loss configuration
+    # New loss configuration (improved)
+    bce_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for binary cross-entropy loss"},
+    )
+    supcon_loss_weight: float = field(
+        default=1.0,
+        metadata={"help": "Weight for supervised contrastive loss"},
+    )
+    label_repulsion_weight: float = field(
+        default=0.1,
+        metadata={"help": "Weight for label repulsion loss (prevents embedding collapse)"},
+    )
+    logit_scale_init: float = field(
+        default=2.0,
+        metadata={"help": "Initial value for learnable logit scale (exp(2) ≈ 7.4)"},
+    )
+    learn_temperature: bool = field(
+        default=True,
+        metadata={"help": "Whether to learn temperature/scale parameter"},
+    )
+    repulsion_threshold: float = field(
+        default=0.3,
+        metadata={"help": "Cosine similarity threshold for repulsion penalty"},
+    )
+
+    # Legacy loss configuration (kept for backward compatibility)
     scale_loss: float = field(
         default=10.0,
-        metadata={"help": "Multiplier for BCE loss"},
+        metadata={"help": "[Legacy] Multiplier for BCE loss"},
     )
     margin: float = field(
         default=0.1,
-        metadata={"help": "Margin for contrastive loss"},
+        metadata={"help": "[Legacy] Margin for contrastive loss"},
     )
     temperature: float = field(
         default=1.0,
-        metadata={"help": "Base temperature for loss scaling"},
+        metadata={"help": "[Legacy] Base temperature for loss scaling"},
     )
     temperature_scale_base: float = field(
         default=10.0,
-        metadata={"help": "Base value for temperature scaling"},
+        metadata={"help": "[Legacy] Base value for temperature scaling"},
     )
     contrastive_loss_weight: float = field(
         default=1.0,
-        metadata={"help": "Weight for hard negative mining contrastive loss"},
+        metadata={"help": "[Legacy] Weight for hard negative mining contrastive loss"},
     )
     separation_loss_weight: float = field(
         default=0.1,
-        metadata={"help": "Weight for logit separation regularization"},
+        metadata={"help": "[Legacy] Weight for logit separation regularization"},
     )
     positive_logit_margin: float = field(
         default=1.0,
-        metadata={"help": "Minimum desired logit for positive labels"},
+        metadata={"help": "[Legacy] Minimum desired logit for positive labels"},
     )
     negative_logit_margin: float = field(
         default=0.0,
-        metadata={"help": "Maximum desired logit for negative labels"},
+        metadata={"help": "[Legacy] Maximum desired logit for negative labels"},
     )
     use_separator_pooling: bool = field(
         default=False,

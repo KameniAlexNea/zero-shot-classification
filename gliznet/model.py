@@ -48,9 +48,19 @@ class GliZNetConfig(PretrainedConfig):
         backbone_model: str = "microsoft/deberta-v3-small",
         backbone_config: Optional[PretrainedConfig] = None,
         projected_dim: Optional[int] = None,
-        similarity_metric: Literal["dot", "bilinear"] = "dot",
+        similarity_metric: Literal["dot", "bilinear", "cosine"] = "cosine",
         dropout_rate: float = 0.1,
         use_projection_layernorm: bool = True,
+        # Loss weights
+        bce_loss_weight: float = 1.0,
+        supcon_loss_weight: float = 1.0,
+        label_repulsion_weight: float = 0.1,
+        # Temperature/scaling
+        logit_scale_init: float = 2.0,  # exp(2) ≈ 7.4 for cosine similarity scaling
+        learn_temperature: bool = True,
+        # Repulsion settings
+        repulsion_threshold: float = 0.3,  # Penalize if cosine sim > this
+        # Legacy (kept for backward compatibility)
         scale_loss: float = 10.0,
         margin: float = 0.1,
         contrastive_loss_weight: float = 1.0,
@@ -69,7 +79,15 @@ class GliZNetConfig(PretrainedConfig):
         self.dropout_rate = dropout_rate
         self.use_projection_layernorm = use_projection_layernorm
 
-        # Loss configuration
+        # New loss configuration
+        self.bce_loss_weight = bce_loss_weight
+        self.supcon_loss_weight = supcon_loss_weight
+        self.label_repulsion_weight = label_repulsion_weight
+        self.logit_scale_init = logit_scale_init
+        self.learn_temperature = learn_temperature
+        self.repulsion_threshold = repulsion_threshold
+
+        # Legacy loss configuration (kept for backward compat)
         self.scale_loss = scale_loss
         self.margin = margin
         self.contrastive_loss_weight = contrastive_loss_weight
@@ -99,12 +117,14 @@ class GliZNetOutput(ModelOutput):
         logits: Classification logits
         batch_indices: Batch index for each prediction
         label_ids: Label ID for each prediction
+        label_embeddings: Projected label embeddings (for repulsion loss)
     """
 
     loss: Optional[torch.FloatTensor] = None
     logits: Optional[torch.Tensor] = None
     batch_indices: Optional[torch.Tensor] = None
     label_ids: Optional[torch.Tensor] = None
+    label_embeddings: Optional[torch.Tensor] = None
 
 
 # ============================================================================
@@ -119,19 +139,32 @@ class SimilarityHead(nn.Module):
         super().__init__()
         self.config = config
 
+        # Learnable temperature for scaling logits (used in SupCon)
+        if config.learn_temperature:
+            self.logit_scale = nn.Parameter(
+                torch.tensor(config.logit_scale_init, dtype=torch.float32)
+            )
+        else:
+            self.register_buffer(
+                "logit_scale", torch.tensor(config.logit_scale_init, dtype=torch.float32)
+            )
+
         if config.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
         elif config.similarity_metric == "dot":
             self.classifier = nn.Linear(projected_dim, 1)
+        elif config.similarity_metric == "cosine":
+            # For cosine, we just do normalized dot product
+            pass
         else:
             raise ValueError(
                 f"Unknown similarity_metric: {config.similarity_metric}. "
-                "Choose 'dot' or 'bilinear'."
+                "Choose 'dot', 'bilinear', or 'cosine'."
             )
 
     def forward(
         self, text_repr: torch.Tensor, label_repr: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute similarity scores.
 
         Args:
@@ -139,11 +172,22 @@ class SimilarityHead(nn.Module):
             label_repr: Label representations (N, D)
 
         Returns:
-            Similarity scores (N, 1)
+            Tuple of (scaled similarity scores (N, 1), logit_scale)
         """
         if self.config.similarity_metric == "bilinear":
-            return self.classifier(text_repr, label_repr)
-        return self.classifier(text_repr * label_repr)
+            logits = self.classifier(text_repr, label_repr)
+        elif self.config.similarity_metric == "dot":
+            logits = self.classifier(text_repr * label_repr)
+        else:  # cosine
+            # Normalize for cosine similarity
+            text_norm = F.normalize(text_repr, p=2, dim=-1)
+            label_norm = F.normalize(label_repr, p=2, dim=-1)
+            # Cosine similarity: dot product of normalized vectors
+            raw_sim = (text_norm * label_norm).sum(dim=-1, keepdim=True)
+            # Scale by learnable temperature
+            logits = raw_sim * self.logit_scale.exp()
+
+        return logits, self.logit_scale
 
 
 class LabelAggregator(nn.Module):
@@ -154,7 +198,7 @@ class LabelAggregator(nn.Module):
         config: GliZNetConfig,
         text_projector: nn.Module,
         label_projector: nn.Module,
-        similarity_head: nn.Module,
+        similarity_head: "SimilarityHead",
     ):
         super().__init__()
         self.config = config
@@ -165,7 +209,7 @@ class LabelAggregator(nn.Module):
 
     def forward(
         self, hidden_states: torch.Tensor, lmask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Aggregate label representations and compute similarities.
 
         Args:
@@ -176,6 +220,8 @@ class LabelAggregator(nn.Module):
             logits: Similarity scores (N, 1)
             batch_indices: Batch index for each score (N,)
             label_ids: Label ID for each score (N,)
+            label_embeddings: Aggregated label embeddings (N, D)
+            logit_scale: Current temperature scale
         """
         batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
@@ -188,7 +234,9 @@ class LabelAggregator(nn.Module):
         if not label_mask.any():
             empty = torch.empty(0, 1, device=device)
             empty_idx = torch.empty(0, dtype=torch.long, device=device)
-            return empty, empty_idx, empty_idx
+            empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
+            dummy_scale = self.similarity_head.logit_scale
+            return empty, empty_idx, empty_idx, empty_emb, dummy_scale
 
         # Project label tokens
         label_hidden = self.dropout(self.label_projector(hidden_states[label_mask]))
@@ -222,7 +270,9 @@ class LabelAggregator(nn.Module):
         if not valid_mask.any():
             empty = torch.empty(0, 1, device=device)
             empty_idx = torch.empty(0, dtype=torch.long, device=device)
-            return empty, empty_idx, empty_idx
+            empty_emb = torch.empty(0, projected_dim, device=device)
+            dummy_scale = self.similarity_head.logit_scale
+            return empty, empty_idx, empty_idx, empty_emb, dummy_scale
 
         aggregated = aggregated[valid_mask] / counts[valid_mask].unsqueeze(-1)
 
@@ -242,17 +292,19 @@ class LabelAggregator(nn.Module):
 
         # Compute similarities
         cls_expanded = cls_repr[all_batch_ids]
-        logits = self.similarity_head(cls_expanded, aggregated)
+        logits, logit_scale = self.similarity_head(cls_expanded, aggregated)
 
-        return logits, all_batch_ids, all_label_ids
+        return logits, all_batch_ids, all_label_ids, aggregated, logit_scale
 
 
 class GliZNetLoss(nn.Module):
-    """Computes training loss for GliZNet."""
+    """Improved loss for GliZNet with SupCon, label repulsion, and decoupled BCE."""
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
         self.config = config
+        # Learnable scale specifically for the auxiliary BCE loss (decoupled from SupCon)
+        self.bce_scale = nn.Parameter(torch.tensor(1.0))
 
     def forward(
         self,
@@ -260,127 +312,170 @@ class GliZNetLoss(nn.Module):
         labels: torch.Tensor,
         batch_indices: torch.Tensor,
         label_ids: torch.Tensor,
+        label_embeddings: torch.Tensor,
+        logit_scale: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute combined loss.
+        """Compute combined loss with SupCon, repulsion, and BCE.
 
         Args:
-            logits: Predicted scores (N, 1)
+            logits: Predicted scores (N, 1) - already scaled by SimilarityHead
             labels: Ground truth labels (B, MaxLabels)
             batch_indices: Batch index for each logit (N,)
             label_ids: Label ID for each logit (N,)
+            label_embeddings: Projected label embeddings (N, D)
+            logit_scale: Current temperature scale from SimilarityHead
 
         Returns:
             Combined loss scalar
         """
-        # Gather targets
-        target_indices = label_ids - 1
-        targets = labels[batch_indices, target_indices].float().view(-1, 1)
-
-        # Filter padding
-        valid_mask = targets != -100
-        if not valid_mask.any():
+        if logits.numel() == 0:
             return torch.tensor(0.0, device=logits.device, requires_grad=True)
 
-        valid_logits = logits[valid_mask.view(-1)]
-        valid_targets = targets[valid_mask].view(-1, 1)
-        valid_batch_ids = batch_indices[valid_mask.view(-1)]
+        batch_size = labels.size(0)
+        max_label_id = int(label_ids.max().item()) if label_ids.numel() > 0 else 0
 
-        # Binary cross-entropy loss
-        bce_loss = (
-            F.binary_cross_entropy_with_logits(
-                valid_logits, valid_targets, reduction="mean"
-            )
-            * self.config.scale_loss
+        if max_label_id == 0:
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+        # Reconstruct dense logits matrix (B, max_labels)
+        dense_logits = torch.full(
+            (batch_size, max_label_id), float("-inf"), device=logits.device
         )
+        col_indices = label_ids - 1
+        dense_logits[batch_indices, col_indices] = logits.squeeze(-1)
 
-        total_loss = bce_loss
+        # Align targets with dense_logits shape
+        valid_cols = min(labels.shape[1], max_label_id)
+        current_labels = labels[:, :valid_cols].float()
+        if current_labels.shape[1] < max_label_id:
+            padding = torch.full(
+                (batch_size, max_label_id - current_labels.shape[1]),
+                -100.0,
+                device=logits.device,
+            )
+            current_labels = torch.cat([current_labels, padding], dim=1)
 
-        # Contrastive loss
-        probs = valid_logits.sigmoid()
-        if self.config.contrastive_loss_weight > 0:
-            contrastive = self._contrastive_loss(probs, valid_targets, valid_batch_ids)
-            total_loss = total_loss + contrastive
+        total_loss = torch.tensor(0.0, device=logits.device)
 
-        # Separation loss
-        if self.config.separation_loss_weight > 0:
-            separation = self._separation_loss(probs, valid_targets)
-            total_loss = total_loss + separation
+        # --- 1. Supervised Contrastive Loss (Primary) ---
+        if self.config.supcon_loss_weight > 0:
+            supcon_loss = self._supcon_loss(dense_logits, current_labels)
+            total_loss = total_loss + supcon_loss * self.config.supcon_loss_weight
+
+        # --- 2. Label Repulsion Loss (Refined: same-sample only) ---
+        if self.config.label_repulsion_weight > 0:
+            repulsion_loss = self._label_repulsion_loss(
+                label_embeddings, label_ids, batch_indices
+            )
+            total_loss = total_loss + repulsion_loss * self.config.label_repulsion_weight
+
+        # --- 3. Auxiliary BCE (Decoupled Temperature) ---
+        if self.config.bce_loss_weight > 0:
+            bce_loss = self._bce_loss(
+                dense_logits, current_labels, logit_scale
+            )
+            total_loss = total_loss + bce_loss * self.config.bce_loss_weight
 
         return total_loss
 
-    def _contrastive_loss(
+    def _supcon_loss(
+        self, logits: torch.Tensor, targets: torch.Tensor
+    ) -> torch.Tensor:
+        """Supervised Contrastive Loss over all label pairs.
+
+        For each sample, treats positive labels as "anchors" and computes
+        softmax over all labels, encouraging high prob for positives.
+        """
+        mask_valid = targets != -100
+        targets_clean = targets.clone()
+        targets_clean[~mask_valid] = 0.0
+
+        # Only compute for samples that have at least one positive
+        has_positives = (targets_clean > 0.5).any(dim=1)
+        if not has_positives.any():
+            return torch.tensor(0.0, device=logits.device)
+
+        logits = logits[has_positives]
+        targets_clean = targets_clean[has_positives]
+        mask_valid_filtered = mask_valid[has_positives]
+
+        # Mask out invalid positions for softmax
+        logits_masked = logits.clone()
+        logits_masked[~mask_valid_filtered] = float("-inf")
+
+        # Log-softmax over valid labels for each sample
+        log_probs = F.log_softmax(logits_masked, dim=1)
+
+        # Compute loss: -mean(log_prob of positive labels)
+        pos_mask = (targets_clean > 0.5).float()
+        sum_log_prob_pos = (log_probs * pos_mask).sum(dim=1)
+        num_pos = pos_mask.sum(dim=1)
+
+        loss_per_sample = -sum_log_prob_pos / (num_pos + 1e-9)
+        return loss_per_sample.mean()
+
+    def _label_repulsion_loss(
         self,
-        logits: torch.Tensor,
-        labels: torch.Tensor,
+        embeddings: torch.Tensor,
+        label_ids: torch.Tensor,
         batch_indices: torch.Tensor,
     ) -> torch.Tensor:
-        """Contrastive loss: push positive/negative logits apart."""
-        batch_size = batch_indices.max() + 1
-        logits_flat = logits.view(-1)
-        labels_flat = labels.view(-1)
+        """Penalize high cosine similarity between DIFFERENT labels in SAME sample.
 
-        pos_mask = labels_flat > 0.5
-        neg_mask = labels_flat <= 0.5
+        This prevents label embedding collapse while respecting contextual embeddings.
+        """
+        if embeddings.numel() == 0:
+            return torch.tensor(0.0, device=embeddings.device)
 
-        # Find min positive and max negative per sample
-        min_pos = torch.full((batch_size,), float("inf"), device=logits.device)
-        max_neg = torch.full((batch_size,), float("-inf"), device=logits.device)
+        # Normalize embeddings for cosine similarity
+        embeddings_norm = F.normalize(embeddings, p=2, dim=-1)
+        sim_matrix = torch.matmul(embeddings_norm, embeddings_norm.T)
 
-        if pos_mask.any():
-            min_pos.scatter_reduce_(
-                0,
-                batch_indices[pos_mask],
-                logits_flat[pos_mask],
-                reduce="amin",
-                include_self=False,
-            )
-        if neg_mask.any():
-            max_neg.scatter_reduce_(
-                0,
-                batch_indices[neg_mask],
-                logits_flat[neg_mask],
-                reduce="amax",
-                include_self=False,
-            )
+        # Mask 1: Different labels (label_id_i != label_id_j)
+        diff_label_mask = label_ids.unsqueeze(0) != label_ids.unsqueeze(1)
 
-        # Compute margin violation
-        valid = (min_pos < float("inf")) & (max_neg > float("-inf"))
-        if not valid.any():
-            return torch.tensor(0.0, device=logits.device)
+        # Mask 2: Same sample (batch_index_i == batch_index_j)
+        # Key insight: only enforce geometry within the same sample's context
+        same_batch_mask = batch_indices.unsqueeze(0) == batch_indices.unsqueeze(1)
 
-        violations = F.relu(self.config.margin + max_neg[valid] - min_pos[valid])
+        # Combine: repel different labels belonging to the same sample
+        final_mask = diff_label_mask & same_batch_mask
 
-        # Temperature scaling
-        avg_labels = logits.shape[0] / max(valid.sum(), 1)
-        temperature = self.config.temperature * (
-            self.config.temperature_scale_base / max(avg_labels, 1)
-        )
+        if not final_mask.any():
+            return torch.tensor(0.0, device=embeddings.device)
 
-        return violations.sum() * temperature * self.config.contrastive_loss_weight
+        valid_sims = sim_matrix[final_mask]
 
-    def _separation_loss(
-        self, logits: torch.Tensor, labels: torch.Tensor
+        # Penalize only if similarity exceeds threshold
+        penalties = F.relu(valid_sims - self.config.repulsion_threshold)
+
+        return penalties.mean()
+
+    def _bce_loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        main_logit_scale: torch.Tensor,
     ) -> torch.Tensor:
-        """Separation loss: encourage logits to be above/below thresholds."""
-        if self.config.separation_loss_weight <= 0:
+        """Binary cross-entropy with decoupled temperature.
+
+        Unscales the main logits and applies BCE-specific scaling.
+        """
+        mask = targets != -100
+        if not mask.any():
             return torch.tensor(0.0, device=logits.device)
-        logits = logits.view(-1)
-        labels = labels.view(-1)
 
-        pos_mask = labels > 0.5
-        neg_mask = labels <= 0.5
+        valid_logits = logits[mask]
+        valid_targets = targets[mask]
 
-        loss = torch.tensor(0.0, device=logits.device)
+        # Decoupling: unscale main logits, then apply BCE-specific scale
+        # This prevents SupCon temperature from dominating BCE gradients
+        raw_logits = valid_logits / (main_logit_scale.exp() + 1e-9)
+        bce_logits = raw_logits * self.bce_scale.abs().clamp(min=0.1)
 
-        if pos_mask.any():
-            pos_logits = logits[pos_mask]
-            loss = loss + F.relu(self.config.positive_logit_margin - pos_logits).mean()
-
-        if neg_mask.any():
-            neg_logits = logits[neg_mask]
-            loss = loss + F.relu(neg_logits - self.config.negative_logit_margin).mean()
-
-        return loss * self.config.separation_loss_weight
+        return F.binary_cross_entropy_with_logits(
+            bce_logits, valid_targets, reduction="mean"
+        )
 
 
 # ============================================================================
@@ -511,12 +606,21 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         hidden_states = encoder_outputs.last_hidden_state
 
         # Aggregate labels and compute similarities
-        logits, batch_indices, label_ids = self.aggregator(hidden_states, lmask)
+        logits, batch_indices, label_ids, label_embeddings, logit_scale = self.aggregator(
+            hidden_states, lmask
+        )
 
         # Compute loss
         loss = None
         if labels is not None:
-            loss = self.loss_fn(logits, labels, batch_indices, label_ids)
+            loss = self.loss_fn(
+                logits=logits,
+                labels=labels,
+                batch_indices=batch_indices,
+                label_ids=label_ids,
+                label_embeddings=label_embeddings,
+                logit_scale=logit_scale,
+            )
 
         if not return_dict:
             return (loss, logits, batch_indices, label_ids)
@@ -526,6 +630,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             logits=logits,
             batch_indices=batch_indices if return_stats else None,
             label_ids=label_ids if return_stats else None,
+            label_embeddings=label_embeddings if return_stats else None,
         )
 
     @torch.inference_mode()

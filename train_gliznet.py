@@ -51,6 +51,14 @@ def create_model_tokenizer(args: ModelArgs):
         similarity_metric=args.similarity_metric,
         dropout_rate=args.dropout_rate,
         use_projection_layernorm=args.use_projection_layernorm,
+        # New improved loss configuration
+        bce_loss_weight=args.bce_loss_weight,
+        supcon_loss_weight=args.supcon_loss_weight,
+        label_repulsion_weight=args.label_repulsion_weight,
+        logit_scale_init=args.logit_scale_init,
+        learn_temperature=args.learn_temperature,
+        repulsion_threshold=args.repulsion_threshold,
+        # Legacy loss configuration (kept for backward compatibility)
         scale_loss=args.scale_loss,
         margin=args.margin,
         contrastive_loss_weight=args.contrastive_loss_weight,
