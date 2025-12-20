@@ -150,10 +150,7 @@ class SimilarityHead(nn.Module):
             self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
         elif config.similarity_metric == "dot":
             self.classifier = nn.Linear(projected_dim, 1)
-        elif config.similarity_metric == "cosine":
-            # For cosine, we just do normalized dot product
-            pass
-        else:
+        elif config.similarity_metric != "cosine":
             raise ValueError(
                 f"Unknown similarity_metric: {config.similarity_metric}. "
                 "Choose 'dot', 'bilinear', or 'cosine'."
@@ -580,6 +577,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
     def resize_token_embeddings(self, new_num_tokens: int) -> nn.Embedding:
         """Resize token embeddings (for custom tokens)."""
+        if new_num_tokens < self.config.backbone_config.vocab_size:
+            return self.backbone
         if self.config.backbone_config.vocab_size != new_num_tokens:
             self.config.backbone_config.vocab_size = new_num_tokens
             self.backbone.config.vocab_size = new_num_tokens

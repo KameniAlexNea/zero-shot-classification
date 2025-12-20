@@ -41,7 +41,7 @@ def create_model_tokenizer(args: ModelArgs):
         args.model_name,
         lab_token=args.lab_cls_token,
         model_max_length=args.model_max_length,
-        fix_mistral_regex=True,
+        # fix_mistral_regex=True,
     )
 
     # Create GliZNet configuration

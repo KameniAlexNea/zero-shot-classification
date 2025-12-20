@@ -10,8 +10,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 nohup uv run train_gliznet.py \
     \
     `# Model Configuration` \
-    --model_name microsoft/deberta-v3-small \
-    --model_class DebertaV2PreTrainedModel \
+    --model_name answerdotai/ModernBERT-base \
     --projected_dim 512 \
     --similarity_metric cosine \
     --dropout_rate 0.1 \
@@ -55,7 +54,7 @@ nohup uv run train_gliznet.py \
     --eval_steps 0.25 \
     --save_strategy steps \
     --save_steps 0.25 \
-    --save_total_limit 2 \
+    --save_total_limit 4 \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
     --early_stopping_patience 3 \
