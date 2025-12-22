@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 
 import datasets
 from generation_utils import generate_sample
@@ -114,7 +115,10 @@ if __name__ == "__main__":
         batch_size=5,
         start_index=0,
         max_samples=15,  # Set to None to process entire dataset
-        model="ollama/nemotron-3-nano",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
-        api_base="http://localhost:11434",
-        output_dir="synthetic_data/annotated_batches",
+        # model="ollama/nemotron-3-nano",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
+        model="openai/gpt-oss-120b",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
+        # api_base="http://localhost:11434",
+        api_base="https://api.groq.com/openai/v1",
+        output_dir=f"synthetic_data/wikihow_synthetic_data_nemotron3_nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        api_key=os.environ.get("GROQ_API_KEY"),
     )

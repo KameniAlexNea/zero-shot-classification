@@ -86,6 +86,7 @@ def generate_sample(
     api_base: str = "http://localhost:11434",
     temperature_range: tuple[float, float] = (0.7, 0.9),
     max_tokens: int = 2048,
+    api_key=None,
 ) -> Optional[GeneratedSample]:
     """Generate a synthetic sample from text using LiteLLM with Ollama.
 
@@ -117,6 +118,7 @@ def generate_sample(
                 max_tokens=max_tokens,
                 api_base=api_base,
                 response_format=GeneratedSample,
+                api_key=api_key,
             )
 
             # Parse using Pydantic model
