@@ -2,15 +2,15 @@ import json
 import os
 
 import datasets
-from tqdm import tqdm
-
 from generation_utils import generate_sample
-
+from tqdm import tqdm
 
 data = datasets.load_dataset("MongoDB/cosmopedia-wikihow-chunked", split="train")
 
 
-def save_batch_to_json(batch_data, batch_number, output_dir="synthetic_data/annotated_batches"):
+def save_batch_to_json(
+    batch_data, batch_number, output_dir="synthetic_data/annotated_batches"
+):
     """Save a batch of processed data to JSON file."""
     os.makedirs(output_dir, exist_ok=True)
 
@@ -31,7 +31,7 @@ def process_dataset_in_batches(
     output_dir="synthetic_data/annotated_batches",
 ):
     """Process dataset in batches and save to JSON files.
-    
+
     Args:
         dataset: HuggingFace dataset with 'text' field
         batch_size: Number of samples per batch file

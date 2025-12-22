@@ -7,10 +7,9 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from datasets import Dataset, load_dataset
+from generation_utils import generate_sample
 from loguru import logger
 from tqdm import tqdm
-
-from generation_utils import generate_sample
 
 
 def process_single_abstract(
@@ -185,7 +184,7 @@ def main():
     parser.add_argument(
         "--num_abstracts",
         type=int,
-        default=-1,
+        default=15,
         help="Number of abstracts to process",
     )
     parser.add_argument(
@@ -197,7 +196,7 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="arxiv_synthetic_data",
+        default="synthetic_data/annotated_batches",
         help="Output directory for JSON files",
     )
     parser.add_argument(

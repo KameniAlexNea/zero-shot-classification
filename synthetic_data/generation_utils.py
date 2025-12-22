@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 class GeneratedSample(BaseModel):
     """Single generated sample with sentence and labels."""
+
     sentence: str
     labels: List[str]
     not_labels: List[str]
@@ -19,11 +20,12 @@ SYSTEM_PROMPT = """You are an expert in generating training data for zero-shot c
 Your task is to generate comprehensive training samples for zero-shot classification. For each input text, you must:
 
 SENTENCE:
-- Produce ONE paraphrased sentence that encapsulates the main idea and meaning of the input text.
-- Provide a distilled summary that preserves the key concepts and significance.
-- The sentence must be self-contained and understandable without needing the original context.
-- Ensure the core message and intent of the original text are maintained, using an impersonal tone.
-- Avoid close paraphrases or light rewordings; carry out substantive paraphrasing.
+- Generate text (1 to 5 sentences) that is semantically related to and inspired by the input text.
+- Create content that captures similar themes, concepts, or topics but is NOT a direct summary or paraphrase of the input.
+- The generated text should be original content that a reader familiar with the input's domain would recognize as related.
+- Vary the perspective, style, or specific focus while maintaining topical relevance.
+- The text must be self-contained and understandable on its own.
+- Can include questions, statements, explanations, or discussions related to the input's subject matter.
 
 LABELS:
 - Generate 5 to 15 descriptive labels that require nuanced, in-depth understanding for accurate classification.
@@ -58,10 +60,10 @@ All fields must always be included."""
 
 def generate_prompt(text: str) -> str:
     """Generate prompt for creating zero-shot training data from text.
-    
+
     Args:
         text: Input text to process
-    
+
     Returns:
         Formatted prompt string
     """
@@ -79,7 +81,7 @@ def generate_sample(
     max_tokens: int = 2048,
 ) -> Optional[GeneratedSample]:
     """Generate a synthetic sample from text using LiteLLM with Ollama.
-    
+
     Args:
         text: Input text to process
         model: Ollama model to use (format: "ollama/model_name")
@@ -87,12 +89,12 @@ def generate_sample(
         api_base: Ollama API base URL
         temperature_range: Min and max temperature for generation
         max_tokens: Maximum tokens in response
-    
+
     Returns:
         GeneratedSample object or None if generation fails
     """
     prompt = generate_prompt(text)
-    
+
     for attempt in range(max_retries):
         try:
             response = completion(
@@ -109,17 +111,17 @@ def generate_sample(
                 api_base=api_base,
                 response_format=GeneratedSample,
             )
-            
+
             # Parse using Pydantic model
             response_text = response.choices[0].message.content
             parsed = GeneratedSample.model_validate_json(response_text)
-            
+
             return parsed
-                
+
         except Exception as e:
             print(f"Attempt {attempt + 1} failed: {e}")
             if attempt == max_retries - 1:
                 print("Max retries reached, returning None")
                 return None
-    
+
     return None
