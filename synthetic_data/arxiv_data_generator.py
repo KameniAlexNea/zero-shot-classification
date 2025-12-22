@@ -5,130 +5,18 @@ import json
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List
 
 from datasets import Dataset, load_dataset
-from litellm import completion
 from loguru import logger
-from pydantic import BaseModel, Field
 from tqdm import tqdm
 
-
-class GeneratedSample(BaseModel):
-    sentence: str
-    labels: List[str]
-    not_labels: List[str]
-
-
-class SyntheticDataGenerator(BaseModel):
-    samples: List[GeneratedSample] = Field(
-        default_factory=list, description="List of generated samples"
-    )
-
-
-def generate_prompt(abstract: str, num_samples: int = 3) -> str:
-    """Generate prompt for creating zero-shot training data from abstract."""
-    return f"""Given the following scientific abstract, generate **exactly {num_samples}** diverse text samples for zero-shot classification training that are semantically related to the abstract's content.
-
-**ABSTRACT**:
-{abstract}
-
-**TEXT REQUIREMENTS**:
-- Generate detailed sentences/paragraphs related to the abstract's topic and domain
-- Create diverse text types: research questions, hypotheses, methods descriptions, results summaries, implications, etc.
-- Vary writing styles: technical, explanatory, questioning, assertive
-- Each text should capture different aspects or perspectives from the abstract
-
-**LABELS**:
-- Create 5-15 descriptive labels per sample that require deep understanding
-- Include: scientific domain, methodology, subject matter, research type, tone, complexity level
-- Avoid obvious keyword-based labels
-- Focus on nuanced aspects: research approach, field specificity, technical level, application area
-
-**NOT_LABELS** (Hard Negatives):
-- Create 5-15 challenging negative labels that are plausible but incorrect
-- Should be from related but different scientific domains or methodologies
-- Require deep analysis to distinguish from correct labels
-
-**OUTPUT**: Return ONLY a valid JSON array (no markdown, no extra text) with objects containing:
-- "sentence": generated text related to the abstract
-- "labels": list of applicable descriptive labels
-- "not_labels": list of challenging hard negatives
-
-Example output format:
-[
-  {{
-    "sentence": "What are the primary mechanisms through which...",
-    "labels": ["astrophysics", "theoretical_research", "gravitational_waves", "black_holes", "technical_question"],
-    "not_labels": ["experimental_physics", "particle_physics", "biology", "chemistry", "casual_language"]
-  }}
-]
-"""
-
-
-def generate_synthetic_data(
-    abstract: str,
-    model: str = "ollama/qwen2.5:14b",
-    num_samples: int = 3,
-    max_retries: int = 3,
-    api_base: str = "http://localhost:11434",
-) -> List[GeneratedSample]:
-    """Generate synthetic training data from an abstract using litellm with Ollama.
-
-    Args:
-        abstract: Scientific abstract text
-        model: Ollama model to use (format: "ollama/model_name")
-        num_samples: Number of samples to generate
-        max_retries: Maximum number of retry attempts
-        api_base: Ollama API base URL
-
-    Returns:
-        List of GeneratedSample objects
-    """
-    prompt = generate_prompt(abstract, num_samples)
-
-    for attempt in range(max_retries):
-        try:
-            response = completion(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You're an expert in generating training data for zero-shot classification models. Always respond with valid JSON only.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=random.uniform(0.7, 0.9),
-                max_tokens=4096,
-                api_base=api_base,
-                response_format=SyntheticDataGenerator,
-            )
-
-            # Parse using Pydantic model
-            response_text = response.choices[0].message.content
-            parsed = SyntheticDataGenerator.model_validate_json(response_text)
-
-            if parsed.samples:
-                return parsed.samples
-            else:
-                logger.warning(
-                    f"Attempt {attempt + 1}: No samples generated, retrying..."
-                )
-
-        except Exception as e:
-            logger.error(f"Attempt {attempt + 1} failed: {e}")
-            if attempt == max_retries - 1:
-                logger.error("Max retries reached, returning empty list")
-                return []
-
-    return []
+from generation_utils import GeneratedSample, generate_sample
 
 
 def process_single_abstract(
     idx: int,
     dataset,
     model: str,
-    samples_per_abstract: int,
     api_base: str,
     output_dir: str,
     min_abstract_length: int,
@@ -139,13 +27,12 @@ def process_single_abstract(
         idx: Dataset index
         dataset: HuggingFace dataset
         model: Ollama model to use
-        samples_per_abstract: Number of samples to generate
         api_base: Ollama API base URL
         output_dir: Output directory for files
         min_abstract_length: Minimum abstract length
 
     Returns:
-        Number of samples generated
+        Number of samples generated (1 or 0)
     """
     abstract = dataset[idx]["abstract"]
 
@@ -153,15 +40,14 @@ def process_single_abstract(
     if len(abstract) < min_abstract_length:
         return 0
 
-    # Generate synthetic samples
-    samples = generate_synthetic_data(
-        abstract,
+    # Generate synthetic sample (single sentence)
+    sample = generate_sample(
+        text=abstract,
         model=model,
-        num_samples=samples_per_abstract,
         api_base=api_base,
     )
 
-    if not samples:
+    if not sample:
         return 0
 
     # Prepare output data
@@ -169,14 +55,9 @@ def process_single_abstract(
         "source_arxiv_id": dataset[idx].get("arxiv_id", ""),
         "source_subject": dataset[idx].get("primary_subject", ""),
         "source_abstract": abstract,
-        "samples": [
-            {
-                "text": sample.sentence,
-                "labels": sample.labels,
-                "not_labels": sample.not_labels,
-            }
-            for sample in samples
-        ],
+        "sentence": sample.sentence,
+        "labels": sample.labels,
+        "not_labels": sample.not_labels,
     }
 
     # Save to individual file
@@ -186,13 +67,12 @@ def process_single_abstract(
     with open(output_file, "w") as f:
         json.dump(output_data, f, indent=2, ensure_ascii=False)
 
-    return len(samples)
+    return 1
 
 
 def generate_dataset_from_abstracts(
     dataset,
     num_abstracts: int = 100,
-    samples_per_abstract: int = 3,
     model: str = "ollama/qwen2.5:14b",
     output_dir: str = "arxiv_synthetic_data",
     api_base: str = "http://localhost:11434",
@@ -204,7 +84,6 @@ def generate_dataset_from_abstracts(
     Args:
         dataset: HuggingFace dataset with 'abstract' field
         num_abstracts: Number of abstracts to process
-        samples_per_abstract: Number of samples to generate per abstract
         model: Ollama model to use
         output_dir: Output directory for JSON files
         api_base: Ollama API base URL
@@ -239,7 +118,6 @@ def generate_dataset_from_abstracts(
                 idx,
                 dataset,
                 model,
-                samples_per_abstract,
                 api_base,
                 output_dir,
                 min_abstract_length,
@@ -284,15 +162,14 @@ def save_as_hf_dataset(json_dir: str, output_dir: str) -> None:
         with open(filepath, "r") as f:
             file_data = json.load(f)
 
-            # Extract samples from each file
-            for sample in file_data.get("samples", []):
-                data.append(
-                    {
-                        "text": sample["text"],
-                        "labels": sample["labels"],
-                        "not_labels": sample["not_labels"],
-                    }
-                )
+            # Extract single sample from each file
+            data.append(
+                {
+                    "text": file_data["sentence"],
+                    "labels": file_data["labels"],
+                    "not_labels": file_data["not_labels"],
+                }
+            )
 
     hf_dataset = Dataset.from_list(data)
     hf_dataset.save_to_disk(output_dir)
@@ -310,12 +187,6 @@ def main():
         type=int,
         default=-1,
         help="Number of abstracts to process",
-    )
-    parser.add_argument(
-        "--samples_per_abstract",
-        type=int,
-        default=3,
-        help="Number of samples to generate per abstract",
     )
     parser.add_argument(
         "--model",
@@ -375,9 +246,8 @@ def main():
     generate_dataset_from_abstracts(
         dataset=ds["train"],
         num_abstracts=args.num_abstracts,
-        samples_per_abstract=args.samples_per_abstract,
-        model=args.model,
         output_dir=args.output_dir,
+        model=args.model,
         api_base=args.api_base,
         min_abstract_length=args.min_abstract_length,
         num_workers=args.num_workers,
