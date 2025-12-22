@@ -1,105 +1,175 @@
-# Zero-Shot Text Classification Dataset Generator
+# GliZNet: Zero-Shot Text Classification
 
-A clean, simple tool for generating high-quality synthetic datasets for zero-shot text classification using Ollama-hosted LLMs.
+GliZNet is a generalist and lightweight model for zero-shot sequence classification, inspired by [GLiNER](https://github.com/urchade/GLiNER) and [GLiClass](https://github.com/Knowledgator/GLiClass). It achieves efficient classification by encoding both text and labels in a single forward pass.
 
-## Features
+## ✨ Features
 
-- **High-Quality Data Generation**: Uses expert prompting with clear label definitions and examples
-- **Intelligent Diversity**: Randomized temperature and seeds for maximum data variety
-- **Batch Processing**: Efficiently generate large datasets with automatic batch saving
-- **Data Safety**: Each batch saved immediately to prevent data loss
-- **Simple Interface**: Clean CLI with minimal, focused functionality
+- **Zero-Shot Classification**: Works out-of-the-box with pretrained transformers (no task-specific training required)
+- **Efficient Architecture**: Single forward pass for all labels (10x faster than cross-encoders)
+- **Flexible Design**: Supports multi-label and multi-class classification
+- **Multiple Similarity Metrics**: Cosine, dot product, or bilinear similarity
+- **Configurable**: Optional projection layers, multiple loss functions for training
+- **Production Ready**: Clean pipeline interface inspired by GLiClass
 
-## What Are Labels?
+## 🚀 Quick Start
 
-Labels are categories that describe what a text is about, its purpose, tone, domain, or type. Our generator creates diverse labels across:
-
-- **Content Type**: "news_article", "product_review", "social_media_post", "email"
-- **Domain**: "technology", "sports", "finance", "healthcare", "entertainment" 
-- **Sentiment**: "positive", "negative", "neutral", "complaint", "praise"
-- **Intent**: "question", "request", "announcement", "opinion", "fact"
-- **Style**: "formal", "casual", "technical", "promotional", "educational"
-
-## Installation
+### Installation
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
-## Usage
-
-### Command Line Interface
-
-```bash
-# Generate 100 samples with default settings
-python generic_data.py
-
-# Generate 1000 samples with custom parameters  
-python generic_data.py --num-samples 1000 --batch-size 25 --min-labels 2 --max-labels 4
-
-# Use a different Ollama model
-python generic_data.py --model mistral --num-samples 500 --output my_dataset.json
-
-# Generate large datasets with batch processing
-python generic_data.py --num-samples 10000 --batch-size 50 --batch-dir my_batches
-```
-
-### Programmatic Usage
+### Basic Usage
 
 ```python
-from generic_data import OllamaClient
+from gliznet import GliZNetForSequenceClassification, ZeroShotClassificationPipeline
+from gliznet.tokenizer import GliZNETTokenizer
 
-# Initialize client
-client = OllamaClient(model="llama2")
+# Load model and tokenizer
+model_name = "alexneakameni/gliznet-ModernBERT-base"
+model = GliZNetForSequenceClassification.from_pretrained(model_name)
+tokenizer = GliZNETTokenizer.from_pretrained(model_name)
 
-# Generate small dataset
-dataset = client.generate_dataset(num_samples=100, min_labels=1, max_labels=5)
-
-# Generate large dataset with batch processing
-large_dataset = client.generate_large_dataset(
-    total_samples=10000,
-    batch_size=50, 
-    output_dir="my_batches"
+# Create pipeline
+pipeline = ZeroShotClassificationPipeline(
+    model, tokenizer, 
+    classification_type='multi-label',
+    device='cuda:0'
 )
+
+# Classify text
+text = "One day I will see the world!"
+labels = ["travel", "dreams", "sport", "science", "politics"]
+results = pipeline(text, labels, threshold=0.5)
+
+for result in results[0]:
+    print(f"{result['label']} => {result['score']:.3f}")
 ```
 
-## Parameters
+### Zero-Shot with Pretrained Backbone
 
-- `--model`: Ollama model to use (default: "llama2")
-- `--num-samples`: Number of samples to generate (default: 100)
-- `--batch-size`: Batch size for large datasets (default: 50)
-- `--min-labels`: Minimum labels per sentence (default: 1)
-- `--max-labels`: Maximum labels per sentence (default: 5)
-- `--output`: Output JSON file path (default: "synthetic_data.json")
-- `--batch-dir`: Directory for batch files (default: "batches")
+GliZNet works immediately with any pretrained transformer:
 
-## Dataset Format
+```python
+from gliznet import GliZNetConfig, GliZNetForSequenceClassification
+from gliznet.tokenizer import GliZNETTokenizer
 
-Generated datasets use this JSON structure with diverse, well-labeled examples:
+# Default config: no projection, cosine similarity, mean pooling
+config = GliZNetConfig(backbone_model="microsoft/deberta-v3-small")
+tokenizer = GliZNETTokenizer.from_backbone_pretrained(config.backbone_model)
+model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
+
+# Use immediately for zero-shot!
+pipeline = ZeroShotClassificationPipeline(model, tokenizer)
+results = pipeline("I love this movie!", ["positive", "negative", "neutral"])
+```
+
+## 📊 Architecture
+
+- **Backbone**: Any HuggingFace transformer (DeBERTa, RoBERTa, BERT, etc.)
+- **Text Encoding**: [CLS] token representation
+- **Label Encoding**: Mean pooling over label tokens
+- **Similarity**: Configurable (cosine, dot product, bilinear)
+- **Projection**: Optional (default: identity, uses raw embeddings)
+
+### Input Format
+
+```
+[CLS] text tokens [SEP] label1 [LAB] label2 [LAB] label3 [SEP]
+```
+
+## 🎯 Use Cases
+
+- **Sentiment Analysis**: Classify text as positive/negative/neutral
+- **Topic Classification**: Categorize documents into topics
+- **Intent Detection**: Identify user intent in conversations
+- **Content Moderation**: Flag inappropriate content
+- **News Categorization**: Organize articles by category
+- **Document Organization**: Tag and organize large document collections
+
+## 🛠️ Training
+
+Train on your own data:
+
+```bash
+# Single GPU training
+python train_gliznet.py \
+    --config configs/your_config.yaml \
+    --output_dir models/your-model
+
+# Multi-GPU training
+bash train_gliznet.sh
+```
+
+### Training Data Format
 
 ```json
 [
   {
-    "sentence": "The new smartphone camera produces amazing low-light photos.",
-    "labels": ["technology", "product_review", "positive", "consumer_electronics"]
-  },
-  {
-    "sentence": "How do I reset my password for the company portal?", 
-    "labels": ["question", "technical_support", "workplace", "instruction_request"]
+    "text": "Sample text here",
+    "all_labels": ["label1", "label2", "label3"],
+    "true_labels": ["label1", "label3"]
   }
 ]
 ```
 
-## Data Quality Features
+See `train_gliznet.py` for detailed training configuration.
 
-- **Randomized Generation**: Each batch uses different temperature (0.7-0.9) and random seeds
-- **Diverse Content**: Covers multiple domains, writing styles, and text types  
-- **Smart Labels**: Contextually relevant labels across content type, domain, sentiment, and intent
-- **Batch Safety**: Each batch immediately saved to prevent data loss
-- **Scalable**: Efficiently handles small datasets to millions of samples
+## 📁 Repository Structure
 
-## Requirements
+```
+gliznet/                  # Main model package
+├── model.py             # GliZNet model implementation
+├── tokenizer.py         # Custom tokenizer with label masking
+├── predictor.py         # Pipeline interface
+├── config.py            # Configuration classes
+└── data.py              # Data loading utilities
 
-- Python 3.7+
-- Ollama server running locally
-- Required packages: `ollama`, `llm-output-parser`
+
+train_gliznet.py        # Training script
+train_gliznet.sh        # Multi-GPU training script
+```
+
+## 🔧 Configuration
+
+```python
+from gliznet import GliZNetConfig
+
+config = GliZNetConfig(
+    backbone_model="microsoft/deberta-v3-small",
+    projected_dim=None,              # None = no projection
+    similarity_metric="cosine",      # "cosine", "dot", "bilinear"
+    use_projection_layernorm=False,  # LayerNorm after projection
+    
+    # Training loss weights
+    bce_loss_weight=1.0,
+    supcon_loss_weight=1.0,
+    label_repulsion_weight=0.1,
+    
+    # Temperature scaling
+    logit_scale_init=2.0,
+    learn_temperature=True,
+)
+```
+
+## 🤝 Citation
+
+If you use GliZNet in your research, please cite:
+
+```bibtex
+@software{gliznet2025,
+  title = {GliZNet: Generalized Ligthweights Zero-Shot Text Classification},
+  author = {Alex Kameni},
+  year = {2025},
+  url = {https://github.com/KameniAlexNea/zero-shot-classification}
+}
+```
+
+## 📝 License
+
+MIT License
+
+## 🙏 Acknowledgments
+
+- Inspired by [GLiNER](https://github.com/urchade/GLiNER) and [GLiClass](https://github.com/Knowledgator/GLiClass)
+- Built on [HuggingFace Transformers](https://github.com/huggingface/transformers)

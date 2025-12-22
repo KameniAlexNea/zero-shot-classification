@@ -26,12 +26,14 @@ from .data import (
     load_dataset,
 )
 from .model import GliZNetForSequenceClassification, GliZNetOutput
+from .predictor import ZeroShotClassificationPipeline
 from .tokenizer import GliZNETTokenizer
 
 __all__ = [
     "GliZNetForSequenceClassification",
     "GliZNetOutput",
     "GliZNETTokenizer",
+    "ZeroShotClassificationPipeline",
     "GliZNetDataConfig",
     "load_dataset",
     "add_tokenized_function",
