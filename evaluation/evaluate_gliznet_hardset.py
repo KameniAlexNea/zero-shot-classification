@@ -8,13 +8,14 @@ from argparse import ArgumentParser
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
-from gliznet.config import LabelName
+
 import numpy as np
 import torch
 from datasets import Dataset
 from loguru import logger
 from tqdm import tqdm
 
+from gliznet.config import LabelName
 from gliznet.data import load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.predictor import ZeroShotClassificationPipeline

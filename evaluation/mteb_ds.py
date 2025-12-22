@@ -1,9 +1,9 @@
+import json
+import re
+
 import datasets
 
-
-class LabelName:
-    ltext = "ltext"
-    lint = "lint"
+from gliznet.config import LabelName
 
 
 def load_toxic_conversations_dataset(split="test"):
@@ -158,7 +158,206 @@ def load_d_bpedia_dataset(split="test"):
     return test_ds
 
 
+def split_by_uppercase(text):
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", "_", text)
+
+
+def load_toxic_comments_dataset(split="test"):
+    test_ds = datasets.load_from_disk("results/jigsaw_toxicity_eval_local")["train"]
+    columns = [
+        "toxic",
+        "severe_toxic",
+        "obscene",
+        "threat",
+        "insult",
+        "identity_hate",
+    ]
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": x["comment_text"],
+            LabelName.ltext: columns,
+            LabelName.lint: [x[col] == 1 for col in columns],
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_yahoo_dataset(split="test"):
+    test_ds = datasets.load_dataset("community-datasets/yahoo_answers_topics")[split]
+    all_labels = test_ds.features["topic"].names
+    ds_mapping = {
+        i: str(j).replace("&", "and").replace(" ", "_").lower()
+        for i, j in enumerate(all_labels)
+    }
+
+    def convert_labels(label: str):
+        return {
+            LabelName.ltext: list(ds_mapping.values()),
+            LabelName.lint: [label == i for i in ds_mapping],
+        }
+
+    def format_text(title: str, content: str):
+        return f"{title}\n{content}"
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": format_text(
+                x["question_title"],
+                x["question_content"],
+            ),
+            **convert_labels(x["topic"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_dbpedia_dataset(split="test"):
+    test_ds = datasets.load_dataset("fancyzhx/dbpedia_14")[split]
+    all_labels = test_ds.features["label"].names
+    ds_mapping = {i: split_by_uppercase(j).lower() for i, j in enumerate(all_labels)}
+
+    def convert_labels(label: str):
+        return {
+            LabelName.ltext: list(ds_mapping.values()),
+            LabelName.lint: [label == i for i in ds_mapping],
+        }
+
+    def format_text(title: str, content: str):
+        return f"{title}\n{content}"
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": format_text(
+                x["title"],
+                x["content"],
+            ),
+            **convert_labels(x["label"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_events_classification_biotech(split="test"):
+    test_ds = datasets.load_dataset(
+        "knowledgator/events_classification_biotech", trust_remote_code=True
+    )[split]
+
+    def clean_label(label: str):
+        return label.lower().replace(" ", "_").replace("-", "and").replace("&", "and")
+
+    def format_text(title: str, content: str, target_organism: str):
+        return f"{title}\n{content}\nTarget Organism: {target_organism}"
+
+    test_labels = sum(test_ds["all_labels"], start=[])
+    test_labels = list(set(test_labels))
+    mapping = {i: clean_label(i) for i in test_labels}
+
+    def convert_labels(labels: list[str]):
+        return {
+            LabelName.ltext: list(mapping.values()),
+            LabelName.lint: [i in labels for i in mapping],
+        }
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": format_text(
+                x["title"],
+                x["content"],
+                x["target organization"],
+            ),
+            **convert_labels(set(x["all_labels"])),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_agnews_dataset(split="test"):
+    test_ds = datasets.load_dataset("sh0416/ag_news")[split]
+    mapping = {1: "World", 2: "Sports", 3: "Business", 4: "Science_or_Technology"}
+    mapping = {k: v.lower() + "_news" for k, v in mapping.items()}
+
+    def convert_labels(label: int):
+        return {
+            LabelName.ltext: list(mapping.values()),
+            LabelName.lint: [i == label for i in mapping],
+        }
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": (x["title"] + "\n" + x["description"]),
+            **convert_labels(x["label"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_imdb_dataset(split="test"):
+    test_ds = datasets.load_dataset("stanfordnlp/imdb")[split]
+    mapping = {0: "negative", 1: "positive"}
+    mapping = {k: v.lower() + "_sentiment" for k, v in mapping.items()}
+
+    def convert_labels(label: int):
+        return {
+            LabelName.ltext: list(mapping.values()),
+            LabelName.lint: [i == label for i in mapping],
+        }
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": x["text"],
+            **convert_labels(x["label"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
+def load_amazon_massive_intent(split="test", grouped: bool = True):
+    intent_groups: dict[str, list[str]] = json.load(
+        open("gliznet/eval_data/intent_data.json", "r")
+    )
+    test_ds = datasets.load_dataset("mteb/amazon_massive_intent", "en")[split]
+    all_labels: list[str] = list(set(test_ds["label"]))
+    mapping = (
+        {
+            i: intent_group + "_intent"
+            for intent_group, intents in intent_groups.items()
+            for i in intents
+        }
+        if grouped
+        else {i: i for i in all_labels}
+    )
+
+    labels = list(set(mapping.values()))
+
+    def convert_labels(label: str):
+        return {
+            LabelName.ltext: [i for i in labels],
+            LabelName.lint: [i == mapping[label] for i in labels],
+        }
+
+    test_ds = test_ds.map(
+        lambda x: {
+            "text": x["text"],
+            **convert_labels(x["label"]),
+        },
+        remove_columns=test_ds.column_names,
+    )
+    return test_ds
+
+
 ds_mapping = {
+    "agnews": load_agnews_dataset,
+    "imdb": load_imdb_dataset,
+    "dbpedia": load_dbpedia_dataset,
+    "events_biotech": load_events_classification_biotech,
+    "yahoo": load_yahoo_dataset,
+    "toxic_comments": load_toxic_comments_dataset,
     "toxic_conversations": load_toxic_conversations_dataset,
     "poem_sentiment": load_poem_sentiment_dataset,
     "movie_review_sentiment": load_movie_review_sentiment_dataset,

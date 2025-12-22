@@ -1,8 +1,10 @@
 import os
 
+os.environ["WANDB_PROJECT"] = "zero-shot-classification"
+os.environ["WANDB_WATCH"] = "none"
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-import importlib
 import json
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -13,21 +15,12 @@ import numpy as np
 import torch
 from datasets import Dataset
 from loguru import logger
+from sentence_transformers.cross_encoder import CrossEncoder
 from tqdm import tqdm
 
-from evaluation.metrics import compute_topk_metrics
-from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
-from gliznet.data import add_tokenized_function
-from evaluation.evaluation_ds import ds_mapping
-from gliznet.model import create_gli_znet_for_sequence_classification
-from gliznet.tokenizer import GliZNETTokenizer
-
-ds_mapping = {**ds_mapping, **mteb_ds_mapping}
-
-
-def get_transformers_class(class_name):
-    transformers_module = importlib.import_module("transformers")
-    return getattr(transformers_module, class_name)
+from evaluation.metrics import compute_topk_metrics as compute_metrics
+from evaluation.mteb_ds import ds_mapping
+from gliznet import LabelName
 
 
 @dataclass
@@ -35,14 +28,13 @@ class EvaluationConfig:
     """Configuration for evaluation."""
 
     model_path: str = "results/best_model/model"
-    model_class: str = "DebertaV2PreTrainedModel"
     device: str = "auto"
     batch_size: int = 64
     max_labels: int = 20
     threshold: float = 0.5
-    results_dir: str = "results/evaluation_test"
-    use_fast_tokenizer: bool = True
+    results_dir: str = "results/evaluation"
     activation: str = "softmax"
+    entailment: int = -1
 
 
 class ModelEvaluator:
@@ -51,7 +43,10 @@ class ModelEvaluator:
     def __init__(self, config: EvaluationConfig):
         self.config = config
         self.device = self._get_device()
-        self.model, self.tokenizer = self._load_models()
+        self.model = CrossEncoder(
+            model_name_or_path=self.config.model_path,
+            device=self.device,
+        )
 
     def _get_device(self) -> torch.device:
         """Get the appropriate device for inference."""
@@ -59,45 +54,52 @@ class ModelEvaluator:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(self.config.device)
 
-    def _load_models(self):
-        """Load model and tokenizer from checkpoint."""
-        logger.info(f"Loading model from {self.config.model_path} on {self.device}")
-
-        try:
-            tokenizer = GliZNETTokenizer.from_pretrained(
-                self.config.model_path, use_fast=self.config.use_fast_tokenizer
-            )
-
-            # Ensure max_length is set to 512 to prevent sequences exceeding model limits
-            tokenizer.max_length = 512
-
-            # Use from_pretrained_with_tokenizer to properly handle custom tokens
-            model = create_gli_znet_for_sequence_classification(
-                get_transformers_class(self.config.model_class)
-            ).from_pretrained_with_tokenizer(
-                self.config.model_path,
-                tokenizer=tokenizer,
-            )
-            model.to(self.device)
-            model.eval()
-
-            logger.info("Model loaded successfully")
-            return model, tokenizer
-
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
-
-    def predict_batch(self, inputs: Dict[str, torch.Tensor]) -> List[List[float]]:
+    def predict_batch(self, inputs: dict[str, list[str]]) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
 
-        with torch.no_grad():
-            inputs_gpu = {k: v.to(self.device) for k, v in inputs.items()}
-            predictions = self.model.predict(
-                **inputs_gpu, activation_fn=self.config.activation
-            )
+        def activate(logits: torch.Tensor, index: int) -> torch.Tensor:
+            """Apply activation function to logits."""
+            if self.config.activation == "softmax":
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    return logits.softmax(dim=-1)
+                return logits.softmax(dim=0)[:, index]
+            elif self.config.activation == "sigmoid":
+                if logits.ndim == 1 or logits.shape[1] == 1:
+                    return logits.sigmoid()
+                return logits.softmax(dim=-1)[:, index]
+            else:
+                raise ValueError(
+                    f"Unsupported activation function: {self.config.activation}"
+                )
 
-        return predictions
+        with torch.no_grad():
+            inputs_gpu = [
+                (text, label)
+                for text, labels in zip(inputs["text"], inputs[LabelName.ltext])
+                for label in labels
+            ]
+            predictions = self.model.predict(
+                inputs_gpu,
+                activation_fn=torch.nn.Identity(),
+                convert_to_tensor=True,
+                convert_to_numpy=False,
+            )
+            i = 0
+            labels: list[list[str]] = inputs[LabelName.ltext]
+            all_predictions = []
+            pos = 0
+            while i < len(predictions):
+                all_predictions.append(
+                    activate(
+                        predictions[i : i + len(labels[pos])], self.config.entailment
+                    )
+                    .cpu()
+                    .numpy()
+                )
+                i += len(labels[pos])
+                pos += 1
+
+        return all_predictions
 
     def evaluate_dataset(self, dataset: Dataset) -> Dict[str, Any]:
         """Evaluate the model on the given dataset."""
@@ -106,24 +108,22 @@ class ModelEvaluator:
         all_predictions = []
         all_true_labels = []
 
-        # Calculate correct total batches
-        total_batches = (
-            len(dataset) + self.config.batch_size - 1
-        ) // self.config.batch_size
-
         for batch in tqdm(
-            dataset.iter(batch_size=self.config.batch_size),
-            desc="Evaluating",
-            total=total_batches,
+            dataset.iter(batch_size=self.config.batch_size), desc="Evaluating"
         ):
-            labels = batch.pop("labels")
-            logits = self.predict_batch(batch)
+            try:
+                labels = batch.pop(LabelName.lint)
+                logits = self.predict_batch(batch)
 
-            all_predictions.append([np.array(logit) for logit in logits])
-            all_true_labels.append([lab.numpy() for lab in labels])
+                all_predictions.append(logits)
+                all_true_labels.append([np.array(label) for label in labels])
+
+            except Exception as e:
+                logger.error(f"Error processing batch: {e}")
+                raise e
 
         # Calculate comprehensive metrics
-        metrics = compute_topk_metrics((all_predictions, all_true_labels), True)
+        metrics = compute_metrics((all_predictions, all_true_labels), True)
 
         return {
             "metrics": metrics,
@@ -188,33 +188,28 @@ def get_args():
         help="Directory to save evaluation results.",
     )
     args.add_argument(
-        "--model_class",
-        type=str,
-        default="DebertaV2PreTrainedModel",
-        help="Model class to use",
-    )
-    args.add_argument(
-        "--use_fast_tokenizer",
-        action="store_true",
-        help="Use fast tokenizer if available.",
-    )
-    args.add_argument(
         "--activation",
         type=str,
-        default="sigmoid",
+        default="softmax",
         help="Activation function to use for model outputs.",
     )
     args.add_argument(
         "--data",
         type=str,
-        default="events_biotech",
+        default="agnews",
         help="Dataset to evaluate on (agnews or imdb).",
     )
     args.add_argument(
-        "--max_labels",
+        "--entailment",
         type=int,
-        default=100,
-        help="Maximum number of labels to consider for each example.",
+        default=-1,
+        help="Use entailment labels (1) or not (0). Default is -1",
+    )
+    args.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Batch size for evaluation.",
     )
     args.add_argument(
         "--device_pos",
@@ -222,48 +217,34 @@ def get_args():
         default=0,
         help="Batch size for evaluation.",
     )
-    args.add_argument(
-        "--batch_size",
-        type=int,
-        default=128,
-        help="Batch size for evaluation.",
-    )
     args = args.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device_pos)
+    print("Process PID", os.getpid())
     return args
+
+
+args = get_args()
 
 
 def main():
     """Main evaluation function."""
-    args = get_args()
-
     config = EvaluationConfig(
         model_path=args.model_path,
         threshold=args.threshold,
         results_dir=args.results_dir,
-        model_class=args.model_class,
-        use_fast_tokenizer=args.use_fast_tokenizer,
         activation=args.activation,
-        max_labels=args.max_labels,
+        entailment=args.entailment,
         batch_size=args.batch_size,
     )
 
     # Initialize evaluator
     evaluator = ModelEvaluator(config)
 
-    # Load test dataset
     logger.info("Loading test dataset...")
     if args.data not in ds_mapping:
         raise ValueError("Invalid dataset specified. Choose " + str(ds_mapping.keys()))
     logger.info(f"Using {args.data} dataset for evaluation.")
     data = ds_mapping[args.data]()
-
-    data = add_tokenized_function(
-        hf_dataset=data,
-        tokenizer=evaluator.tokenizer,
-        max_labels=config.max_labels,
-        shuffle_labels=False,
-    )
 
     # Run evaluation
     results = evaluator.evaluate_dataset(data)

@@ -88,7 +88,7 @@ def run_evaluation(
     # Build command
     cmd = [
         "python",
-        "evaluate_ce_agnews.py",
+        "evaluate_ce_public_ds.py",
         "--model_path",
         model_name,
         "--data",
