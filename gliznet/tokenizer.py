@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import torch
 from transformers import AutoTokenizer, BertTokenizer
@@ -121,11 +121,32 @@ class GliZNETTokenizer:
 
         return sequence, lmask
 
+    def tokenize(
+        self,
+        texts: Union[str, List[str]],
+        text_labels: Union[List[str], List[List[str]]],
+        return_tensors: str = "pt",
+    ) -> Dict[str, torch.Tensor]:
+        if isinstance(texts, str) and not isinstance(text_labels[0], str):
+            raise ValueError(
+                "If 'texts' is a string, 'text_labels' must be a list of strings."
+            )
+        is_unique = False
+        if isinstance(texts, str):
+            texts = [texts]
+            text_labels = [text_labels]
+            is_unique = True
+        examples = list(zip(texts, text_labels))
+        results = self.__call__(examples, return_tensors=return_tensors)
+        if is_unique:
+            results = {k: v[0] for k, v in results.items()}
+        return results
+
     def __call__(
         self,
         examples: List[Tuple[str, List[str]]],
         return_tensors: str = "pt",
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, torch.Tensor]:
         """Tokenize batch of (text, labels) tuples.
 
         Args:
