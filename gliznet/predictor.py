@@ -77,11 +77,10 @@ class ZeroShotClassificationPipeline:
         Returns:
             Initialized pipeline
         """
-        model, tokenizer = (
-            GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-                model_name_or_path, **kwargs
-            )
+        model = GliZNetForSequenceClassification.from_pretrained(
+            model_name_or_path, **kwargs
         )
+        tokenizer = GliZNETTokenizer.from_pretrained(model_name_or_path)
         return cls(
             model, tokenizer, classification_type=classification_type, device=device
         )
@@ -206,8 +205,8 @@ class ZeroShotClassificationPipeline:
                         r for r in batch_results if r["score"] >= threshold
                     ]
 
-                # Sort by score (descending)
-                batch_results.sort(key=lambda x: x["score"], reverse=True)
+                    # Sort by score (descending)
+                    batch_results.sort(key=lambda x: x["score"], reverse=True)
 
                 results.append(batch_results)
             else:

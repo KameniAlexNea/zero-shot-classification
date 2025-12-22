@@ -20,7 +20,7 @@ from tqdm import tqdm
 
 from evaluation.metrics import compute_topk_metrics as compute_metrics
 from gliznet import LabelName
-from gliznet.evaluation_ds import ds_mapping
+from evaluation.evaluation_ds import ds_mapping
 
 
 @dataclass

@@ -18,7 +18,7 @@ from tqdm import tqdm
 from evaluation.metrics import compute_topk_metrics
 from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
 from gliznet.data import add_tokenized_function
-from gliznet.evaluation_ds import ds_mapping
+from evaluation.evaluation_ds import ds_mapping
 from gliznet.model import create_gli_znet_for_sequence_classification
 from gliznet.tokenizer import GliZNETTokenizer
 

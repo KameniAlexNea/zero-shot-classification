@@ -4,7 +4,7 @@ import re
 import datasets
 from loguru import logger
 
-from . import LabelName
+from gliznet.config import LabelName
 
 
 def split_by_uppercase(text):
