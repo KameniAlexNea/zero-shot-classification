@@ -10,7 +10,7 @@ from datasets import Dataset, load_dataset
 from loguru import logger
 from tqdm import tqdm
 
-from generation_utils import GeneratedSample, generate_sample
+from generation_utils import generate_sample
 
 
 def process_single_abstract(

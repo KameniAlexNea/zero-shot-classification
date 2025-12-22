@@ -4,7 +4,7 @@ import os
 import datasets
 from tqdm import tqdm
 
-from generation_utils import GeneratedSample, generate_sample
+from generation_utils import generate_sample
 
 
 data = datasets.load_dataset("MongoDB/cosmopedia-wikihow-chunked", split="train")
@@ -68,7 +68,7 @@ def process_dataset_in_batches(
             break
 
         text = dataset[i]["text"]
-        pbar.set_description(f"Processing sample {i + 1}: {text[:50]}...")
+        pbar.set_description(f"Processing sample {i + 1}...")
 
         generated_sample = generate_sample(
             text=text,
@@ -111,10 +111,10 @@ if __name__ == "__main__":
     # Example usage: process first 100 samples in batches of 10
     process_dataset_in_batches(
         dataset=data,
-        batch_size=10,
+        batch_size=5,
         start_index=0,
-        max_samples=100,  # Set to None to process entire dataset
-        model="ollama/qwen2.5:14b",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
+        max_samples=15,  # Set to None to process entire dataset
+        model="ollama/nemotron-3-nano",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
         api_base="http://localhost:11434",
         output_dir="synthetic_data/annotated_batches",
     )

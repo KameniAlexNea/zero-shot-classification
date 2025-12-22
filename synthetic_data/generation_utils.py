@@ -14,23 +14,9 @@ class GeneratedSample(BaseModel):
     not_labels: List[str]
 
 
-def generate_prompt(text: str) -> str:
-    """Generate prompt for creating zero-shot training data from text.
-    
-    Args:
-        text: Input text to process
-    
-    Returns:
-        Formatted prompt string
-    """
-    return f"""Developer: Given the following text, generate a comprehensive training sample for zero-shot classification.
+SYSTEM_PROMPT = """You are an expert in generating training data for zero-shot classification models.
 
-INPUT TEXT:
-<input>
-{text}
-</input>
-
-TASK REQUIREMENTS:
+Your task is to generate comprehensive training samples for zero-shot classification. For each input text, you must:
 
 SENTENCE:
 - Produce ONE paraphrased sentence that encapsulates the main idea and meaning of the input text.
@@ -60,14 +46,28 @@ Special Cases & Error Handling:
 - If the input text is ambiguous, extremely short, or empty, return the best possible summary and labels based on available context, or provide an empty string for 'sentence' and empty lists for 'labels' and 'not_labels' if no inferences can be made.
 - Do not generate labels or not_labels without sufficient textual context.
 
-Set reasoning_effort = medium to ensure balanced thoroughness. Only return a valid JSON object with this exact structure; do not include markdown, comments, or additional text. Each field must be present:
-{{
+OUTPUT FORMAT:
+Always return a valid JSON object with this exact structure; do not include markdown, comments, or additional text:
+{
   "sentence": "<one distilled summary sentence (string)>",
   "labels": ["<label1>", "<label2>", ...],
   "not_labels": ["<not_label1>", "<not_label2>", ...]
-}}
-All fields must always be included.
-"""
+}
+All fields must always be included."""
+
+
+def generate_prompt(text: str) -> str:
+    """Generate prompt for creating zero-shot training data from text.
+    
+    Args:
+        text: Input text to process
+    
+    Returns:
+        Formatted prompt string
+    """
+    return f"""Generate a training sample for the following text:
+
+{text}"""
 
 
 def generate_sample(
@@ -100,7 +100,7 @@ def generate_sample(
                 messages=[
                     {
                         "role": "system",
-                        "content": "You're an expert in generating training data for zero-shot classification models. Always respond with valid JSON only.",
+                        "content": SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
