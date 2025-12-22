@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -16,18 +16,6 @@ if TYPE_CHECKING:
     from gliznet.tokenizer import GliZNETTokenizer
 
 
-@dataclass
-class LabelScore:
-    label: str
-    score: float
-
-
-@dataclass
-class PredictionOutput:
-    text: str
-    labels: list[LabelScore]
-
-
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -39,30 +27,28 @@ class GliZNetConfig(PretrainedConfig):
     Args:
         backbone_model: Name or path of the backbone transformer model
         backbone_config: Backbone model configuration (loaded automatically if None)
-        projected_dim: Dimension for projection layers (None = use hidden_size)
-        similarity_metric: Similarity computation method ('dot' or 'bilinear')
+        projected_dim: Dimension for projection layers (None = use hidden_size, no projection)
+        similarity_metric: Similarity computation method ('dot', 'bilinear', or 'cosine')
         dropout_rate: Dropout probability for projections
-        use_projection_layernorm: Whether to apply LayerNorm after projection
-        scale_loss: Multiplier for BCE loss
-        margin: Margin for contrastive loss
-        contrastive_loss_weight: Weight for contrastive loss
-        temperature: Temperature for contrastive loss scaling
-        temperature_scale_base: Base value for temperature scaling
-        separation_loss_weight: Weight for logit separation regularization
-        positive_logit_margin: Minimum desired logit for positive labels
-        negative_logit_margin: Maximum desired logit for negative labels
+        use_projection_layernorm: Whether to apply LayerNorm after projection (False = identity when projected_dim=None)
+        bce_loss_weight: Weight for binary cross-entropy loss
+        supcon_loss_weight: Weight for supervised contrastive loss
+        label_repulsion_weight: Weight for label repulsion loss
+        logit_scale_init: Initial value for learnable temperature scale
+        learn_temperature: Whether temperature scale is learnable
+        repulsion_threshold: Cosine similarity threshold for repulsion penalty
     """
 
     model_type = "gliznet"
 
     def __init__(
         self,
-        backbone_model: str = "microsoft/deberta-v3-small",
+        backbone_model: str = "answerdotai/ModernBERT-base",
         backbone_config: Optional[PretrainedConfig] = None,
         projected_dim: Optional[int] = None,
         similarity_metric: Literal["dot", "bilinear", "cosine"] = "cosine",
         dropout_rate: float = 0.1,
-        use_projection_layernorm: bool = True,
+        use_projection_layernorm: bool = False,
         # Loss weights
         bce_loss_weight: float = 1.0,
         supcon_loss_weight: float = 1.0,
@@ -567,7 +553,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
     def _build_projector(self, input_dim: int, output_dim: int) -> nn.Module:
         """Build a projection layer with optional LayerNorm."""
-        if input_dim == output_dim and not self.config.use_projection_layernorm:
+        if not self.config.use_projection_layernorm:
             return nn.Identity()
 
         layers = [nn.Linear(input_dim, output_dim)]
@@ -584,44 +570,6 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             self.config.backbone_config.vocab_size = new_num_tokens
             self.backbone.config.vocab_size = new_num_tokens
         return self.backbone.resize_token_embeddings(new_num_tokens)
-
-    @classmethod
-    def from_pretrained_with_tokenizer(
-        cls,
-        pretrained_model_name_or_path: str,
-        **kwargs,
-    ):
-        """Load a saved GliZNet model with its tokenizer.
-
-        This is the CORRECT way to load a saved GliZNet model.
-        Use this instead of from_pretrained() directly.
-
-        Args:
-            pretrained_model_name_or_path: Path to saved model directory
-            **kwargs: Additional arguments for loading
-
-        Returns:
-            Tuple of (model, tokenizer)
-        """
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        # Load tokenizer first to get correct vocab size
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            pretrained_model_name_or_path, fix_mistral_regex=True
-        )
-
-        # Load config
-        config = GliZNetConfig.from_pretrained(pretrained_model_name_or_path)
-
-        # CRITICAL: Update backbone_config vocab size to match tokenizer
-        config.backbone_config.vocab_size = len(tokenizer)
-
-        # Now load model normally - backbone will be created with correct vocab size
-        model = cls.from_pretrained(
-            pretrained_model_name_or_path, config=config, **kwargs
-        )
-
-        return model, tokenizer
 
     @classmethod
     def from_backbone_pretrained(
@@ -712,173 +660,3 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             label_ids=label_ids if return_stats else None,
             label_embeddings=label_embeddings if return_stats else None,
         )
-
-    @torch.inference_mode()
-    def predict(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        lmask: torch.Tensor,
-        activation: Literal["sigmoid", "softmax"] = "sigmoid",
-    ) -> List[List[float]]:
-        """Predict label scores for each sample.
-
-        Args:
-            input_ids: Input token IDs (B, L)
-            attention_mask: Attention mask (B, L)
-            lmask: Label mask (B, L)
-            activation: Activation function to apply
-
-        Returns:
-            List of score lists, one per sample
-        """
-        self.eval()
-
-        outputs = self.forward(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            lmask=lmask,
-            return_stats=True,
-            return_dict=True,
-        )
-
-        logits = outputs.logits.squeeze(-1)
-        batch_indices = outputs.batch_indices
-        label_ids = outputs.label_ids
-
-        # Apply activation
-        if activation == "sigmoid":
-            scores = torch.sigmoid(logits)
-        else:
-            scores = logits
-
-        # Group by batch
-        batch_size = input_ids.shape[0]
-        results = [[] for _ in range(batch_size)]
-
-        scores_list = scores.cpu().tolist()
-        batch_list = batch_indices.cpu().tolist()
-        label_list = label_ids.cpu().tolist()
-
-        for batch_id in range(batch_size):
-            # Collect scores for this batch
-            batch_scores = [
-                (label_id, score)
-                for b, label_id, score in zip(batch_list, label_list, scores_list)
-                if b == batch_id
-            ]
-
-            if batch_scores:
-                # Sort by label_id
-                batch_scores.sort(key=lambda x: x[0])
-                final_scores = [score for _, score in batch_scores]
-
-                # Apply softmax if requested
-                if activation == "softmax":
-                    final_scores = torch.softmax(
-                        torch.tensor(final_scores), dim=0
-                    ).tolist()
-
-                results[batch_id] = final_scores
-
-        return results
-
-    @torch.inference_mode()
-    def predict_example(
-        self,
-        text: str,
-        labels: List[str],
-        tokenizer: "GliZNETTokenizer",
-        device: str = None,
-        activation: Literal["sigmoid", "softmax"] = "sigmoid",
-    ) -> PredictionOutput:
-        """Predict scores for a single text with given labels.
-
-        Args:
-            text: Input text to classify
-            labels: List of candidate labels
-            tokenizer: GliZNETTokenizer instance
-            device: Device to run inference on ("cpu" or "cuda")
-            activation: Activation function to apply
-
-        Returns:
-            PredictionOutput instance mapping labels to scores
-        """
-        self.eval()
-        if device is None:
-            device = self.device
-
-        # Tokenize
-        batch = tokenizer([(text, labels)])
-
-        # Move to device
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        lmask = batch["lmask"].to(device)
-
-        # Get predictions
-        predictions = self.predict(
-            input_ids, attention_mask, lmask, activation=activation
-        )
-        scores = predictions[0]
-
-        return PredictionOutput(
-            text=text,
-            labels=[
-                LabelScore(label=label, score=score)
-                for label, score in zip(labels, scores)
-            ],
-        )
-
-    @torch.inference_mode()
-    def predict_batch(
-        self,
-        texts: List[str],
-        all_labels: List[List[str]],
-        tokenizer: "GliZNETTokenizer",
-        device: str = None,
-        activation: Literal["sigmoid", "softmax"] = "sigmoid",
-    ) -> List[PredictionOutput]:
-        """Predict scores for multiple texts with their respective labels.
-
-        Args:
-            texts: List of input texts to classify
-            all_labels: List of label lists (one per text)
-            tokenizer: GliZNETTokenizer instance
-            device: Device to run inference on ("cpu" or "cuda")
-            activation: Activation function to apply
-            return_sorted: If True, return results sorted by score (descending)
-
-        Returns:
-            List of PredictionOutput instances mapping labels to scores
-        """
-        self.eval()
-        if device is None:
-            device = self.device
-
-        # Tokenize batch
-        batch = tokenizer([(text, labels) for text, labels in zip(texts, all_labels)])
-
-        # Move to device
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        lmask = batch["lmask"].to(device)
-
-        # Get predictions
-        predictions = self.predict(
-            input_ids, attention_mask, lmask, activation=activation
-        )
-
-        # Build results
-        results = [
-            PredictionOutput(
-                text=text,
-                labels=[
-                    LabelScore(label=label, score=score)
-                    for label, score in zip(labels, scores)
-                ],
-            )
-            for text, labels, scores in zip(texts, all_labels, predictions)
-        ]
-
-        return results
