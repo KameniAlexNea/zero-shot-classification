@@ -3,6 +3,7 @@
 import json
 import os
 import random
+from datetime import datetime
 
 from datasets import load_dataset
 from generation_utils import generate_sample
@@ -127,11 +128,11 @@ if __name__ == "__main__":
     # Process abstracts in batches
     process_dataset_in_batches(
         dataset=ds["train"],
-        batch_size=5,
+        batch_size=50,
         start_index=0,
-        max_samples=15,
+        max_samples=1_000_000,
         model="ollama/nemotron-3-nano",
         api_base="http://localhost:11434",
-        output_dir="arxiv_synthetic_data/data",
+        output_dir=f"synthetic_data/arxiv_synthetic_data_nemotron3_nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         min_abstract_length=100,
     )

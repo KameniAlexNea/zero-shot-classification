@@ -22,26 +22,33 @@ Your task is to generate comprehensive training samples for zero-shot classifica
 SENTENCE:
 - Generate text (1 to 5 sentences) that is semantically related to and inspired by the input text.
 - Create content that captures similar themes, concepts, or topics but is NOT a direct summary or paraphrase of the input.
+- CRITICAL: The generated sentence will be used ALONE for classification without access to the source text. It must be completely self-contained, clear, and rich in contextual information.
+- The sentence must contain sufficient semantic and contextual cues that enable accurate classification based solely on its content.
+- Include implicit indicators of: domain, tone, intent, methodology, complexity level, target audience, and content type within the generated text itself.
 - The generated text should be original content that a reader familiar with the input's domain would recognize as related.
-- Vary the perspective, style, or specific focus while maintaining topical relevance.
-- The text must be self-contained and understandable on its own.
+- Vary the perspective, style, or specific focus while maintaining topical relevance and contextual clarity.
 - Can include questions, statements, explanations, or discussions related to the input's subject matter.
+- Avoid writing like you're citing or summarizing the input text. Write as if this is standalone content that must convey its own context.
 
 LABELS:
-- Generate 5 to 15 descriptive labels that require nuanced, in-depth understanding for accurate classification.
+- Generate 5 to 15 descriptive labels that require deep contextual understanding and semantic interpretation for accurate classification.
 - Each label must be a distinct, non-empty string; the list must contain only strings.
-- Do not choose simple, keyword-based labels that are easily matched by text search.
-- Include (where possible): content_type, domain, topic, tone, intent, complexity_level, writing_style, methodology, target_audience.
-- Emphasize subtle distinctions and semantic interpretation.
-- Example labels: step_by_step_tutorial, theoretical_research, practical_application, beginner_friendly, technical_content.
+- CRITICAL: Avoid simple, keyword-based labels that can be matched through text search or surface-level pattern matching.
+- Labels should be context-dependent and require understanding the underlying meaning, intent, structure, and nuanced characteristics of the content.
+- Focus on semantic properties that demand inference: implicit tone, writing methodology, target audience sophistication, conceptual depth, pedagogical approach, argumentation style, epistemological stance...
+- Include (where possible): content_type, domain, topic, tone, intent, complexity_level, writing_style, methodology, target_audience, discourse_pattern, cognitive_demand...
+- Emphasize subtle distinctions that cannot be determined by keyword presence alone.
+- Example labels: step_by_step_tutorial, theoretical_research, practical_application, beginner_friendly, technical_content, socratic_questioning, empirical_evidence_based, interdisciplinary_synthesis.
 - No required ordering of labels.
 
 NOT_LABELS (Hard Negatives):
-- Provide 5 to 15 negative labels that are plausible yet incorrect for the input text.
+- Provide 5 to 15 negative labels that are highly plausible yet definitively incorrect for the input text.
 - Each not_label must be a non-empty string; lists can include only strings.
-- Select hard negatives from related domains or overlapping content types to ensure they are challenging.
-- They should require careful differentiation from the true labels.
-- Example not_labels: unrelated_domains, different_content_types, mismatched_tone, different_methodologies.
+- Select hard negatives from closely related domains, similar content types, or overlapping semantic spaces to maximize difficulty.
+- NOT_LABELS should be contextually challenging and require careful semantic differentiation from the true labels.
+- Avoid obviously unrelated labels; instead, choose labels that might apply to superficially similar content but fail upon deeper contextual analysis.
+- These should test the model's ability to distinguish subtle contextual differences rather than simple keyword mismatches.
+- Example not_labels: alternative_methodologies, adjacent_domains, contrasting_tones, different_audience_levels, opposite_intent_patterns.
 - No required ordering for not_labels.
 
 Special Cases & Error Handling:
