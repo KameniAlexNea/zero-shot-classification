@@ -180,6 +180,18 @@ class GliZNETTokenizer:
         """Save the underlying tokenizer."""
         return self.tokenizer.save_pretrained(save_directory, **kwargs)
 
+    def push_to_hub(
+        self,
+        repo_id: str,
+        private: bool = False,
+        commit_message: str = "Upload GliZNET tokenizer",
+        **kwargs,
+    ):
+        """Push the underlying tokenizer to Hugging Face Hub."""
+        return self.tokenizer.push_to_hub(
+            repo_id, private=private, commit_message=commit_message, **kwargs
+        )
+
     def decode(self, token_ids: List[int], **kwargs) -> str:
         """Decode token IDs to text."""
         return self.tokenizer.decode(token_ids, **kwargs)

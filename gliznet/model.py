@@ -522,6 +522,7 @@ class GliZNetLoss(nn.Module):
 class GliZNetPreTrainedModel(PreTrainedModel):
     """Base class for GliZNet models."""
 
+    backbone: PreTrainedModel
     config_class = GliZNetConfig
     base_model_prefix = "gliznet"
     supports_gradient_checkpointing = True
