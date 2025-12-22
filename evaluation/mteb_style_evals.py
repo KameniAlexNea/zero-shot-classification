@@ -21,7 +21,7 @@ from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
 from gliznet.data import add_tokenized_function, collate_fn
 
 # from gliznet.evaluation_ds import ds_mapping
-from gliznet.model import create_gli_znet_for_sequence_classification
+from gliznet.model import GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 
 # Combine both dataset mappings
@@ -38,7 +38,6 @@ class MTEBEvaluationConfig:
     """Configuration for MTEB-style evaluation."""
 
     model_path: str = "results/best_model/model"
-    model_class: str = "BertPreTrainedModel"
     device: str = "auto"
     batch_size: int = 64
     results_dir: str = "results/mteb_evaluation"
@@ -52,7 +51,7 @@ class MTEBEvaluationConfig:
 class MTEBModelWrapper:
     """Wrapper to make GliZNet compatible with MTEB-style encoding."""
 
-    def __init__(self, model, device, batch_size=32):
+    def __init__(self, model: GliZNetForSequenceClassification, device, batch_size=32):
         self.model = model
         self.device = device
         self.batch_size = batch_size
@@ -79,11 +78,14 @@ class MTEBModelWrapper:
                 # Get pre-tokenized data and convert to tensors
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
+                lmask = batch["lmask"].to(self.device)
 
                 # Get embeddings using the model's encode method
-                batch_embeddings = self.model.encode(input_ids, attention_mask)
+                batch_embeddings = self.model(
+                    input_ids, attention_mask, lmask, return_stats=True
+                )
 
-                embeddings.append(batch_embeddings.cpu().numpy())
+                embeddings.append(batch_embeddings.text_embeddings.cpu().numpy())
 
         return np.vstack(embeddings)
 
@@ -307,9 +309,9 @@ class MTEBStyleEvaluator:
                 self.config.model_path, use_fast=self.config.use_fast_tokenizer
             )
 
-            model = create_gli_znet_for_sequence_classification(
-                get_transformers_class(self.config.model_class)
-            ).from_pretrained(self.config.model_path, device_map=self.device)
+            model = GliZNetForSequenceClassification.from_pretrained(
+                self.config.model_path, device_map=self.device
+            )
 
             model.eval()
 
@@ -503,8 +505,7 @@ def get_args():
     )
     parser.add_argument(
         "--model_path",
-        type=str,
-        required=True,
+        default="alexneakameni/gliznet-ModernBERT-base",
         help="Path to the trained model directory.",
     )
     parser.add_argument(
@@ -514,12 +515,6 @@ def get_args():
         help="Directory to save evaluation results.",
     )
     parser.add_argument(
-        "--model_class",
-        type=str,
-        default="DebertaV2PreTrainedModel",
-        help="Model class to use",
-    )
-    parser.add_argument(
         "--use_fast_tokenizer",
         action="store_true",
         help="Use fast tokenizer if available.",
@@ -527,7 +522,7 @@ def get_args():
     parser.add_argument(
         "--data",
         type=str,
-        default="events_biotech",
+        default="yahoo_answers_topics",
         help="Dataset to evaluate on.",
     )
     parser.add_argument(
@@ -580,7 +575,6 @@ def main():
     config = MTEBEvaluationConfig(
         model_path=args.model_path,
         results_dir=args.results_dir,
-        model_class=args.model_class,
         use_fast_tokenizer=args.use_fast_tokenizer,
         k=args.k,
         limit=args.limit,

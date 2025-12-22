@@ -100,6 +100,7 @@ class GliZNetOutput(ModelOutput):
         batch_indices: Batch index for each prediction
         label_ids: Label ID for each prediction
         label_embeddings: Projected label embeddings (for repulsion loss)
+        text_embeddings: Projected text embeddings (CLS token)
     """
 
     loss: Optional[torch.FloatTensor] = None
@@ -107,6 +108,7 @@ class GliZNetOutput(ModelOutput):
     batch_indices: Optional[torch.Tensor] = None
     label_ids: Optional[torch.Tensor] = None
     label_embeddings: Optional[torch.Tensor] = None
+    text_embeddings: Optional[torch.Tensor] = None
 
 
 # ============================================================================
@@ -188,9 +190,14 @@ class LabelAggregator(nn.Module):
         self.similarity_head = similarity_head
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(
-        self, hidden_states: torch.Tensor, lmask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, hidden_states: torch.Tensor, lmask: torch.Tensor) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         """Aggregate label representations and compute similarities.
 
         Args:
@@ -203,6 +210,7 @@ class LabelAggregator(nn.Module):
             label_ids: Label ID for each score (N,)
             label_embeddings: Aggregated label embeddings (N, D)
             logit_scale: Current temperature scale
+            cls_repr: Projected CLS token embeddings (B, D)
         """
         batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
@@ -217,7 +225,7 @@ class LabelAggregator(nn.Module):
             empty_idx = torch.empty(0, dtype=torch.long, device=device)
             empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
             dummy_scale = self.similarity_head.logit_scale
-            return empty, empty_idx, empty_idx, empty_emb, dummy_scale
+            return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
 
         # Project label tokens
         label_hidden = self.dropout(self.label_projector(hidden_states[label_mask]))
@@ -253,7 +261,7 @@ class LabelAggregator(nn.Module):
             empty_idx = torch.empty(0, dtype=torch.long, device=device)
             empty_emb = torch.empty(0, projected_dim, device=device)
             dummy_scale = self.similarity_head.logit_scale
-            return empty, empty_idx, empty_idx, empty_emb, dummy_scale
+            return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
 
         aggregated = aggregated[valid_mask] / counts[valid_mask].unsqueeze(-1)
 
@@ -275,7 +283,7 @@ class LabelAggregator(nn.Module):
         cls_expanded = cls_repr[all_batch_ids]
         logits, logit_scale = self.similarity_head(cls_expanded, aggregated)
 
-        return logits, all_batch_ids, all_label_ids, aggregated, logit_scale
+        return logits, all_batch_ids, all_label_ids, aggregated, logit_scale, cls_repr
 
 
 class GliZNetLoss(nn.Module):
@@ -634,9 +642,14 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         hidden_states = encoder_outputs.last_hidden_state
 
         # Aggregate labels and compute similarities
-        logits, batch_indices, label_ids, label_embeddings, logit_scale = (
-            self.aggregator(hidden_states, lmask)
-        )
+        (
+            logits,
+            batch_indices,
+            label_ids,
+            label_embeddings,
+            logit_scale,
+            text_embeddings,
+        ) = self.aggregator(hidden_states, lmask)
 
         # Compute loss
         loss = None
@@ -659,4 +672,5 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             batch_indices=batch_indices if return_stats else None,
             label_ids=label_ids if return_stats else None,
             label_embeddings=label_embeddings if return_stats else None,
+            text_embeddings=text_embeddings if return_stats else None,
         )
