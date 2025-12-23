@@ -31,6 +31,10 @@ class GliZNetConfig(PretrainedConfig):
         similarity_metric: Similarity computation method ('dot', 'bilinear', or 'cosine')
         dropout_rate: Dropout probability for projections
         use_projection_layernorm: Whether to apply LayerNorm after projection (False = identity when projected_dim=None)
+        use_lab_token_for_labels: If True, use [LAB] token embedding as label representation.
+                                 If False (default), average all label token embeddings.
+                                 Using [LAB] simplifies computation and speeds up inference.
+        lab_token_id: Token ID of the [LAB] separator token (set automatically from tokenizer)
         bce_loss_weight: Weight for binary cross-entropy loss
         supcon_loss_weight: Weight for supervised contrastive loss
         label_repulsion_weight: Weight for label repulsion loss
@@ -49,6 +53,8 @@ class GliZNetConfig(PretrainedConfig):
         similarity_metric: Literal["dot", "bilinear", "cosine"] = "cosine",
         dropout_rate: float = 0.1,
         use_projection_layernorm: bool = False,
+        use_lab_token_for_labels: bool = False,
+        lab_token_id: Optional[int] = None,
         # Loss weights
         bce_loss_weight: float = 1.0,
         supcon_loss_weight: float = 1.0,
@@ -62,11 +68,19 @@ class GliZNetConfig(PretrainedConfig):
     ):
         super().__init__(**kwargs)
 
+        if use_lab_token_for_labels and lab_token_id is None:
+            raise ValueError(
+                "When use_lab_token_for_labels=True, lab_token_id must be set. "
+                "Use from_backbone_pretrained() to set it automatically from tokenizer."
+            )
+
         self.backbone_model = backbone_model
         self.projected_dim = projected_dim
         self.similarity_metric = similarity_metric
         self.dropout_rate = dropout_rate
         self.use_projection_layernorm = use_projection_layernorm
+        self.use_lab_token_for_labels = use_lab_token_for_labels
+        self.lab_token_id = lab_token_id
 
         # Loss configuration
         self.bce_loss_weight = bce_loss_weight
@@ -190,19 +204,18 @@ class LabelAggregator(nn.Module):
         self.similarity_head = similarity_head
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(self, hidden_states: torch.Tensor, lmask: torch.Tensor) -> Tuple[
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-    ]:
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        lmask: torch.Tensor,
+        input_ids: torch.Tensor,
+    ) -> Tuple[torch.Tensor, ...]:
         """Aggregate label representations and compute similarities.
 
         Args:
             hidden_states: Encoder outputs (B, L, H)
             lmask: Label mask where >0 indicates label tokens (B, L)
+            input_ids: Input token IDs (B, L)
 
         Returns:
             logits: Similarity scores (N, 1)
@@ -218,66 +231,121 @@ class LabelAggregator(nn.Module):
         # Project CLS tokens
         cls_repr = self.dropout(self.text_projector(hidden_states[:, 0]))
 
-        # Filter label tokens
-        label_mask = lmask > 0
-        if not label_mask.any():
-            empty = torch.empty(0, 1, device=device)
-            empty_idx = torch.empty(0, dtype=torch.long, device=device)
-            empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
-            dummy_scale = self.similarity_head.logit_scale
-            return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
+        # Check if using [LAB] token mode
+        if self.config.use_lab_token_for_labels:
+            # Mode: Use [LAB] token embeddings as label representations
+            # Find [LAB] token positions
+            lab_mask = input_ids == self.config.lab_token_id
+            if not lab_mask.any():
+                empty = torch.empty(0, 1, device=device)
+                empty_idx = torch.empty(0, dtype=torch.long, device=device)
+                empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
+                dummy_scale = self.similarity_head.logit_scale
+                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
 
-        # Project label tokens
-        label_hidden = self.dropout(self.label_projector(hidden_states[label_mask]))
+            # Project [LAB] token embeddings
+            label_hidden = self.dropout(self.label_projector(hidden_states[lab_mask]))
 
-        # Get batch and label IDs for each token
-        batch_indices_all = (
-            torch.arange(batch_size, device=device)
-            .unsqueeze(1)
-            .expand(batch_size, seq_len)
-        )
-        token_batch_ids = batch_indices_all[label_mask]
-        token_label_ids = lmask[label_mask].long()
+            # Get batch indices for each [LAB] token
+            batch_indices_all = (
+                torch.arange(batch_size, device=device)
+                .unsqueeze(1)
+                .expand(batch_size, seq_len)
+            )
+            all_batch_ids = batch_indices_all[lab_mask]
 
-        # Aggregate by (batch, label_id) using scatter
-        max_label_id = int(token_label_ids.max().item())
-        num_slots = batch_size * max_label_id
+            # Assign sequential label IDs for each [LAB] token within its batch
+            # Count [LAB] tokens per batch (just counting, not summing embeddings!)
+            lab_counts = lab_mask.sum(dim=1)
+            max_labels = int(lab_counts.max().item())
 
-        # Compute flat indices: batch_id * max_label_id + (label_id - 1)
-        flat_indices = token_batch_ids * max_label_id + (token_label_ids - 1)
+            # Create grid of (batch_size, max_labels) then filter by actual [LAB] positions
+            # This ensures consistent structure like the average mode
+            batch_label_grid = (
+                torch.arange(batch_size, device=device)
+                .unsqueeze(1)
+                .expand(batch_size, max_labels)
+            )
+            label_id_grid = (
+                torch.arange(1, max_labels + 1, device=device)
+                .unsqueeze(0)
+                .expand(batch_size, -1)
+            )
 
-        # Aggregate label representations (mean pooling)
-        projected_dim = label_hidden.shape[-1]
-        aggregated = torch.zeros(num_slots, projected_dim, device=device)
-        counts = torch.zeros(num_slots, device=device)
+            # Create mask for valid labels (within each batch's label count)
+            valid_mask = label_id_grid <= lab_counts.unsqueeze(1)
 
-        aggregated.index_add_(0, flat_indices, label_hidden)
-        counts.index_add_(0, flat_indices, torch.ones(len(flat_indices), device=device))
+            # Flatten and filter
+            all_batch_ids = batch_label_grid.reshape(-1)[valid_mask.reshape(-1)]
+            all_label_ids = label_id_grid.reshape(-1)[valid_mask.reshape(-1)]
 
-        # Keep only non-empty slots
-        valid_mask = counts > 0
-        if not valid_mask.any():
-            empty = torch.empty(0, 1, device=device)
-            empty_idx = torch.empty(0, dtype=torch.long, device=device)
-            empty_emb = torch.empty(0, projected_dim, device=device)
-            dummy_scale = self.similarity_head.logit_scale
-            return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
+            # Use [LAB] token embeddings directly - NO averaging or summing!
+            aggregated = label_hidden
 
-        aggregated = aggregated[valid_mask] / counts[valid_mask].unsqueeze(-1)
+        else:
+            # Mode: Average label token embeddings (original behavior)
+            # Filter label tokens
+            label_mask = lmask > 0
+            if not label_mask.any():
+                empty = torch.empty(0, 1, device=device)
+                empty_idx = torch.empty(0, dtype=torch.long, device=device)
+                empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
+                dummy_scale = self.similarity_head.logit_scale
+                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
 
-        # Reconstruct batch and label IDs
-        all_batch_ids = (
-            torch.arange(batch_size, device=device)
-            .unsqueeze(1)
-            .expand(batch_size, max_label_id)
-            .reshape(-1)[valid_mask]
-        )
-        all_label_ids = (
-            torch.arange(1, max_label_id + 1, device=device)
-            .unsqueeze(0)
-            .expand(batch_size, -1)
-            .reshape(-1)[valid_mask]
-        )
+            # Project label tokens
+            label_hidden = self.dropout(self.label_projector(hidden_states[label_mask]))
+
+            # Get batch and label IDs for each token
+            batch_indices_all = (
+                torch.arange(batch_size, device=device)
+                .unsqueeze(1)
+                .expand(batch_size, seq_len)
+            )
+            token_batch_ids = batch_indices_all[label_mask]
+            token_label_ids = lmask[label_mask].long()
+
+            # Aggregate by (batch, label_id) using scatter
+            max_label_id = int(token_label_ids.max().item())
+            num_slots = batch_size * max_label_id
+
+            # Compute flat indices: batch_id * max_label_id + (label_id - 1)
+            flat_indices = token_batch_ids * max_label_id + (token_label_ids - 1)
+
+            # Aggregate label representations (mean pooling)
+            projected_dim = label_hidden.shape[-1]
+            aggregated = torch.zeros(num_slots, projected_dim, device=device)
+            counts = torch.zeros(num_slots, device=device)
+
+            aggregated.index_add_(0, flat_indices, label_hidden)
+            counts.index_add_(
+                0, flat_indices, torch.ones(len(flat_indices), device=device)
+            )
+
+            # Keep only non-empty slots
+            valid_mask = counts > 0
+            if not valid_mask.any():
+                empty = torch.empty(0, 1, device=device)
+                empty_idx = torch.empty(0, dtype=torch.long, device=device)
+                empty_emb = torch.empty(0, projected_dim, device=device)
+                dummy_scale = self.similarity_head.logit_scale
+                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
+
+            aggregated = aggregated[valid_mask] / counts[valid_mask].unsqueeze(-1)
+
+            # Reconstruct batch and label IDs
+            all_batch_ids = (
+                torch.arange(batch_size, device=device)
+                .unsqueeze(1)
+                .expand(batch_size, max_label_id)
+                .reshape(-1)[valid_mask]
+            )
+            all_label_ids = (
+                torch.arange(1, max_label_id + 1, device=device)
+                .unsqueeze(0)
+                .expand(batch_size, -1)
+                .reshape(-1)[valid_mask]
+            )
 
         # Compute similarities
         cls_expanded = cls_repr[all_batch_ids]
@@ -593,6 +661,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
         Args:
             config: GliZNetConfig with backbone_model specified
+            tokenizer: Tokenizer (used to get lab_token_id)
             **kwargs: Additional arguments for backbone loading
 
         Returns:
@@ -608,6 +677,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         model.backbone.load_state_dict(pretrained_backbone.state_dict())
         model.config.backbone_config = pretrained_backbone.config
         model.resize_token_embeddings(len(tokenizer))
+
+        config.lab_token_id = tokenizer.lab_token_id
 
         return model
 
@@ -649,7 +720,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             label_embeddings,
             logit_scale,
             text_embeddings,
-        ) = self.aggregator(hidden_states, lmask)
+        ) = self.aggregator(hidden_states, lmask, input_ids)
 
         # Compute loss
         loss = None

@@ -41,7 +41,7 @@ def create_model_tokenizer(args: ModelArgs):
         args.model_name,
         lab_token=args.lab_cls_token,
         model_max_length=args.model_max_length,
-        # fix_mistral_regex=True,
+        fix_mistral_regex=True,
     )
 
     # Create GliZNet configuration
@@ -58,10 +58,16 @@ def create_model_tokenizer(args: ModelArgs):
         logit_scale_init=args.logit_scale_init,
         learn_temperature=args.learn_temperature,
         repulsion_threshold=args.repulsion_threshold,
+        # label id
+        lab_token_id=tokenizer.lab_token_id,
+        use_lab_token_for_labels=args.use_lab_token_for_labels,
     )
 
     # Initialize model with pretrained backbone and resize embeddings for custom tokens
-    model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
+    if config.name_or_path.startswith("alexneakameni/"):
+        model = GliZNetForSequenceClassification.from_pretrained(config.name_or_path, config)
+    else:
+        model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
     logger.info(f"Model configuration: {config.to_dict()}")
 
     return model, tokenizer
