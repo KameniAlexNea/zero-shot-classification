@@ -3,7 +3,6 @@ import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
-import importlib
 import json
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -16,29 +15,22 @@ from datasets import Dataset
 from loguru import logger
 from tqdm import tqdm
 
-from gliznet.data import add_tokenized_function, load_dataset
+from gliznet.config import LabelName
+from gliznet.data import load_dataset
 from gliznet.metrics import compute_metrics
-from gliznet.model import create_gli_znet_for_sequence_classification
-from gliznet.tokenizer import GliZNETTokenizer
-
-
-def get_transformers_class(class_name):
-    transformers_module = importlib.import_module("transformers")
-    return getattr(transformers_module, class_name)
+from gliznet.predictor import ZeroShotClassificationPipeline
 
 
 @dataclass
 class EvaluationConfig:
     """Configuration for evaluation."""
 
-    model_path: str = "results/best_model/model"
-    model_class: str = "DebertaV2PreTrainedModel"
+    model_path: str = "alexneakameni/gliznet-ModernBERT-base"
     device: str = "auto"
     batch_size: int = 64
-    max_labels: int = 50
     threshold: float = 0.5
     results_dir: str = "results/evaluation_test"
-    use_fast_tokenizer: bool = True
+    classification_type: str = "multi-label"
 
 
 class ModelEvaluator:
@@ -47,7 +39,7 @@ class ModelEvaluator:
     def __init__(self, config: EvaluationConfig):
         self.config = config
         self.device = self._get_device()
-        self.model, self.tokenizer = self._load_models()
+        self.pipeline = self._load_pipeline()
 
     def _get_device(self) -> torch.device:
         """Get the appropriate device for inference."""
@@ -55,38 +47,35 @@ class ModelEvaluator:
             return torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.device(self.config.device)
 
-    def _load_models(self):
-        """Load model and tokenizer from checkpoint."""
-        logger.info(f"Loading model from {self.config.model_path} on {self.device}")
+    def _load_pipeline(self):
+        """Load zero-shot classification pipeline."""
+        logger.info(f"Loading pipeline from {self.config.model_path} on {self.device}")
 
         try:
-            tokenizer = GliZNETTokenizer.from_pretrained(
-                self.config.model_path, use_fast=self.config.use_fast_tokenizer
-            )
-
-            # Use from_pretrained_with_tokenizer to properly handle custom tokens
-            model = create_gli_znet_for_sequence_classification(
-                get_transformers_class(self.config.model_class)
-            ).from_pretrained_with_tokenizer(
+            pipeline = ZeroShotClassificationPipeline.from_pretrained(
                 self.config.model_path,
-                tokenizer=tokenizer,
+                classification_type=self.config.classification_type,
+                device=str(self.device),
             )
-            model.to(self.device)
-            model.eval()
 
-            logger.info("Model loaded successfully")
-            return model, tokenizer
+            logger.info("Pipeline loaded successfully")
+            return pipeline
 
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            logger.error(f"Failed to load pipeline: {e}")
             raise
 
-    def predict_batch(self, inputs: dict[str, torch.Tensor]) -> List[List[float]]:
+    def predict_batch(
+        self, texts: List[str], labels: List[List[str]]
+    ) -> List[List[float]]:
         """Make predictions for a batch of inputs."""
+        results = self.pipeline(texts, labels, threshold=None)
 
-        with torch.no_grad():
-            inputs_gpu = {k: v.to(self.device) for k, v in inputs.items()}
-            predictions = self.model.predict(**inputs_gpu)
+        # Convert pipeline output to logits format
+        predictions = []
+        for result in results:
+            scores = [item["score"] for item in result]
+            predictions.append(scores)
 
         return predictions
 
@@ -97,17 +86,22 @@ class ModelEvaluator:
         all_predictions = []
         all_true_labels = []
 
-        for batch in tqdm(
-            dataset.iter(batch_size=self.config.batch_size),
+        # Process in batches
+        for i in tqdm(
+            range(0, len(dataset), self.config.batch_size),
             desc="Evaluating",
-            total=len(dataset) // self.config.batch_size + 1,
         ):
             try:
-                labels = batch.pop("labels")
-                logits = self.predict_batch(batch)
+                batch = dataset[i : i + self.config.batch_size]
+                texts = batch["text"]
+                candidate_labels = batch[LabelName.ltext]
+                true_labels = batch[LabelName.lint]
+
+                # Get predictions
+                logits = self.predict_batch(texts, candidate_labels)
 
                 all_predictions.append([np.array(logit) for logit in logits])
-                all_true_labels.append([lab.numpy() for lab in labels])
+                all_true_labels.append([np.array(lab) for lab in true_labels])
 
             except Exception as e:
                 logger.error(f"Error processing batch: {e}")
@@ -162,7 +156,7 @@ args = ArgumentParser(description="Evaluate GliZNet model on test dataset.")
 args.add_argument(
     "--model_path",
     type=str,
-    default="results/checkpoint-2148",
+    default="alexneakameni/gliznet-ModernBERT-base",
     help="Path to the trained model directory.",
 )
 args.add_argument(
@@ -178,15 +172,11 @@ args.add_argument(
     help="Directory to save evaluation results.",
 )
 args.add_argument(
-    "--model_class",
+    "--classification_type",
     type=str,
-    default="DebertaV2PreTrainedModel",
-    help="Model class to use",
-)
-args.add_argument(
-    "--use_fast_tokenizer",
-    action="store_true",
-    help="Use fast tokenizer if available.",
+    default="multi-label",
+    choices=["multi-label", "multi-class"],
+    help="Classification type.",
 )
 args.add_argument(
     "--batch_size",
@@ -203,23 +193,16 @@ def main():
         model_path=args.model_path,
         threshold=args.threshold,
         results_dir=args.results_dir,
-        model_class=args.model_class,
-        use_fast_tokenizer=args.use_fast_tokenizer,
+        classification_type=args.classification_type,
         batch_size=args.batch_size,
     )
 
     # Initialize evaluator
     evaluator = ModelEvaluator(config)
 
-    # Load test dataset
+    # Load test dataset (raw, not tokenized)
     logger.info("Loading test dataset...")
     data = load_dataset(split="test")
-    data = add_tokenized_function(
-        hf_dataset=data,
-        tokenizer=evaluator.tokenizer,
-        max_labels=config.max_labels,
-        shuffle_labels=False,
-    )
 
     # Run evaluation
     results = evaluator.evaluate_dataset(data)

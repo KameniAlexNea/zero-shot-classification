@@ -9,29 +9,21 @@ from __future__ import annotations
 from typing import Optional
 
 import torch
-from transformers import BertConfig
 
-from .config import (
-    GliZNetDataConfig,
-    GliZNetTrainingConfig,
-    get_mean_pooling_config,
-    get_separator_pooling_config,
-)
-from .data import add_tokenized_function, load_dataset
-from .model import GliZNetForSequenceClassification
-from .tokenizer import GliZNETTokenizer
+from gliznet.config import GliZNetDataConfig
+from gliznet.data import add_tokenized_function, load_dataset
+from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
+from gliznet.predictor import ZeroShotClassificationPipeline
+from gliznet.tokenizer import GliZNETTokenizer
 
 
 def create_model_with_config(
-    pretrained_model_name: str = "bert-base-uncased",
-    use_custom_separator: bool = True,
-    training_config: Optional[GliZNetTrainingConfig] = None,
+    pretrained_model_name: str = "answerdotai/ModernBERT-base",
 ):
     """Create a GliZNet model with proper configuration.
 
     Args:
         pretrained_model_name: HuggingFace model identifier
-        use_custom_separator: If True, use [LAB] token; if False, use semicolon
         training_config: Custom training configuration (uses default if None)
 
     Returns:
@@ -42,38 +34,24 @@ def create_model_with_config(
         >>> # Model is ready for training
     """
     # Create tokenizer with appropriate separator
-    separator = "[LAB]" if use_custom_separator else ";"
+    separator = "[LAB]"
     tokenizer = GliZNETTokenizer.from_pretrained(
         pretrained_model_name, lab_cls_token=separator, fix_mistral_regex=True
     )
 
-    # Use provided config or create default based on pooling strategy
-    if training_config is None:
-        if use_custom_separator:
-            training_config = get_separator_pooling_config()
-        else:
-            training_config = get_mean_pooling_config()
-
-    # Create model configuration
-    bert_config = BertConfig.from_pretrained(pretrained_model_name)
-
+    model_config = GliZNetConfig(backbone_model=pretrained_model_name)
     # Initialize model with training config
-    model = GliZNetForSequenceClassification(
-        config=bert_config, **training_config.to_model_kwargs()
+    model = GliZNetForSequenceClassification.from_backbone_pretrained(
+        model_config, tokenizer
     )
 
-    # Resize embeddings if using custom tokens
-    if tokenizer.has_custom_tokens():
-        new_vocab_size = tokenizer.get_vocab_size()
-        model.resize_token_embeddings(new_vocab_size)
-        model.config.vocab_size = new_vocab_size
-        model.config.use_separator_pooling = True
-
-    print(f"✓ Model created with pooling strategy: {tokenizer.pooling_strategy}")
-    print(f"✓ Vocabulary size: {tokenizer.get_vocab_size()}")
-    print(f"✓ Loss configuration:")
-    print(f"  - BCE scale: {training_config.scale_loss}")
-    print(f"  - Contrastive weight: {training_config.contrastive_loss_weight}")
+    print(f"✓ Model created with {pretrained_model_name} backbone.")
+    print(f"✓ Vocabulary size: {tokenizer.vocab_size}")
+    print(f"Similarity metric: {model_config.similarity_metric}")
+    print("Model Aggregator Shape")
+    print(model.aggregator)
+    print("Similarity head layer")
+    print(model.aggregator.similarity_head)
 
     return model, tokenizer
 
@@ -82,7 +60,7 @@ def prepare_dataset(
     dataset_path: str,
     tokenizer: GliZNETTokenizer,
     data_config: Optional[GliZNetDataConfig] = None,
-    split: str = "train",
+    split: str = "test",
 ):
     """Prepare a dataset for training.
 
@@ -94,11 +72,6 @@ def prepare_dataset(
 
     Returns:
         Tokenized dataset ready for DataLoader
-
-    Example:
-        >>> tokenizer = GliZNETTokenizer.from_pretrained("bert-base-uncased")
-        >>> dataset = prepare_dataset("username/dataset", tokenizer)
-        >>> dataloader = DataLoader(dataset, batch_size=8, collate_fn=collate_fn)
     """
     if data_config is None:
         data_config = GliZNetDataConfig()
@@ -136,26 +109,10 @@ def example_training_setup():
     print("GliZNet Training Setup Example")
     print("=" * 60)
 
-    # 1. Create custom training configuration
-    training_config = GliZNetTrainingConfig(
-        projected_dim=256,  # Project to 256 dimensions
-        similarity_metric="dot",
-        scale_loss=10.0,
-        contrastive_loss_weight=1.0,
-        use_separator_pooling=True,  # Use separator token pooling
-    )
-
-    print("\n1. Training Configuration:")
-    print(f"   Projected dim: {training_config.projected_dim}")
-    print(f"   Similarity: {training_config.similarity_metric}")
-    print(f"   Use separator pooling: {training_config.use_separator_pooling}")
-
     # 2. Create model and tokenizer
     print("\n2. Creating Model and Tokenizer:")
     model, tokenizer = create_model_with_config(
-        pretrained_model_name="bert-base-uncased",
-        use_custom_separator=True,
-        training_config=training_config,
+        pretrained_model_name="answerdotai/ModernBERT-base",
     )
 
     # 2a. Tokenizer structure visualization
@@ -164,16 +121,17 @@ def example_training_setup():
     example_labels = ["archaeology", "science", "cooking"]
 
     # Single tokenization
-    single_inputs = tokenizer(example_text, example_labels)
+    single_inputs: dict[str, torch.Tensor] = tokenizer([(example_text, example_labels)])
 
     # Decode to show structure
     tokens_decoded = []
-    for i, (token_id, lmask_val) in enumerate(
-        zip(single_inputs["input_ids"].tolist(), single_inputs["lmask"].tolist())
+
+    for token_id, lmask_val in zip(
+        single_inputs["input_ids"][0].tolist(), single_inputs["lmask"][0].tolist()
     ):
         if token_id == tokenizer.pad_token_id:
             break
-        token_str = tokenizer.tokenizer.decode([token_id])
+        token_str = tokenizer.decode([token_id])
         tokens_decoded.append(f"{token_str}(lmask={lmask_val})")
 
     print(f"   Text: {example_text}")
@@ -194,12 +152,11 @@ def example_training_setup():
     # Single processing
     single_results = []
     for text, labels in zip(texts, labels_batch):
-        result = tokenizer(text, labels)
+        result = tokenizer.tokenize(text, labels)
         single_results.append(result)
 
     # Batch processing
-    batch_results = tokenizer(texts, labels_batch)
-
+    batch_results = tokenizer.tokenize(texts, labels_batch)
     # Compare
     print("   Comparing single vs batch tokenization:")
     for idx in range(len(texts)):
@@ -242,19 +199,18 @@ def example_training_setup():
     example_labels = ["archaeology", "science", "cooking", "sports"]
 
     # Tokenize
-    inputs = tokenizer(example_text, example_labels)
+    inputs = tokenizer.tokenize(example_text, example_labels)
 
     # Add batch dimension
     for key in inputs:
         inputs[key] = inputs[key].unsqueeze(0)
 
     # Predict (example - model not trained)
-    model.eval()
+    predictor = ZeroShotClassificationPipeline(model=model, tokenizer=tokenizer)
     with torch.no_grad():
-        predictions = model.predict(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            lmask=inputs["lmask"],
+        predictions = predictor(
+            text=example_text,
+            labels=example_labels,
         )
 
     print(f"   Text: {example_text}")
@@ -275,8 +231,9 @@ def example_inference():
     print("=" * 60)
 
     # Load model and tokenizer (assuming already trained)
-    model, tokenizer = create_model_with_config(use_custom_separator=True)
+    model, tokenizer = create_model_with_config()
     model.eval()
+    predictor = ZeroShotClassificationPipeline(model=model, tokenizer=tokenizer)
 
     # Example texts and candidate labels
     texts = [
@@ -293,23 +250,17 @@ def example_inference():
 
     print("\nPerforming batch inference...")
 
-    # Tokenize batch
-    batch_inputs = tokenizer(texts, labels_batch)
-
-    # Predict
-    with torch.no_grad():
-        predictions = model.predict(
-            input_ids=batch_inputs["input_ids"],
-            attention_mask=batch_inputs["attention_mask"],
-            lmask=batch_inputs["lmask"],
-        )
+    outputs = predictor(
+        text=texts,
+        labels=labels_batch,
+    )
 
     # Display results
-    for text, labels, scores in zip(texts, labels_batch, predictions):
-        print(f"\nText: {text}")
+    for text, preds in zip(texts, outputs):
+        print(f"\nText: {text[:50]}...")
         print("Predictions:")
-        for label, score in zip(labels, scores):
-            print(f"  {label:20s} {score:.4f}")
+        for pred in preds:
+            print(f"  {pred['label']:20s} {pred['score']:.4f}")
 
     print("\n" + "=" * 60)
 

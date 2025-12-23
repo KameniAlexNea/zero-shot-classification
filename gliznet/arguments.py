@@ -104,3 +104,9 @@ class ModelArgs:
         default=3,
         metadata={"help": "Early stopping patience"},
     )
+
+    # Whether to use [LAB] token for label separation
+    use_lab_token_for_labels: bool = field(
+        default=False,
+        metadata={"help": "Whether to use [LAB] token for label separation"},
+    )

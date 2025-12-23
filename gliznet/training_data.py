@@ -313,6 +313,19 @@ def load_alexneakameni_qa_africa():
     )
 
 
+def load_zshot_hardness_couplet():
+    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "text": ensure_string(x["text"]),
+            LabelName.ltext: [ensure_string(label) for label in x["labels"]],
+            LabelName.lint: [1] * len(x["labels"]),
+        }
+
+    return load_dataset_with_validation(
+        "alexneakameni/ZSHOT-HARDSET", "couplet", split="train", mapper_func=mapper
+    )
+
+
 additional_datasets = {
     "allenai_ai2_arc_easy": load_allenai_ai2_arc_easy,
     "allenai_ai2_arc_challenge": load_allenai_ai2_arc_challenge,
@@ -326,4 +339,5 @@ additional_datasets = {
     "tasksource_cycic_classification": load_tasksource_cycic_classification,
     "ml4pubmed_pubmed": load_ml4pubmed_pubmed_text_classification_cased,
     "alexneakameni_qa_africa": load_alexneakameni_qa_africa,
+    "zshot_hardness_couplet": load_zshot_hardness_couplet,
 }

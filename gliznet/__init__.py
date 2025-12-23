@@ -18,14 +18,7 @@ Key Features:
     - Efficient batched computation with scatter operations
 """
 
-from .config import (
-    GliZNetDataConfig,
-    GliZNetTrainingConfig,
-    LabelName,
-    get_default_config,
-    get_mean_pooling_config,
-    get_separator_pooling_config,
-)
+from .config import GliZNetDataConfig, LabelName
 from .data import (
     add_tokenized_function,
     collate_fn,
@@ -33,17 +26,15 @@ from .data import (
     load_dataset,
 )
 from .model import GliZNetForSequenceClassification, GliZNetOutput
+from .predictor import ZeroShotClassificationPipeline
 from .tokenizer import GliZNETTokenizer
 
 __all__ = [
     "GliZNetForSequenceClassification",
     "GliZNetOutput",
     "GliZNETTokenizer",
-    "GliZNetTrainingConfig",
+    "ZeroShotClassificationPipeline",
     "GliZNetDataConfig",
-    "get_default_config",
-    "get_separator_pooling_config",
-    "get_mean_pooling_config",
     "load_dataset",
     "add_tokenized_function",
     "collate_fn",

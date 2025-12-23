@@ -1,5 +1,5 @@
 import functools
-from typing import Any, Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import torch
 from transformers import AutoTokenizer, BertTokenizer
@@ -121,11 +121,32 @@ class GliZNETTokenizer:
 
         return sequence, lmask
 
+    def tokenize(
+        self,
+        texts: Union[str, List[str]],
+        text_labels: Union[List[str], List[List[str]]],
+        return_tensors: str = "pt",
+    ) -> Dict[str, torch.Tensor]:
+        if isinstance(texts, str) and not isinstance(text_labels[0], str):
+            raise ValueError(
+                "If 'texts' is a string, 'text_labels' must be a list of strings."
+            )
+        is_unique = False
+        if isinstance(texts, str):
+            texts = [texts]
+            text_labels = [text_labels]
+            is_unique = True
+        examples = list(zip(texts, text_labels))
+        results = self.__call__(examples, return_tensors=return_tensors)
+        if is_unique:
+            results = {k: v[0] for k, v in results.items()}
+        return results
+
     def __call__(
         self,
         examples: List[Tuple[str, List[str]]],
         return_tensors: str = "pt",
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, torch.Tensor]:
         """Tokenize batch of (text, labels) tuples.
 
         Args:
@@ -179,6 +200,18 @@ class GliZNETTokenizer:
     def save_pretrained(self, save_directory: str, **kwargs):
         """Save the underlying tokenizer."""
         return self.tokenizer.save_pretrained(save_directory, **kwargs)
+
+    def push_to_hub(
+        self,
+        repo_id: str,
+        private: bool = False,
+        commit_message: str = "Upload GliZNET tokenizer",
+        **kwargs,
+    ):
+        """Push the underlying tokenizer to Hugging Face Hub."""
+        return self.tokenizer.push_to_hub(
+            repo_id, private=private, commit_message=commit_message, **kwargs
+        )
 
     def decode(self, token_ids: List[int], **kwargs) -> str:
         """Decode token IDs to text."""

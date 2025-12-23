@@ -18,8 +18,8 @@ from evaluation.mteb_ds import ds_mapping as mteb_ds_mapping
 # Default models (can be overridden via command-line arguments)
 DEFAULT_MODELS = [
     {
-        "model_name": "alexneakameni/gliznet-deberta-v3-small",
-        "name": "gliznet-deberta-v3-small",
+        "model_name": "alexneakameni/gliznet-ModernBERT-base",
+        "name": "gliznet-ModernBERT-base",
     }
 ]
 
@@ -55,7 +55,7 @@ def run_evaluation(
     # Build command
     cmd = [
         "python",
-        "evaluation/evaluate_agnews.py",
+        "evaluation/evaluate_gliznet_public_ds.py",
         "--model_path",
         model_name,
         "--data",
@@ -249,12 +249,6 @@ def parse_args():
     parser.add_argument(
         "--num_gpus", type=int, default=2, help="Number of GPUs (default: 2)"
     )
-    parser.add_argument(
-        "--model_class",
-        type=str,
-        default="DebertaV2PreTrainedModel",
-        help="Model class",
-    )
     return parser.parse_args()
 
 
@@ -280,7 +274,6 @@ def main():
 
     print(f"📊 Total models: {len(models)}")
     print(f"📊 Total datasets: {len(DATASETS)}")
-    print(f"🔧 Model class: {args.model_class}")
 
     # Create task queue
     task_queue = create_task_queue(models)
