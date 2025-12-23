@@ -171,3 +171,4 @@ results
 synthetic_data/annotated_batches
 arxiv_synthetic_data
 synthetic_data/arxiv_synthetic_data_nemotron3_nano_*/*json
+synthetic_data/gemini_data

@@ -13,7 +13,7 @@ import torch
 from gliznet.config import GliZNetDataConfig
 from gliznet.data import add_tokenized_function, load_dataset
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
-from gliznet.predictor import GliZNetPredictor
+from gliznet.predictor import ZeroShotClassificationPipeline
 from gliznet.tokenizer import GliZNETTokenizer
 
 
@@ -206,12 +206,11 @@ def example_training_setup():
         inputs[key] = inputs[key].unsqueeze(0)
 
     # Predict (example - model not trained)
-    predictor = GliZNetPredictor(model=model, tokenizer=tokenizer)
+    predictor = ZeroShotClassificationPipeline(model=model, tokenizer=tokenizer)
     with torch.no_grad():
-        predictions = predictor.predict(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            lmask=inputs["lmask"],
+        predictions = predictor(
+            text=example_text,
+            labels=example_labels,
         )
 
     print(f"   Text: {example_text}")
@@ -234,7 +233,7 @@ def example_inference():
     # Load model and tokenizer (assuming already trained)
     model, tokenizer = create_model_with_config()
     model.eval()
-    predictor = GliZNetPredictor(model=model, tokenizer=tokenizer)
+    predictor = ZeroShotClassificationPipeline(model=model, tokenizer=tokenizer)
 
     # Example texts and candidate labels
     texts = [
@@ -251,19 +250,17 @@ def example_inference():
 
     print("\nPerforming batch inference...")
 
-    outputs = predictor.predict_batch(
-        texts=texts,
-        all_labels=labels_batch,
-        tokenizer=tokenizer,
-        activation="sigmoid",
+    outputs = predictor(
+        text=texts,
+        labels=labels_batch,
     )
 
     # Display results
-    for prediction in outputs:
-        print(f"\nText: {prediction.text}")
+    for text, preds in zip(texts, outputs):
+        print(f"\nText: {text[:50]}...")
         print("Predictions:")
-        for labs in prediction.labels:
-            print(f"  {labs.label:20s} {labs.score:.4f}")
+        for pred in preds:
+            print(f"  {pred['label']:20s} {pred['score']:.4f}")
 
     print("\n" + "=" * 60)
 
