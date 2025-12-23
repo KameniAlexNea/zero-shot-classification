@@ -90,6 +90,7 @@ class ZeroShotClassificationPipeline:
         text: Union[str, List[str]],
         labels: Union[List[str], List[List[str]]],
         threshold: Optional[float] = None,
+        classification_type: Literal["multi-label", "multi-class"] = None,
     ) -> List[List[Dict[str, Union[str, float]]]]:
         """Classify text(s) with given label(s).
 
@@ -123,7 +124,9 @@ class ZeroShotClassificationPipeline:
                 all_labels = labels
 
         # Get predictions
-        results = self._predict_batch(texts, all_labels, threshold)
+        results = self._predict_batch(
+            texts, all_labels, threshold, classification_type=classification_type
+        )
 
         return results if not is_single else results
 
@@ -133,8 +136,10 @@ class ZeroShotClassificationPipeline:
         texts: List[str],
         all_labels: List[List[str]],
         threshold: Optional[float] = None,
+        classification_type: Literal["multi-label", "multi-class"] = None,
     ) -> List[List[Dict[str, Union[str, float]]]]:
         """Internal batch prediction method."""
+        classification_type = classification_type or self.classification_type
         # Tokenize
         batch = self.tokenizer(
             [(text, labels) for text, labels in zip(texts, all_labels)]
@@ -160,7 +165,7 @@ class ZeroShotClassificationPipeline:
         label_ids = outputs.label_ids
 
         # Apply activation based on classification type
-        if self.classification_type == "multi-label":
+        if classification_type == "multi-label":
             scores = torch.sigmoid(logits)
         else:  # multi-class
             scores = logits
@@ -187,7 +192,7 @@ class ZeroShotClassificationPipeline:
                 label_scores = [score for _, score in batch_scores]
 
                 # Apply softmax for multi-class
-                if self.classification_type == "multi-class":
+                if classification_type == "multi-class":
                     label_scores = torch.softmax(
                         torch.tensor(label_scores), dim=0
                     ).tolist()

@@ -68,12 +68,6 @@ class GliZNetConfig(PretrainedConfig):
     ):
         super().__init__(**kwargs)
 
-        if use_lab_token_for_labels and lab_token_id is None:
-            raise ValueError(
-                "When use_lab_token_for_labels=True, lab_token_id must be set. "
-                "Use from_backbone_pretrained() to set it automatically from tokenizer."
-            )
-
         self.backbone_model = backbone_model
         self.projected_dim = projected_dim
         self.similarity_metric = similarity_metric
@@ -188,7 +182,7 @@ class SimilarityHead(nn.Module):
 
 
 class LabelAggregator(nn.Module):
-    """Aggregates label token embeddings and computes similarities."""
+    """Aggregates label token embeddings and computes similarities using token-level attention."""
 
     def __init__(
         self,
@@ -204,32 +198,18 @@ class LabelAggregator(nn.Module):
         self.similarity_head = similarity_head
         self.dropout = nn.Dropout(config.dropout_rate)
 
-    def forward(
+        # Temperature for attention softmax (learnable)
+        self.attention_temperature = nn.Parameter(torch.tensor(1.0))
+
+    def aggregate_labels(
         self,
-        hidden_states: torch.Tensor,
-        lmask: torch.Tensor,
         input_ids: torch.Tensor,
+        lmask: torch.Tensor,
+        hidden_states: torch.Tensor,
+        projected_all: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
-        """Aggregate label representations and compute similarities.
-
-        Args:
-            hidden_states: Encoder outputs (B, L, H)
-            lmask: Label mask where >0 indicates label tokens (B, L)
-            input_ids: Input token IDs (B, L)
-
-        Returns:
-            logits: Similarity scores (N, 1)
-            batch_indices: Batch index for each score (N,)
-            label_ids: Label ID for each score (N,)
-            label_embeddings: Aggregated label embeddings (N, D)
-            logit_scale: Current temperature scale
-            cls_repr: Projected CLS token embeddings (B, D)
-        """
         batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
-
-        # Project CLS tokens
-        cls_repr = self.dropout(self.text_projector(hidden_states[:, 0]))
 
         # Check if using [LAB] token mode
         if self.config.use_lab_token_for_labels:
@@ -239,9 +219,10 @@ class LabelAggregator(nn.Module):
             if not lab_mask.any():
                 empty = torch.empty(0, 1, device=device)
                 empty_idx = torch.empty(0, dtype=torch.long, device=device)
-                empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
+                projected_dim = projected_all.shape[-1]
+                empty_emb = torch.empty(0, projected_dim, device=device)
                 dummy_scale = self.similarity_head.logit_scale
-                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
+                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, empty_emb
 
             # Project [LAB] token embeddings
             label_hidden = self.dropout(self.label_projector(hidden_states[lab_mask]))
@@ -255,12 +236,11 @@ class LabelAggregator(nn.Module):
             all_batch_ids = batch_indices_all[lab_mask]
 
             # Assign sequential label IDs for each [LAB] token within its batch
-            # Count [LAB] tokens per batch (just counting, not summing embeddings!)
+            # Count [LAB] tokens per batch
             lab_counts = lab_mask.sum(dim=1)
             max_labels = int(lab_counts.max().item())
 
             # Create grid of (batch_size, max_labels) then filter by actual [LAB] positions
-            # This ensures consistent structure like the average mode
             batch_label_grid = (
                 torch.arange(batch_size, device=device)
                 .unsqueeze(1)
@@ -279,8 +259,11 @@ class LabelAggregator(nn.Module):
             all_batch_ids = batch_label_grid.reshape(-1)[valid_mask.reshape(-1)]
             all_label_ids = label_id_grid.reshape(-1)[valid_mask.reshape(-1)]
 
-            # Use [LAB] token embeddings directly - NO averaging or summing!
-            aggregated = label_hidden
+            # Use [LAB] token embeddings
+            aggregated_labels = label_hidden
+
+            # Use [LAB] token embeddings
+            aggregated_labels = label_hidden
 
         else:
             # Mode: Average label token embeddings (original behavior)
@@ -289,9 +272,10 @@ class LabelAggregator(nn.Module):
             if not label_mask.any():
                 empty = torch.empty(0, 1, device=device)
                 empty_idx = torch.empty(0, dtype=torch.long, device=device)
-                empty_emb = torch.empty(0, cls_repr.shape[-1], device=device)
+                projected_dim = projected_all.shape[-1]
+                empty_emb = torch.empty(0, projected_dim, device=device)
                 dummy_scale = self.similarity_head.logit_scale
-                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
+                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, empty_emb
 
             # Project label tokens
             label_hidden = self.dropout(self.label_projector(hidden_states[label_mask]))
@@ -329,9 +313,11 @@ class LabelAggregator(nn.Module):
                 empty_idx = torch.empty(0, dtype=torch.long, device=device)
                 empty_emb = torch.empty(0, projected_dim, device=device)
                 dummy_scale = self.similarity_head.logit_scale
-                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, cls_repr
+                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, empty_emb
 
-            aggregated = aggregated[valid_mask] / counts[valid_mask].unsqueeze(-1)
+            aggregated_labels = aggregated[valid_mask] / counts[valid_mask].unsqueeze(
+                -1
+            )
 
             # Reconstruct batch and label IDs
             all_batch_ids = (
@@ -346,12 +332,91 @@ class LabelAggregator(nn.Module):
                 .expand(batch_size, -1)
                 .reshape(-1)[valid_mask]
             )
+        return aggregated_labels, all_batch_ids, all_label_ids
 
-        # Compute similarities
-        cls_expanded = cls_repr[all_batch_ids]
-        logits, logit_scale = self.similarity_head(cls_expanded, aggregated)
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        lmask: torch.Tensor,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, ...]:
+        """Aggregate label representations and compute similarities using token-level attention.
 
-        return logits, all_batch_ids, all_label_ids, aggregated, logit_scale, cls_repr
+        Args:
+            hidden_states: Encoder outputs (B, L, H)
+            lmask: Label mask where >0 indicates label tokens (B, L)
+            input_ids: Input token IDs (B, L)
+            attention_mask: Attention mask for text tokens (B, L)
+
+        Returns:
+            logits: Similarity scores (N, 1)
+            batch_indices: Batch index for each score (N,)
+            label_ids: Label ID for each score (N,)
+            label_embeddings: Aggregated label embeddings (N, D)
+            logit_scale: Current temperature scale
+            text_aggregations: Label-specific text representations (N, D)
+        """
+
+        # Project ALL tokens (not just CLS)
+        projected_all = self.dropout(self.text_projector(hidden_states))  # (B, L, D)
+
+        # Separate text tokens from label/special tokens
+        # Text tokens: where lmask == 0 and attention_mask == 1 and not [LAB] token
+        if self.config.use_lab_token_for_labels:
+            lab_token_mask = input_ids == self.config.lab_token_id
+            text_mask = (lmask == 0) & (attention_mask == 1) & (~lab_token_mask)
+        else:
+            text_mask = (lmask == 0) & (attention_mask == 1)
+
+        aggregated_labels, all_batch_ids, all_label_ids = self.aggregate_labels(
+            input_ids, lmask, hidden_states, projected_all
+        )
+        # --- NEW: Fully vectorized token-level attention (no loops!) ---
+        # Use advanced indexing to gather text tokens for each label's batch
+        # projected_all: (B, L, D), all_batch_ids: (N,)
+        # Result: (N, L, D) - each label gets its corresponding batch's text tokens
+        text_tokens_per_label: torch.Tensor = projected_all[all_batch_ids]  # (N, L, D)
+        text_mask_per_label: torch.Tensor = text_mask[all_batch_ids]  # (N, L)
+
+        # Compute attention scores for ALL labels at once via batched matmul:
+        # aggregated_labels: (N, D) -> unsqueeze -> (N, 1, D)
+        # text_tokens_per_label: (N, L, D) -> transpose -> (N, D, L)
+        # bmm: (N, 1, D) @ (N, D, L) -> (N, 1, L) -> squeeze -> (N, L)
+        scores = torch.bmm(
+            aggregated_labels.unsqueeze(1),  # (N, 1, D)
+            text_tokens_per_label.transpose(1, 2),  # (N, D, L)
+        ).squeeze(1) / self.attention_temperature.abs().clamp(
+            min=0.1
+        )  # (N, L)
+
+        # Mask out non-text positions: (N, L)
+        scores = scores.masked_fill(~text_mask_per_label, float("-inf"))
+
+        # Softmax to get attention weights: (N, L)
+        attn_weights = F.softmax(scores, dim=1)
+
+        # Weighted sum of text tokens via batched matmul:
+        # attn_weights: (N, L) -> (N, 1, L)
+        # text_tokens_per_label: (N, L, D)
+        # bmm: (N, 1, L) @ (N, L, D) -> (N, 1, D) -> squeeze -> (N, D)
+        aggregated_text = torch.bmm(
+            attn_weights.unsqueeze(1), text_tokens_per_label  # (N, 1, L)  # (N, L, D)
+        ).squeeze(
+            1
+        )  # (N, D)
+
+        # Compute similarities between label-specific text and label embeddings
+        logits, logit_scale = self.similarity_head(aggregated_text, aggregated_labels)
+
+        return (
+            logits,
+            all_batch_ids,
+            all_label_ids,
+            aggregated_labels,
+            logit_scale,
+            aggregated_text,
+        )
 
 
 class GliZNetLoss(nn.Module):
@@ -678,8 +743,6 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         model.config.backbone_config = pretrained_backbone.config
         model.resize_token_embeddings(len(tokenizer))
 
-        config.lab_token_id = tokenizer.lab_token_id
-
         return model
 
     def forward(
@@ -720,7 +783,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             label_embeddings,
             logit_scale,
             text_embeddings,
-        ) = self.aggregator(hidden_states, lmask, input_ids)
+        ) = self.aggregator(hidden_states, lmask, input_ids, attention_mask)
 
         # Compute loss
         loss = None

@@ -19,11 +19,11 @@ from transformers import (
 )
 
 from gliznet.arguments import ModelArgs
-from gliznet.config import GliZNetDataConfig
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
+from gliznet.training_config import GliZNetDataConfig
 from gliznet.training_data import additional_datasets
 
 
@@ -65,9 +65,13 @@ def create_model_tokenizer(args: ModelArgs):
 
     # Initialize model with pretrained backbone and resize embeddings for custom tokens
     if config.name_or_path.startswith("alexneakameni/"):
-        model = GliZNetForSequenceClassification.from_pretrained(config.name_or_path, config)
+        model = GliZNetForSequenceClassification.from_pretrained(
+            config.name_or_path, config
+        )
     else:
-        model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
+        model = GliZNetForSequenceClassification.from_backbone_pretrained(
+            config, tokenizer
+        )
     logger.info(f"Model configuration: {config.to_dict()}")
 
     return model, tokenizer

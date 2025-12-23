@@ -13,7 +13,7 @@ import datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from .config import LabelName
+from .training_config import LabelName
 from .tokenizer import GliZNETTokenizer
 
 

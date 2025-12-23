@@ -3,7 +3,7 @@ import re
 
 import datasets
 
-from gliznet.config import LabelName
+from gliznet.training_config import LabelName
 
 
 def load_toxic_conversations_dataset(split="test"):

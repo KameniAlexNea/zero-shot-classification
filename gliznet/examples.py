@@ -10,11 +10,11 @@ from typing import Optional
 
 import torch
 
-from gliznet.config import GliZNetDataConfig
 from gliznet.data import add_tokenized_function, load_dataset
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.predictor import ZeroShotClassificationPipeline
 from gliznet.tokenizer import GliZNETTokenizer
+from gliznet.training_config import GliZNetDataConfig
 
 
 def create_model_with_config(

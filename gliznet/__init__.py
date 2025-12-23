@@ -18,7 +18,6 @@ Key Features:
     - Efficient batched computation with scatter operations
 """
 
-from .config import GliZNetDataConfig, LabelName
 from .data import (
     add_tokenized_function,
     collate_fn,
@@ -28,6 +27,7 @@ from .data import (
 from .model import GliZNetForSequenceClassification, GliZNetOutput
 from .predictor import ZeroShotClassificationPipeline
 from .tokenizer import GliZNETTokenizer
+from .training_config import GliZNetDataConfig, LabelName
 
 __all__ = [
     "GliZNetForSequenceClassification",
