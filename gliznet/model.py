@@ -262,9 +262,6 @@ class LabelAggregator(nn.Module):
             # Use [LAB] token embeddings
             aggregated_labels = label_hidden
 
-            # Use [LAB] token embeddings
-            aggregated_labels = label_hidden
-
         else:
             # Mode: Average label token embeddings (original behavior)
             # Filter label tokens
@@ -694,7 +691,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
     def _build_projector(self, input_dim: int, output_dim: int) -> nn.Module:
         """Build a projection layer with optional LayerNorm."""
-        if not self.config.use_projection_layernorm:
+        # If dimensions match and no layernorm, no projection needed
+        if input_dim == output_dim and not self.config.use_projection_layernorm:
             return nn.Identity()
 
         layers = [nn.Linear(input_dim, output_dim)]
