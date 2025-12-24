@@ -13,8 +13,8 @@ import datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from .training_config import LabelName
 from .tokenizer import GliZNETTokenizer
+from .training_config import LabelName
 
 
 def load_dataset(

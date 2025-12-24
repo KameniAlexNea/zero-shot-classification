@@ -54,6 +54,8 @@ NOT_LABELS (Hard Negatives):
 Special Cases & Error Handling:
 - If the input text is ambiguous, extremely short, or empty, return the best possible summary and labels based on available context, or provide an empty string for 'sentence' and empty lists for 'labels' and 'not_labels' if no inferences can be made.
 - Do not generate labels or not_labels without sufficient textual context.
+- Avoid using words from your generated sentence in the labels or not_labels unless absolutely necessary for semantic accuracy. Prioritise synonyms or related concepts.
+- Example labels and not_labels given above are illustrative; actual outputs should vary based on input text.
 
 OUTPUT FORMAT:
 Always return a valid JSON object with this exact structure; do not include markdown, comments, or additional text:

@@ -15,10 +15,10 @@ from datasets import Dataset
 from loguru import logger
 from tqdm import tqdm
 
-from gliznet.training_config import LabelName
 from gliznet.data import load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.predictor import ZeroShotClassificationPipeline
+from gliznet.training_config import LabelName
 
 
 @dataclass
