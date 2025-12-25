@@ -112,12 +112,13 @@ def limit_labels(
     # Combine labels into pairs
     combined = list(zip(labels_text, labels_int))
 
-    # Shuffle randomly if requested (maintains natural proportion)
-    if shuffle_labels:
+    if shuffle_labels and combined:
         random.shuffle(combined)
-
-    # Take up to max_labels
-    selected_pairs = combined[:max_labels]
+        # Randomly select between 1 and max_labels
+        num_labels = random.randint(1, min(max_labels, len(combined)))
+        selected_pairs = combined[:num_labels]
+    else:
+        selected_pairs = combined[:max_labels]
 
     if not selected_pairs:
         return [], []
