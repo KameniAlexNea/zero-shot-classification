@@ -11,10 +11,8 @@ nohup uv run train_gliznet.py \
     \
     `# Model Configuration` \
     --model_name answerdotai/ModernBERT-base \
-    --projected_dim 512 \
     --similarity_metric cosine \
     --dropout_rate 0.1 \
-    --use_projection_layernorm \
     \
     `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
     --bce_loss_weight 1.0 \
@@ -25,12 +23,13 @@ nohup uv run train_gliznet.py \
     --repulsion_threshold 0.3 \
     \
     `# Data Configuration` \
-    --dataset_path alexneakameni/ZSHOT-HARDSET \
+    --dataset_path alexneakameni/synthetic-classification-dataset \
     --dataset_name triplet \
     --max_labels 15 \
     --shuffle_labels \
     --min_label_length 2 \
     --data_seed 42 \
+    --max_extended_ds_size 10000 \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
