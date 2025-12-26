@@ -10,7 +10,7 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 nohup uv run train_gliznet.py \
     \
     `# Model Configuration` \
-    --model_name answerdotai/ModernBERT-base \
+    --model_name alexneakameni/checkpoint-178 \
     --similarity_metric cosine \
     --dropout_rate 0.1 \
     \
@@ -24,12 +24,11 @@ nohup uv run train_gliznet.py \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/synthetic-classification-dataset \
-    --dataset_name triplet \
     --max_labels 15 \
     --shuffle_labels \
     --min_label_length 2 \
     --data_seed 42 \
-    --max_extended_ds_size 10000 \
+    --max_extended_ds_size 5000 \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
@@ -38,10 +37,10 @@ nohup uv run train_gliznet.py \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
-    --output_dir "results/deberta-v3-small_${TIMESTAMP}" \
+    --output_dir "results/modern-bert-base_${TIMESTAMP}" \
     --num_train_epochs 4 \
-    --per_device_train_batch_size 64 \
-    --per_device_eval_batch_size 128 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 64 \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
     --warmup_ratio 0.01 \

@@ -44,6 +44,11 @@ def create_model_tokenizer(args: ModelArgs):
         fix_mistral_regex=True,
     )
 
+    # Initialize model with pretrained backbone and resize embeddings for custom tokens
+    if args.model_name.startswith("alexneakameni/"):
+        model = GliZNetForSequenceClassification.from_pretrained(args.model_name)
+        return model, tokenizer
+
     # Create GliZNet configuration
     config = GliZNetConfig(
         backbone_model=args.model_name,
@@ -62,16 +67,7 @@ def create_model_tokenizer(args: ModelArgs):
         lab_token_id=tokenizer.lab_token_id,
         use_lab_token_for_labels=args.use_lab_token_for_labels,
     )
-
-    # Initialize model with pretrained backbone and resize embeddings for custom tokens
-    if config.name_or_path.startswith("alexneakameni/"):
-        model = GliZNetForSequenceClassification.from_pretrained(
-            config.name_or_path, config
-        )
-    else:
-        model = GliZNetForSequenceClassification.from_backbone_pretrained(
-            config, tokenizer
-        )
+    model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
     logger.info(f"Model configuration: {config.to_dict()}")
 
     return model, tokenizer
@@ -133,6 +129,12 @@ def main():
     logger.info(f"Label separator token: {model_args.lab_cls_token}")
     logger.info(f"Max sequence length: {model_args.model_max_length}")
 
+    # Initialize model and tokenizer
+    logger.info(f"Initializing model and tokenizer from {model_args.model_name}...")
+    model, tokenizer = create_model_tokenizer(model_args)
+    logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
+    logger.info(f"Model parameters: {model.num_parameters():,}")
+
     # Create data configuration
     data_config = GliZNetDataConfig(
         max_labels=model_args.max_labels,
@@ -170,12 +172,6 @@ def main():
     logger.info(
         f"Dataset loaded - Train: {len(train_data)} with {added_size} added, Val: {len(val_data)}, Test: {len(testing_data)}"
     )
-
-    # Initialize model and tokenizer
-    logger.info(f"Initializing model and tokenizer from {model_args.model_name}...")
-    model, tokenizer = create_model_tokenizer(model_args)
-    logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
-    logger.info(f"Model parameters: {model.num_parameters():,}")
 
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
     logger.info("Tokenizing datasets...")

@@ -17,6 +17,15 @@ from .tokenizer import GliZNETTokenizer
 from .training_config import LabelName
 
 
+def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
+    if len(ds) < max_size:
+        return ds
+    index = list(range(len(ds)))
+    rand = random.Random(42)
+    rand.shuffle(index)
+    return ds.select(index[:max_size])
+
+
 def load_dataset(
     path: str = "alexneakameni/ZSHOT-HARDSET",
     name: str = "triplet",
@@ -69,7 +78,8 @@ def load_dataset(
 
     ds = datasets.load_dataset(path, name)[split]
     if split == "train":
-        arxiv_ds = datasets.load_from_disk("arxiv_synthetic_data/dataset")
+        arxiv_ds = datasets.load_from_disk("arxiv_synthetic_data/based_dataset")
+        arxiv_ds = sample_dataset(arxiv_ds, max_size=5_000)
         ds: datasets.Dataset = datasets.concatenate_datasets([ds, arxiv_ds])
         ds = ds.shuffle(seed=42)
     text_column = "text" if "text" in ds.column_names else "sentence"
