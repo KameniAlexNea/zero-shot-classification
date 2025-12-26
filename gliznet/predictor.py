@@ -1,9 +1,20 @@
 from typing import Dict, List, Literal, Optional, Union
 
 import torch
+from pydantic import BaseModel
 
-from gliznet.model import GliZNetForSequenceClassification
+from gliznet.model import GliZNetForSequenceClassification, GliZNetOutput
 from gliznet.tokenizer import GliZNETTokenizer
+
+
+class LabelScore(BaseModel):
+    label: str
+    score: float
+
+
+class ModelOutput(BaseModel):
+    text: str
+    labels: List[LabelScore]
 
 
 class ZeroShotClassificationPipeline:
@@ -91,7 +102,7 @@ class ZeroShotClassificationPipeline:
         labels: Union[List[str], List[List[str]]],
         threshold: Optional[float] = None,
         classification_type: Literal["multi-label", "multi-class"] = None,
-    ) -> List[List[Dict[str, Union[str, float]]]]:
+    ) -> Union[ModelOutput, List[ModelOutput]]:
         """Classify text(s) with given label(s).
 
         Args:
@@ -127,8 +138,19 @@ class ZeroShotClassificationPipeline:
         results = self._predict_batch(
             texts, all_labels, threshold, classification_type=classification_type
         )
-
-        return results if not is_single else results
+        if is_single:
+            results = results[0]
+            return ModelOutput(
+                text=texts[0],
+                labels=[LabelScore(**r) for r in results],
+            )
+        return [
+            ModelOutput(
+                text=t,
+                labels=[LabelScore(**r) for r in res],
+            )
+            for t, res in zip(texts, results)
+        ]
 
     @torch.inference_mode()
     def _predict_batch(
@@ -151,7 +173,7 @@ class ZeroShotClassificationPipeline:
         lmask = batch["lmask"].to(self.device)
 
         # Get model predictions
-        outputs = self.model(
+        outputs: GliZNetOutput = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             lmask=lmask,
