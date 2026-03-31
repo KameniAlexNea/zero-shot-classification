@@ -1,12 +1,47 @@
 import json
 import os
+import random
 from datetime import datetime
 
 import datasets
+from dotenv import load_dotenv
 from generation_utils import generate_sample
 from tqdm import tqdm
 
-data = datasets.load_dataset("MongoDB/cosmopedia-wikihow-chunked", split="train")
+load_dotenv()
+
+query_col = None
+# data = datasets.load_dataset("MongoDB/cosmopedia-wikihow-chunked", split="train")
+# data = datasets.load_dataset("fancyzhx/ag_news", split="train")
+text_col = "text"
+# data = datasets.load_dataset("wikimedia/wikipedia", name="20231101.en", split="train")
+text_col = "text"
+# data = datasets.load_dataset("FutureMa/DramaBench", split="train")
+text_col = "description"
+# data = datasets.load_dataset("qiaojin/PubMedQA", name="pqa_unlabeled", split="train")
+text_col = "long_answer"
+query_col = "question"
+# data = datasets.load_dataset("cmpatino/news-bias-detection-dataset", name="all", split="train")
+text_col = "text"
+query_col = None
+# data = datasets.load_dataset("pietrolesci/nli_fever", split="train")
+text_col = "hypothesis"
+query_col = "premise"
+# data = datasets.load_dataset("domenicrosati/TruthfulQA", split="train")
+text_col = "Correct Answers"
+query_col = "Question"
+# data = datasets.load_dataset("MuskumPillerum/General-Knowledge", split="train")
+text_col = "Answer"
+query_col = "Question"
+# data = datasets.load_dataset("gretelai/symptom_to_diagnosis", split="train")
+text_col = "input_text"
+query_col = "output_text"
+# data = datasets.load_dataset("asuender/motivational-quotes", name="quotes", split="train")
+text_col = "quote"
+query_col = "author"
+data = datasets.load_dataset("brando/small-c4-dataset", split="train")
+text_col = "text"
+query_col = None
 
 
 def save_batch_to_json(
@@ -30,6 +65,7 @@ def process_dataset_in_batches(
     model="ollama/qwen2.5:14b",
     api_base="http://localhost:11434",
     output_dir="synthetic_data/annotated_batches",
+    api_key=None,
 ):
     """Process dataset in batches and save to JSON files.
 
@@ -50,6 +86,7 @@ def process_dataset_in_batches(
     total_samples = (
         len(dataset) if max_samples is None else min(max_samples, len(dataset))
     )
+    indices = random.sample(range(len(dataset)), min(total_samples, len(dataset)))
 
     print(f"Processing {total_samples} samples starting from index {start_index}")
     print(f"Batch size: {batch_size}")
@@ -58,7 +95,7 @@ def process_dataset_in_batches(
 
     # Create progress bar
     pbar = tqdm(
-        range(start_index, start_index + total_samples),
+        indices[start_index : start_index + total_samples],
         desc="Processing samples",
         total=total_samples,
         unit="sample",
@@ -67,14 +104,22 @@ def process_dataset_in_batches(
     for i in pbar:
         if i >= len(dataset):
             break
+        raw = dataset[i]
 
-        text = dataset[i]["text"]
+        text = raw[text_col]
+        if text is None or text.strip() == "" or len(text) < 10:
+            pbar.write(f"Skipping sample {i + 1} due to empty text")
+            continue
+        text = text[:5000]  # Truncate to first 5000 characters
+        if query_col:
+            text = f"{query_col}: {raw[query_col]}\n\n{text_col}: {text}"
         pbar.set_description(f"Processing sample {i + 1}...")
 
         generated_sample = generate_sample(
             text=text,
             model=model,
             api_base=api_base,
+            api_key=api_key,
         )
 
         if generated_sample:
@@ -112,13 +157,16 @@ if __name__ == "__main__":
     # Example usage: process first 100 samples in batches of 10
     process_dataset_in_batches(
         dataset=data,
-        batch_size=5,
+        batch_size=50,
         start_index=0,
-        max_samples=15,  # Set to None to process entire dataset
+        max_samples=1500,  # Set to None to process entire dataset
         # model="ollama/nemotron-3-nano",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
-        model="openai/gpt-oss-120b",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
+        model="ollama/nemotron-3-nano:30b",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
+        # model="openai/gpt-oss-120b",  # or "ollama/llama3.1:8b", "ollama/nemotron-3-nano"
         # api_base="http://localhost:11434",
-        api_base="https://api.groq.com/openai/v1",
-        output_dir=f"synthetic_data/wikihow_synthetic_data_nemotron3_nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        api_key=os.environ.get("GROQ_API_KEY"),
+        api_base="https://ollama.com",
+        # api_base="https://api.groq.com/openai/v1",
+        output_dir=f"synthetic_data/small-c4_synthetic_data_nemotron3_nano_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        # api_key=os.environ.get("GROQ_API_KEY"),
+        api_key=os.environ.get("OLLAMA_API_KEY_V2"),
     )

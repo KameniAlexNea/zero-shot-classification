@@ -63,11 +63,11 @@ class ModelArgs:
 
     # Data configuration
     dataset_path: str = field(
-        default="alexneakameni/ZSHOT-HARDSET",
+        default="alexneakameni/synthetic-classification-dataset",
         metadata={"help": "HuggingFace dataset path"},
     )
     dataset_name: str = field(
-        default="triplet",
+        default=None,
         metadata={"help": "Dataset configuration name"},
     )
     max_labels: int = field(
@@ -81,7 +81,7 @@ class ModelArgs:
         metadata={"help": "Minimum character length for valid labels"},
     )
     max_extended_ds_size: int = field(
-        default=50_000,
+        default=10_000,
         metadata={"help": "Max size of the extended dataset added for training"},
     )
 

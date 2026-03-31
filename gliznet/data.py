@@ -13,8 +13,17 @@ import datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from .config import LabelName
 from .tokenizer import GliZNETTokenizer
+from .training_config import LabelName
+
+
+def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
+    if len(ds) < max_size:
+        return ds
+    index = list(range(len(ds)))
+    rand = random.Random(42)
+    rand.shuffle(index)
+    return ds.select(index[:max_size])
 
 
 def load_dataset(
@@ -69,7 +78,8 @@ def load_dataset(
 
     ds = datasets.load_dataset(path, name)[split]
     if split == "train":
-        arxiv_ds = datasets.load_from_disk("arxiv_synthetic_data/dataset")
+        arxiv_ds = datasets.load_from_disk("arxiv_synthetic_data/based_dataset")
+        arxiv_ds = sample_dataset(arxiv_ds, max_size=5_000)
         ds: datasets.Dataset = datasets.concatenate_datasets([ds, arxiv_ds])
         ds = ds.shuffle(seed=42)
     text_column = "text" if "text" in ds.column_names else "sentence"
@@ -112,12 +122,13 @@ def limit_labels(
     # Combine labels into pairs
     combined = list(zip(labels_text, labels_int))
 
-    # Shuffle randomly if requested (maintains natural proportion)
-    if shuffle_labels:
+    if shuffle_labels and combined:
         random.shuffle(combined)
-
-    # Take up to max_labels
-    selected_pairs = combined[:max_labels]
+        # Randomly select between 1 and max_labels
+        num_labels = random.randint(1, min(max_labels, len(combined)))
+        selected_pairs = combined[:num_labels]
+    else:
+        selected_pairs = combined[:max_labels]
 
     if not selected_pairs:
         return [], []
