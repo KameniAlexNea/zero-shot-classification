@@ -10,9 +10,11 @@ TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 nohup uv run train_gliznet.py \
     \
     `# Model Configuration` \
-    --model_name alexneakameni/checkpoint-178 \
+    --model_name answerdotai/ModernBERT-base \
+    --projected_dim 1024 \
     --similarity_metric cosine \
     --dropout_rate 0.1 \
+    --use_projection_layernorm \
     \
     `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
     --bce_loss_weight 1.0 \
@@ -24,34 +26,32 @@ nohup uv run train_gliznet.py \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/synthetic-classification-dataset \
-    --max_labels 15 \
+    --max_labels 20 \
     --shuffle_labels \
-    --min_label_length 2 \
+    --min_label_length 3 \
     --data_seed 42 \
     --max_extended_ds_size 5000 \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
-    --model_max_length 512 \
+    --model_max_length 1024 \
     --lab_cls_token "[LAB]" \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
     --output_dir "results/modern-bert-base_${TIMESTAMP}" \
-    --num_train_epochs 4 \
+    --num_train_epochs 10 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 64 \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
-    --warmup_ratio 0.01 \
+    --warmup_ratio 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
     \
     `# Evaluation & Checkpointing` \
-    --eval_strategy steps \
-    --eval_steps 0.25 \
-    --save_strategy steps \
-    --save_steps 0.25 \
+    --eval_strategy epochs \
+    --save_strategy epochs \
     --save_total_limit 4 \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
@@ -62,7 +62,7 @@ nohup uv run train_gliznet.py \
     `# Performance Optimization` \
     --dataloader_pin_memory \
     --dataloader_num_workers 16 \
-    --dataloader_prefetch_factor 2 \
+    --dataloader_prefetch_factor 1 \
     --dataloader_drop_last \
     --fp16 \
     \
