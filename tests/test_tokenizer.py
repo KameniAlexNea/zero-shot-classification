@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 
 import torch
@@ -16,13 +18,12 @@ class TestGliZNETTokenizer(unittest.TestCase):
         cls.pad_token_id = cls.hf_tokenizer.pad_token_id
 
     def setUp(self):
-        # Create tokenizer with default ";" separator for backward compatibility
         self.tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            min_text_token=1,
-            lab_cls_token=";",  # Use default ";" for existing tests
+            min_text_tokens=1,
+            lab_token=";",
+            model_max_length=20,
         )
-        self.tokenizer.max_length = 20
 
     def test_initialization(self):
         self.assertIsNotNone(self.tokenizer.tokenizer)
@@ -35,84 +36,47 @@ class TestGliZNETTokenizer(unittest.TestCase):
         tokenizer_from_pretrained = GliZNETTokenizer.from_pretrained(
             self.pretrained_model_name
         )
-        tokenizer_from_pretrained.max_length = (
-            tokenizer_from_pretrained.tokenizer.model_max_length
-        )
         self.assertIsNotNone(tokenizer_from_pretrained.tokenizer)
         self.assertEqual(
             tokenizer_from_pretrained.tokenizer.model_max_length,
             self.hf_tokenizer.model_max_length,
         )
 
-    def test_pad_and_mask(self):
-        self.tokenizer.max_length = 10
-        token_ids = [
-            self.cls_token_id,
-            1,
-            2,
-            self.sep_token_id,
-            10,
-            self.sep_token_id,
-            20,
-        ]
-        # Current implementation uses integer label masks
-        label_mask_from_build = [0, 0, 0, 0, 1, 0, 2]
+    def test_padding_behavior(self):
+        """Test that sequences are padded to model_max_length."""
+        result = self.tokenizer([("hi", ["a"])], return_tensors="pt")
+        self.assertEqual(result["input_ids"].shape, (1, 20))
+        self.assertEqual(result["attention_mask"].shape, (1, 20))
+        self.assertEqual(result["lmask"].shape, (1, 20))
+        # Positions after actual content should be padding
+        seq_len = int(result["attention_mask"][0].sum().item())
+        self.assertLess(seq_len, 20)
+        self.assertEqual(
+            result["input_ids"][0, seq_len:].tolist(),
+            [self.pad_token_id] * (20 - seq_len),
+        )
+        self.assertEqual(
+            result["attention_mask"][0, seq_len:].tolist(),
+            [0] * (20 - seq_len),
+        )
 
-        pad_len = self.tokenizer.max_length - len(token_ids)  # 10 - 7 = 3
+    def test_call_single_vs_batch(self):
+        """Test that tokenize() and __call__() return correct shapes."""
+        # Single via tokenize()
+        single = self.tokenizer.tokenize("A single call.", ["l1", "l2"])
+        self.assertEqual(single["input_ids"].shape, (20,))
+        self.assertEqual(single["attention_mask"].shape, (20,))
+        self.assertEqual(single["lmask"].shape, (20,))
 
-        result_right = self.tokenizer._pad_and_mask(token_ids, label_mask_from_build)
-        expected_input_ids_right = token_ids + [self.pad_token_id] * pad_len
-        expected_attn_mask_right = [1] * len(token_ids) + [0] * pad_len
-        expected_label_mask_right = label_mask_from_build + [0] * pad_len
-
-        self.assertEqual(result_right["input_ids"], expected_input_ids_right)
-        self.assertEqual(result_right["attention_mask"], expected_attn_mask_right)
-        self.assertEqual(result_right["lmask"], expected_label_mask_right)
-
-    def test_call_method(self):
-        text = "A single call."
-        labels = ["l1", "l2"]
-        original_tokenize_example = self.tokenizer.tokenize_example
-        called_example = {"called": False}
-
-        def mock_ex(
-            t,
-            lab,
-            tdp=0.0,
-        ):
-            called_example["called"] = True
-            return original_tokenize_example(
-                t,
-                lab,
-            )
-
-        self.tokenizer.tokenize_example = mock_ex
-        self.tokenizer(text, labels)
-        self.assertTrue(called_example["called"])
-        self.tokenizer.tokenize_example = original_tokenize_example
-
+        # Batch via __call__()
         texts = ["First call.", "Second call."]
         all_labels = [["lA"], ["lB"]]
-        original_tokenize_batch = self.tokenizer.tokenize_batch
-        called_batch = {"called": False}
+        batch = self.tokenizer(list(zip(texts, all_labels)), return_tensors="pt")
+        self.assertEqual(batch["input_ids"].shape, (2, 20))
+        self.assertEqual(batch["attention_mask"].shape, (2, 20))
+        self.assertEqual(batch["lmask"].shape, (2, 20))
 
-        def mock_batch(
-            t,
-            lab,
-            tdp=0.0,
-        ):
-            called_batch["called"] = True
-            return original_tokenize_batch(
-                t,
-                lab,
-            )
-
-        self.tokenizer.tokenize_batch = mock_batch
-        self.tokenizer(texts, all_labels)
-        self.assertTrue(called_batch["called"])
-        self.tokenizer.tokenize_batch = original_tokenize_batch
-
-    def test_decode_sequence(self):
+    def test_decode(self):
         ids_with_pad = [
             self.cls_token_id,
             7592,
@@ -121,15 +85,16 @@ class TestGliZNETTokenizer(unittest.TestCase):
             self.pad_token_id,
             self.pad_token_id,
         ]
-        decoded_str = self.tokenizer.decode_sequence(ids_with_pad)
+        decoded_str = self.tokenizer.decode(ids_with_pad, skip_special_tokens=True)
         self.assertEqual(decoded_str.strip(), "hello world")
 
-    def test_get_vocab_size(self):
-        self.assertEqual(self.tokenizer.get_vocab_size(), self.hf_tokenizer.vocab_size)
+    def test_vocab_size(self):
+        # ";" is already in BERT's vocab, so adding it as special token doesn't increase size
+        self.assertEqual(len(self.tokenizer), self.hf_tokenizer.vocab_size)
 
 
 class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
-    """Test suite for custom token functionality ([LAB] tokens, auto-detection, etc.)"""
+    """Test suite for custom token functionality ([LAB] tokens, etc.)"""
 
     @classmethod
     def setUpClass(cls):
@@ -138,184 +103,143 @@ class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
         cls.original_vocab_size = cls.hf_tokenizer.vocab_size
 
     def test_custom_lab_token_initialization(self):
-        """Test tokenizer initialization with custom [LAB] token"""
+        """Test tokenizer initialization with custom [LAB] token."""
         tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
 
-        # Should have custom token
-        self.assertTrue(tokenizer.has_custom_tokens())
-        self.assertEqual(tokenizer.lab_cls_token, "[LAB]")
-        self.assertEqual(tokenizer.get_vocab_size(), self.original_vocab_size + 1)
-        self.assertEqual(tokenizer.get_added_tokens_count(), 1)
-        self.assertIn("[LAB]", tokenizer.get_additional_special_tokens())
-        self.assertFalse(tokenizer.was_auto_detected())
+        self.assertEqual(tokenizer.lab_token, "[LAB]")
+        self.assertEqual(len(tokenizer), self.original_vocab_size + 1)
+        self.assertIn("[LAB]", tokenizer.tokenizer.all_special_tokens)
 
     def test_custom_token_sequence_building(self):
-        """Test sequence building with custom [LAB] token"""
+        """Test sequence building with custom [LAB] token."""
         tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
 
         text = "Hello world"
         labels = ["positive", "negative"]
 
-        result = tokenizer.tokenize_example(text, labels)
+        result = tokenizer.tokenize(text, labels)
 
-        # Check that [LAB] token is in the sequence
-        lab_token_id = tokenizer.lab_cls_id
-        self.assertIn(lab_token_id, result["input_ids"])
-
-        # Decode and check structure
-        decoded = tokenizer.decode_sequence(result["input_ids"].tolist())
+        self.assertIn(tokenizer.lab_token_id, result["input_ids"].tolist())
+        decoded = tokenizer.decode(result["input_ids"].tolist(), skip_special_tokens=True)
         self.assertIn("hello world", decoded.lower())
         self.assertIn("positive", decoded.lower())
         self.assertIn("negative", decoded.lower())
 
-    def test_auto_detection_from_saved_tokenizer(self):
-        """Test auto-detection of custom tokens from saved tokenizer"""
-        import os
-        import tempfile
-
-        # Create tokenizer with [LAB] token
+    def test_saved_tokenizer_preserves_custom_tokens(self):
+        """Test that a saved tokenizer preserves the [LAB] special token."""
         original_tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Save tokenizer
             save_path = os.path.join(temp_dir, "custom_tokenizer")
-            original_tokenizer.tokenizer.save_pretrained(save_path)
+            original_tokenizer.save_pretrained(save_path)
 
-            # Load with default separator - should auto-detect
             loaded_tokenizer = GliZNETTokenizer.from_pretrained(
-                save_path, lab_cls_token=";"  # Default, but should be overridden
+                save_path, lab_token="[LAB]"
             )
 
-            # Should auto-detect [LAB]
-            self.assertTrue(loaded_tokenizer.was_auto_detected())
-            self.assertEqual(loaded_tokenizer.lab_cls_token, "[LAB]")
-            self.assertTrue(loaded_tokenizer.has_custom_tokens())
-            self.assertEqual(
-                loaded_tokenizer.get_vocab_size(), self.original_vocab_size + 1
-            )
+            self.assertEqual(loaded_tokenizer.lab_token, "[LAB]")
+            self.assertIn("[LAB]", loaded_tokenizer.tokenizer.all_special_tokens)
+            self.assertEqual(len(loaded_tokenizer), self.original_vocab_size + 1)
 
     def test_no_duplicate_token_addition(self):
-        """Test that tokens aren't added twice"""
-        import os
-        import tempfile
-
-        # Create and save tokenizer with [LAB]
+        """Test that tokens aren't added twice when loading a saved tokenizer."""
         tokenizer1 = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             save_path = os.path.join(temp_dir, "tokenizer")
-            tokenizer1.tokenizer.save_pretrained(save_path)
+            tokenizer1.save_pretrained(save_path)
 
-            # Load and explicitly set [LAB] again
             tokenizer2 = GliZNETTokenizer.from_pretrained(
-                save_path, lab_cls_token="[LAB]"  # Explicitly set again
+                save_path, lab_token="[LAB]"
             )
 
-            # Should still only have 1 additional token
-            self.assertEqual(tokenizer2.get_added_tokens_count(), 1)
-            self.assertEqual(tokenizer2.get_vocab_size(), self.original_vocab_size + 1)
+            self.assertEqual(len(tokenizer2), self.original_vocab_size + 1)
 
     def test_tokenization_consistency(self):
-        """Test that tokenization results are consistent between custom and default"""
+        """Test that two tokenizers with different lab tokens encode the same number of labels."""
         text = "This is a test sentence"
         labels = ["label1", "label2", "label3"]
 
-        # Default tokenizer
         tokenizer_default = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token=";",
+            lab_token=";",
         )
-        result_default = tokenizer_default.tokenize_example(text, labels)
+        result_default = tokenizer_default.tokenize(text, labels)
 
-        # Custom tokenizer
         tokenizer_custom = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
-        result_custom = tokenizer_custom.tokenize_example(text, labels)
+        result_custom = tokenizer_custom.tokenize(text, labels)
 
-        # Both should have same structure
-        self.assertEqual(
-            result_default["input_ids"].shape, result_custom["input_ids"].shape
-        )
-        self.assertEqual(
-            result_default["attention_mask"].shape,
-            result_custom["attention_mask"].shape,
-        )
+        self.assertEqual(result_default["input_ids"].shape, result_custom["input_ids"].shape)
+        self.assertEqual(result_default["attention_mask"].shape, result_custom["attention_mask"].shape)
         self.assertEqual(result_default["lmask"].shape, result_custom["lmask"].shape)
 
-        # Label masks should have same structure (counting non-zero elements)
-        default_labels = (result_default["lmask"] > 0).sum()
-        custom_labels = (result_custom["lmask"] > 0).sum()
-        self.assertEqual(default_labels, 6)
-        self.assertEqual(custom_labels, 3)
+        # Both should encode exactly 3 labels
+        self.assertEqual(int(result_default["lmask"].max().item()), 3)
+        self.assertEqual(int(result_custom["lmask"].max().item()), 3)
 
-    def test_batch_tokenization_with_custom_tokens(self):
-        """Test batch tokenization with custom tokens"""
+    def test_batch_tokenization(self):
+        """Test batch tokenization with custom tokens."""
         tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
 
         texts = ["First text", "Second text"]
         labels = [["pos", "neg"], ["happy", "sad", "neutral"]]
 
-        result = tokenizer.tokenize_batch(texts, labels)
+        result = tokenizer(list(zip(texts, labels)), return_tensors="pt")
 
-        # Check shapes
-        self.assertEqual(len(result["input_ids"]), 2)
-        self.assertEqual(len(result["attention_mask"]), 2)
-        self.assertEqual(len(result["lmask"]), 2)
+        self.assertEqual(result["input_ids"].shape[0], 2)
+        self.assertEqual(result["attention_mask"].shape[0], 2)
+        self.assertEqual(result["lmask"].shape[0], 2)
 
-        # Check that [LAB] tokens are present
-        lab_token_id = tokenizer.lab_cls_id
-        for input_ids in result["input_ids"]:
-            if isinstance(input_ids, torch.Tensor):
-                self.assertIn(lab_token_id, input_ids.tolist())
+        for i in range(2):
+            self.assertIn(tokenizer.lab_token_id, result["input_ids"][i].tolist())
 
     def test_edge_cases(self):
-        """Test edge cases and error conditions"""
-        # Empty labels
+        """Test edge cases."""
         tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_cls_token="[LAB]",
+            lab_token="[LAB]",
         )
 
         text = "Test text"
-        result = tokenizer.tokenize_example(text, [])
 
-        # Should still work with empty labels
+        # Empty labels — use __call__ directly since tokenize() guards against empty text_labels
+        result = tokenizer([(text, [])], return_tensors="pt")
         self.assertIsInstance(result, dict)
         self.assertIn("input_ids", result)
 
         # Single label
-        result_single = tokenizer.tokenize_example(text, ["single"])
-        decoded = tokenizer.decode_sequence(result_single["input_ids"].tolist())
+        result_single = tokenizer.tokenize(text, ["single"])
+        decoded = tokenizer.decode(result_single["input_ids"].tolist(), skip_special_tokens=True)
         self.assertIn("test text", decoded.lower())
         self.assertIn("single", decoded.lower())
 
     def test_from_pretrained_class_method(self):
-        """Test the from_pretrained class method with custom tokens"""
+        """Test the from_pretrained class method with custom tokens."""
         tokenizer = GliZNETTokenizer.from_pretrained(
-            self.pretrained_model_name, lab_cls_token="[CUSTOM]", min_text_token=5
+            self.pretrained_model_name, lab_token="[CUSTOM]", min_text_tokens=5
         )
 
-        self.assertEqual(tokenizer.lab_cls_token, "[CUSTOM]")
-        self.assertTrue(tokenizer.has_custom_tokens())
-        self.assertEqual(tokenizer.min_text_token, 5)
-        self.assertEqual(tokenizer.get_vocab_size(), self.original_vocab_size + 1)
+        self.assertEqual(tokenizer.lab_token, "[CUSTOM]")
+        self.assertEqual(tokenizer.min_text_tokens, 5)
+        self.assertEqual(len(tokenizer), self.original_vocab_size + 1)
 
 
 if __name__ == "__main__":
