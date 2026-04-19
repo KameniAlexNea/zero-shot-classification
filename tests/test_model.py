@@ -3,8 +3,9 @@ from collections import namedtuple
 
 import torch
 import torch.nn as nn
+from transformers import AutoModel
 
-from gliznet.model import GliZNetForSequenceClassification
+from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 
 
 class DummyEncoder(nn.Module):
@@ -402,6 +403,53 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
 
                 self.assertIsNotNone(outputs.logits)
                 self.assertEqual(model.config.similarity_metric, metric)
+
+
+class TestBackboneWeightIntegrity(unittest.TestCase):
+    """Verify that the backbone inside GliZNet produces identical outputs
+    to a standalone AutoModel loaded from the same checkpoint."""
+
+    MODEL_NAME = "bert-base-uncased"
+
+    @classmethod
+    def setUpClass(cls):
+        from gliznet.tokenizer import GliZNETTokenizer
+        tokenizer = GliZNETTokenizer.from_pretrained(cls.MODEL_NAME)
+        config = GliZNetConfig(backbone_model=cls.MODEL_NAME)
+        cls.gliznet = GliZNetForSequenceClassification.from_backbone_pretrained(
+            config, tokenizer=tokenizer
+        )
+        cls.gliznet.eval()
+
+        cls.automodel = AutoModel.from_pretrained(cls.MODEL_NAME)
+        cls.automodel.eval()
+
+        # Simple two-token input
+        cls.input_ids = torch.tensor([[101, 7592, 102]])       # [CLS] hello [SEP]
+        cls.attention_mask = torch.ones_like(cls.input_ids)
+
+    def test_backbone_outputs_match_automodel(self):
+        with torch.no_grad():
+            gliznet_out = self.gliznet.backbone(
+                input_ids=self.input_ids,
+                attention_mask=self.attention_mask,
+                return_dict=True,
+            )
+            auto_out = self.automodel(
+                input_ids=self.input_ids,
+                attention_mask=self.attention_mask,
+                return_dict=True,
+            )
+
+        self.assertTrue(
+            torch.allclose(
+                gliznet_out.last_hidden_state,
+                auto_out.last_hidden_state,
+                atol=1e-5,
+            ),
+            "GliZNet backbone hidden states differ from standalone AutoModel — "
+            "backbone weights were not loaded correctly.",
+        )
 
 
 if __name__ == "__main__":
