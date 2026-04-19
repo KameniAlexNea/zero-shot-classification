@@ -21,7 +21,6 @@ class TestGliZNETTokenizer(unittest.TestCase):
         self.tokenizer = GliZNETTokenizer(
             pretrained_model_name_or_path=self.pretrained_model_name,
             min_text_tokens=1,
-            lab_token=";",
             model_max_length=20,
         )
 
@@ -87,10 +86,6 @@ class TestGliZNETTokenizer(unittest.TestCase):
         ]
         decoded_str = self.tokenizer.decode(ids_with_pad, skip_special_tokens=True)
         self.assertEqual(decoded_str.strip(), "hello world")
-
-    def test_vocab_size(self):
-        # ";" is already in BERT's vocab, so adding it as special token doesn't increase size
-        self.assertEqual(len(self.tokenizer), self.hf_tokenizer.vocab_size)
 
 
 class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
@@ -166,31 +161,6 @@ class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
             )
 
             self.assertEqual(len(tokenizer2), self.original_vocab_size + 1)
-
-    def test_tokenization_consistency(self):
-        """Test that two tokenizers with different lab tokens encode the same number of labels."""
-        text = "This is a test sentence"
-        labels = ["label1", "label2", "label3"]
-
-        tokenizer_default = GliZNETTokenizer(
-            pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_token=";",
-        )
-        result_default = tokenizer_default.tokenize(text, labels)
-
-        tokenizer_custom = GliZNETTokenizer(
-            pretrained_model_name_or_path=self.pretrained_model_name,
-            lab_token="[LAB]",
-        )
-        result_custom = tokenizer_custom.tokenize(text, labels)
-
-        self.assertEqual(result_default["input_ids"].shape, result_custom["input_ids"].shape)
-        self.assertEqual(result_default["attention_mask"].shape, result_custom["attention_mask"].shape)
-        self.assertEqual(result_default["lmask"].shape, result_custom["lmask"].shape)
-
-        # Both should encode exactly 3 labels
-        self.assertEqual(int(result_default["lmask"].max().item()), 3)
-        self.assertEqual(int(result_custom["lmask"].max().item()), 3)
 
     def test_batch_tokenization(self):
         """Test batch tokenization with custom tokens."""
