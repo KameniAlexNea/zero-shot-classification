@@ -18,13 +18,13 @@ from transformers import (
     TrainingArguments,
 )
 
-from gliznet.arguments import ModelArgs
+from args import ModelArgs
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
-from gliznet.training_data import additional_datasets
+from training_data import additional_datasets
 
 
 def create_model_tokenizer(args: ModelArgs):

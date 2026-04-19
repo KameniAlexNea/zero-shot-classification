@@ -17,20 +17,11 @@ from .tokenizer import GliZNETTokenizer
 from .training_config import LabelName
 
 
-def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
-    if len(ds) < max_size:
-        return ds
-    index = list(range(len(ds)))
-    rand = random.Random(42)
-    rand.shuffle(index)
-    return ds.select(index[:max_size])
-
-
 def load_dataset(
-    path: str = "alexneakameni/ZSHOT-HARDSET",
-    name: str = "triplet",
+    path: str,
+    name: str = None,
     split: str = "train",
-    text_column: str = "sentence",
+    text_column: str = "text",
     positive_column: str = "labels",
     negative_column: str = "not_labels",
     shuffle_labels: bool = True,
@@ -38,9 +29,13 @@ def load_dataset(
 ):
     """Load and preprocess a HuggingFace dataset for GliZNet training.
 
+    The dataset must have columns for text, positive labels, and negative labels.
+    The function normalises it into the GliZNet format:
+        ``text``, ``ltext`` (list of label strings), ``lint`` (list of 0/1 ints).
+
     Args:
         path: HuggingFace dataset path (e.g., 'user/dataset-name')
-        name: Dataset configuration name
+        name: Dataset configuration name (optional)
         split: Dataset split to load ('train', 'validation', 'test')
         text_column: Column name containing text samples
         positive_column: Column name containing positive labels
@@ -49,7 +44,7 @@ def load_dataset(
         min_label_length: Minimum character length for valid labels
 
     Returns:
-        HuggingFace Dataset with columns: 'text', 'labels_text', 'labels_int'
+        HuggingFace Dataset with columns: 'text', LabelName.ltext, LabelName.lint
     """
 
     def mapper(x: dict[str, list[str]]):
@@ -62,7 +57,6 @@ def load_dataset(
         labels = pos + neg
         labels_int = [1] * len(pos) + [0] * len(neg)
 
-        # Handle shuffling
         if shuffle_labels and labels:
             combined = list(zip(labels, labels_int))
             random.shuffle(combined)
@@ -77,15 +71,7 @@ def load_dataset(
         }
 
     ds = datasets.load_dataset(path, name)[split]
-    if split == "train":
-        arxiv_ds = datasets.load_from_disk("arxiv_synthetic_data/based_dataset")
-        arxiv_ds = sample_dataset(arxiv_ds, max_size=5_000)
-        ds: datasets.Dataset = datasets.concatenate_datasets([ds, arxiv_ds])
-        ds = ds.shuffle(seed=42)
-    text_column = "text" if "text" in ds.column_names else "sentence"
     ds = ds.map(mapper)
-
-    # Filter out samples with no labels after filtering by min_label_length
     ds = ds.filter(lambda x: len(x[LabelName.ltext]) > 0)
 
     return ds.select_columns(["text", LabelName.ltext, LabelName.lint])

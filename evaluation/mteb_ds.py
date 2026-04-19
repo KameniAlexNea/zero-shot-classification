@@ -319,7 +319,7 @@ def load_imdb_dataset(split="test"):
 
 def load_amazon_massive_intent(split="test", grouped: bool = True):
     intent_groups: dict[str, list[str]] = json.load(
-        open("gliznet/eval_data/intent_data.json", "r")
+        open("evaluation/eval_data/intent_data.json", "r")
     )
     test_ds = datasets.load_dataset("mteb/amazon_massive_intent", "en")[split]
     all_labels: list[str] = list(set(test_ds["label"]))

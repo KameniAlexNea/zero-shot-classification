@@ -1,15 +1,26 @@
+"""Project-specific dataset loaders for GliZNet training.
+
+Each loader normalises a public HuggingFace dataset into the GliZNet format:
+    - text  (str)
+    - ltext (list[str]) — label strings
+    - lint  (list[int]) — 1 for positive, 0 for negative
+
+Add or remove entries from ``additional_datasets`` to control which
+supplementary datasets are mixed in during training.
+"""
+
 import random
 from typing import Any, Callable, Dict, Optional
 
 import datasets
 
-from . import LabelName
+from gliznet.training_config import LabelName
 
 selected_columns = ["text", LabelName.ltext, LabelName.lint]
 
 
 def ensure_string(value: Any) -> str:
-    """Ensure value is a string and not empty."""
+    """Ensure value is a non-empty string."""
     if value is None or not isinstance(value, str):
         return ""
     return str(value).replace("_", " ").strip()
@@ -25,13 +36,11 @@ def validate_and_filter_dataset(ds: datasets.Dataset) -> datasets.Dataset:
 
         valid_entries = []
         for text, ltext_list, lint_list in zip(texts, ltexts, lints):
-            # Ensure text is a non-empty string
             text_str = ensure_string(text)
             if not text_str:
                 valid_entries.append(False)
                 continue
 
-            # Ensure ltext is a list of non-empty strings
             if not isinstance(ltext_list, list) or len(ltext_list) == 0:
                 valid_entries.append(False)
                 continue
@@ -41,7 +50,6 @@ def validate_and_filter_dataset(ds: datasets.Dataset) -> datasets.Dataset:
                 valid_entries.append(False)
                 continue
 
-            # Ensure lint is a list of same length as ltext
             if not isinstance(lint_list, list) or len(lint_list) != len(ltext_list):
                 valid_entries.append(False)
                 continue
@@ -60,7 +68,7 @@ def create_mcq_mapper(
     choices_text_key: str = "text",
     choices_label_key: str = "label",
 ) -> Callable:
-    """Create a mapper function for multiple choice question datasets."""
+    """Create a mapper function for multiple-choice question datasets."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
         choices = x[choices_column]
@@ -93,7 +101,7 @@ def load_dataset_with_validation(
     split: str = "train",
     mapper_func: Optional[Callable] = None,
 ) -> datasets.Dataset:
-    """Load and validate a dataset with proper error handling."""
+    """Load a HuggingFace dataset, apply an optional mapper, and validate."""
     try:
         ds = datasets.load_dataset(ds_name, name, split=split)
         if mapper_func:
@@ -163,7 +171,6 @@ def load_onionmonster_dream():
                 text = ensure_string(f"{query['question']}\n" + "\n".join(x["0"]))
                 ltext = [ensure_string(choice) for choice in query["choice"]]
                 lint = [int(i == query["answer"]) for i in query["choice"]]
-
                 raws.append(
                     {
                         "text": text,
@@ -171,7 +178,6 @@ def load_onionmonster_dream():
                         LabelName.lint: lint,
                     }
                 )
-
         return datasets.Dataset.from_list(raws)
 
     ds = datasets.load_dataset("onionmonster/dream", None, split="train")
@@ -228,12 +234,10 @@ def load_sentence_transformers_wikihow():
         def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
             text = ensure_string(x["text"])
             summary = ensure_string(x["summary"])
-
             neg_count = random.randint(1, 4)
             neg_labels = random.sample(all_labels, min(neg_count, len(all_labels)))
             labels = [summary] + neg_labels
             random.shuffle(labels)
-
             return {
                 "text": text,
                 LabelName.ltext: labels,
@@ -275,7 +279,6 @@ def load_ml4pubmed_pubmed_text_classification_cased():
         def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
             text = ensure_string(x["description_cln"])
             target = ensure_string(x["target"])
-
             return {
                 "text": text,
                 LabelName.ltext: labels,
@@ -314,6 +317,8 @@ def load_alexneakameni_qa_africa():
 
 
 def load_zshot_hardness_couplet():
+    """Load ZSHOT-HARDSET couplet split."""
+
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "text": ensure_string(x["text"]),
@@ -326,6 +331,8 @@ def load_zshot_hardness_couplet():
     )
 
 
+# Registry of additional datasets to mix in during training.
+# Comment out or remove entries to disable specific sources.
 additional_datasets = {
     "allenai_ai2_arc_easy": load_allenai_ai2_arc_easy,
     "allenai_ai2_arc_challenge": load_allenai_ai2_arc_challenge,
