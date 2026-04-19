@@ -2,7 +2,6 @@ import os
 import tempfile
 import unittest
 
-import torch
 from transformers import AutoTokenizer
 
 from gliznet.tokenizer import GliZNETTokenizer
@@ -121,7 +120,9 @@ class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
         result = tokenizer.tokenize(text, labels)
 
         self.assertIn(tokenizer.lab_token_id, result["input_ids"].tolist())
-        decoded = tokenizer.decode(result["input_ids"].tolist(), skip_special_tokens=True)
+        decoded = tokenizer.decode(
+            result["input_ids"].tolist(), skip_special_tokens=True
+        )
         self.assertIn("hello world", decoded.lower())
         self.assertIn("positive", decoded.lower())
         self.assertIn("negative", decoded.lower())
@@ -156,9 +157,7 @@ class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
             save_path = os.path.join(temp_dir, "tokenizer")
             tokenizer1.save_pretrained(save_path)
 
-            tokenizer2 = GliZNETTokenizer.from_pretrained(
-                save_path, lab_token="[LAB]"
-            )
+            tokenizer2 = GliZNETTokenizer.from_pretrained(save_path, lab_token="[LAB]")
 
             self.assertEqual(len(tokenizer2), self.original_vocab_size + 1)
 
@@ -197,7 +196,9 @@ class TestGliZNETTokenizerCustomTokens(unittest.TestCase):
 
         # Single label
         result_single = tokenizer.tokenize(text, ["single"])
-        decoded = tokenizer.decode(result_single["input_ids"].tolist(), skip_special_tokens=True)
+        decoded = tokenizer.decode(
+            result_single["input_ids"].tolist(), skip_special_tokens=True
+        )
         self.assertIn("test text", decoded.lower())
         self.assertIn("single", decoded.lower())
 

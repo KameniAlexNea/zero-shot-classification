@@ -84,15 +84,14 @@ class GliZNETTokenizer:
         )
 
         # Tokenize all labels via cache, truncated to max_tokens_per_span
-        label_ids_list = [
-            list(self._tokenize_label_cached(label))
-            for label in labels
-        ]
+        label_ids_list = [list(self._tokenize_label_cached(label)) for label in labels]
 
         # Calculate space: [CLS] + text + [SEP] + labels + [LAB] separators
         overhead = 2  # [CLS] and [SEP]
         n_labels = len(label_ids_list)
-        labels_size = sum(len(ids) for ids in label_ids_list) + n_labels  # +1 [LAB] per label
+        labels_size = (
+            sum(len(ids) for ids in label_ids_list) + n_labels
+        )  # +1 [LAB] per label
 
         # Allocate space between text and labels
         total_content = len(text_ids) + labels_size
@@ -114,15 +113,21 @@ class GliZNETTokenizer:
                     total_original = sum(len(ids) for ids in label_ids_list)
                     surplus = label_content_budget - n_labels * self.min_label_tokens
                     label_ids_list = [
-                        ids[: self.min_label_tokens + (
-                            int(surplus * len(ids) / total_original)
-                            if total_original > 0 else 0
-                        )]
+                        ids[
+                            : self.min_label_tokens
+                            + (
+                                int(surplus * len(ids) / total_original)
+                                if total_original > 0
+                                else 0
+                            )
+                        ]
                         for ids in label_ids_list
                     ]
                 else:
                     # Step 2: even min_label_tokens per label overflows — truncate text too
-                    label_ids_list = [ids[: self.min_label_tokens] for ids in label_ids_list]
+                    label_ids_list = [
+                        ids[: self.min_label_tokens] for ids in label_ids_list
+                    ]
                     min_labels_size = n_labels * self.min_label_tokens + n_labels
                     text_budget = max(available - min_labels_size, self.min_text_tokens)
                     text_ids = text_ids[:text_budget]
@@ -186,7 +191,11 @@ class GliZNETTokenizer:
 
         # Pad to model_max_length when set, otherwise to the longest sequence in the batch
         model_max = self.tokenizer.model_max_length
-        max_len = model_max if (model_max and model_max <= 1_000_000) else max(len(seq) for seq in sequences)
+        max_len = (
+            model_max
+            if (model_max and model_max <= 1_000_000)
+            else max(len(seq) for seq in sequences)
+        )
 
         # Pad all sequences
         input_ids = []

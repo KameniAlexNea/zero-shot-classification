@@ -190,7 +190,9 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         batch_indices = out.batch_indices
         label_ids = out.label_ids
 
-        order = torch.argsort(batch_indices * (int(label_ids.max().item()) + 1) + label_ids)
+        order = torch.argsort(
+            batch_indices * (int(label_ids.max().item()) + 1) + label_ids
+        )
         for idx in order.tolist():
             results[batch_indices[idx].item()].append(scores[idx].item())
 

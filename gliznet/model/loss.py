@@ -77,7 +77,9 @@ class GliZNetLoss(nn.Module):
                     "NaN/Inf in multilabel_softmax_loss; zeroing for training stability. "
                     "Check inputs and learning rate."
                 )
-                softmax_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+                softmax_loss = torch.tensor(
+                    0.0, device=logits.device, requires_grad=True
+                )
             total_loss = total_loss + softmax_loss * self.config.supcon_loss_weight
 
         # --- 2. Label Repulsion Loss (disabled by default) ---
@@ -89,8 +91,12 @@ class GliZNetLoss(nn.Module):
                 logger.warning(
                     "NaN/Inf in label_repulsion_loss; zeroing for training stability."
                 )
-                repulsion_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
-            total_loss = total_loss + repulsion_loss * self.config.label_repulsion_weight
+                repulsion_loss = torch.tensor(
+                    0.0, device=logits.device, requires_grad=True
+                )
+            total_loss = (
+                total_loss + repulsion_loss * self.config.label_repulsion_weight
+            )
 
         # --- 3. Auxiliary BCE (Decoupled Temperature) ---
         if self.config.bce_loss_weight > 0:
@@ -214,4 +220,6 @@ class GliZNetLoss(nn.Module):
         raw_logits = valid_logits / scale_clamped
         bce_logits = raw_logits * self.bce_scale.abs().clamp(min=0.1, max=10.0)
 
-        return F.binary_cross_entropy_with_logits(bce_logits, valid_targets, reduction="mean")
+        return F.binary_cross_entropy_with_logits(
+            bce_logits, valid_targets, reduction="mean"
+        )

@@ -1,5 +1,7 @@
 import json
+
 import torch
+
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 

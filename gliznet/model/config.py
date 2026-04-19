@@ -77,4 +77,6 @@ class GliZNetConfig(PretrainedConfig):
         # The model's __init__ resolves it lazily, or callers can pass it explicitly.
         if isinstance(backbone_config, dict):
             backbone_config = AutoConfig.for_model(**backbone_config)
-        self.backbone_config = backbone_config  # may be None; resolved at model creation
+        self.backbone_config = (
+            backbone_config  # may be None; resolved at model creation
+        )

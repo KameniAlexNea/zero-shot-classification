@@ -24,4 +24,6 @@ class GliZNetOutput(ModelOutput):
     batch_indices: Optional[torch.Tensor] = None
     label_ids: Optional[torch.Tensor] = None
     label_embeddings: Optional[torch.Tensor] = None
-    text_embeddings: Optional[torch.Tensor] = None  # label-specific attended text (one row per label span)
+    text_embeddings: Optional[torch.Tensor] = (
+        None  # label-specific attended text (one row per label span)
+    )

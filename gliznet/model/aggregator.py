@@ -103,12 +103,16 @@ class LabelAggregator(nn.Module):
             flat_indices = token_batch_ids * max_label_id + (token_label_ids - 1)
 
             projected_dim = label_hidden.shape[-1]
-            aggregated = torch.zeros(num_slots, projected_dim, device=device, dtype=label_hidden.dtype)
+            aggregated = torch.zeros(
+                num_slots, projected_dim, device=device, dtype=label_hidden.dtype
+            )
             counts = torch.zeros(num_slots, device=device, dtype=label_hidden.dtype)
 
             aggregated.index_add_(0, flat_indices, label_hidden)
             counts.index_add_(
-                0, flat_indices, torch.ones(len(flat_indices), device=device, dtype=label_hidden.dtype)
+                0,
+                flat_indices,
+                torch.ones(len(flat_indices), device=device, dtype=label_hidden.dtype),
             )
 
             valid_mask = counts > 0
@@ -117,7 +121,9 @@ class LabelAggregator(nn.Module):
                 empty_emb = torch.empty(0, projected_dim, device=device)
                 return empty_emb, empty_idx, empty_idx
 
-            aggregated_labels = aggregated[valid_mask] / counts[valid_mask].unsqueeze(-1)
+            aggregated_labels = aggregated[valid_mask] / counts[valid_mask].unsqueeze(
+                -1
+            )
 
             all_batch_ids = (
                 torch.arange(batch_size, device=device)
@@ -185,19 +191,21 @@ class LabelAggregator(nn.Module):
             )
 
         # Token-level attention: for each label, attend over the text tokens of its sample.
-        text_tokens = projected_all[all_batch_ids]                         # (N, L, D)
-        label_mask  = text_mask[all_batch_ids]                             # (N, L)
+        text_tokens = projected_all[all_batch_ids]  # (N, L, D)
+        label_mask = text_mask[all_batch_ids]  # (N, L)
 
         scores = torch.bmm(
             aggregated_labels.unsqueeze(1),
             text_tokens.transpose(1, 2),
-        ).squeeze(1) / self.attention_temperature.abs().clamp(min=0.1)    # (N, L)
+        ).squeeze(1) / self.attention_temperature.abs().clamp(
+            min=0.1
+        )  # (N, L)
 
         scores = scores.masked_fill(~label_mask, float("-inf"))
-        attn_weights = F.softmax(scores, dim=1)                            # (N, L)
-        aggregated_text = torch.bmm(
-            attn_weights.unsqueeze(1), text_tokens
-        ).squeeze(1)                                                       # (N, D)
+        attn_weights = F.softmax(scores, dim=1)  # (N, L)
+        aggregated_text = torch.bmm(attn_weights.unsqueeze(1), text_tokens).squeeze(
+            1
+        )  # (N, D)
 
         logits, logit_scale = self.similarity_head(aggregated_text, aggregated_labels)
 

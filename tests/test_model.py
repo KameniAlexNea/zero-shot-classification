@@ -20,12 +20,13 @@ class DummyEncoder(nn.Module):
         return_dict=True,
         output_attentions=False,
         *args,
-        **kwargs
+        **kwargs,
     ):
         batch, seq_len = input_ids.shape
         # last_hidden_state[b,s,:] = input_ids[b,s] repeated, scaled to avoid overflow
         last_hidden_state = (
-            input_ids.unsqueeze(-1).repeat(1, 1, self.config.hidden_size).float() / 1000.0
+            input_ids.unsqueeze(-1).repeat(1, 1, self.config.hidden_size).float()
+            / 1000.0
         )
 
         # Create dummy attention weights
@@ -290,6 +291,7 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
 
     def setUp(self):
         from gliznet.tokenizer import GliZNETTokenizer
+
         self.hidden_size = 8
         self.tokenizer = GliZNETTokenizer.from_pretrained(
             "bert-base-uncased", lab_token="[LAB]"
@@ -413,6 +415,7 @@ class TestBackboneWeightIntegrity(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from gliznet.tokenizer import GliZNETTokenizer
+
         tokenizer = GliZNETTokenizer.from_pretrained(cls.MODEL_NAME)
         config = GliZNetConfig(backbone_model=cls.MODEL_NAME)
         cls.gliznet = GliZNetForSequenceClassification.from_backbone_pretrained(
@@ -424,7 +427,7 @@ class TestBackboneWeightIntegrity(unittest.TestCase):
         cls.automodel.eval()
 
         # Simple two-token input
-        cls.input_ids = torch.tensor([[101, 7592, 102]])       # [CLS] hello [SEP]
+        cls.input_ids = torch.tensor([[101, 7592, 102]])  # [CLS] hello [SEP]
         cls.attention_mask = torch.ones_like(cls.input_ids)
 
     def test_backbone_outputs_match_automodel(self):

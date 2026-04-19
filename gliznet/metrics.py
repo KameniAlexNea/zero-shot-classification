@@ -9,7 +9,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -122,7 +121,9 @@ def compute_best_metrics(
 
     return {
         "accuracy": accuracy_score(labels, predictions),
-        "precision": precision_score(labels, predictions, zero_division=0, average=average),
+        "precision": precision_score(
+            labels, predictions, zero_division=0, average=average
+        ),
         "recall": recall_score(labels, predictions, zero_division=0, average=average),
         "f1": f1_score(labels, predictions, zero_division=0, average=average),
         "threshold": threshold,
