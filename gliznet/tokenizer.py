@@ -18,6 +18,7 @@ class GliZNETTokenizer:
         lab_token: str = "[LAB]",
         max_tokens_per_span: int = 64,
         min_text_tokens: int = 10,
+        min_label_tokens: int = 2,
         **kwargs,
     ):
         """Initialize GliZNET tokenizer.
@@ -27,6 +28,7 @@ class GliZNETTokenizer:
             lab_token: Label separator token (default: '[LAB]')
             max_tokens_per_span: Maximum number of tokens per label span
             min_text_tokens: Minimum number of tokens reserved for text when truncating
+            min_label_tokens: Minimum number of tokens kept per label when truncating
             **kwargs: Forwarded to AutoTokenizer.from_pretrained, e.g. model_max_length=512
         """
         self.tokenizer: BertTokenizer = AutoTokenizer.from_pretrained(
@@ -36,6 +38,7 @@ class GliZNETTokenizer:
         self.lab_token = lab_token
         self.max_tokens_per_span = max_tokens_per_span
         self.min_text_tokens = min_text_tokens
+        self.min_label_tokens = min_label_tokens
 
         # Add label token if it doesn't exist
         additional_tokens = getattr(self.tokenizer, "additional_special_tokens", [])
@@ -65,6 +68,7 @@ class GliZNETTokenizer:
         self._tokenize_label_cached = _tokenize_label_cached
         self.tokenizer.init_kwargs["max_tokens_per_span"] = self.max_tokens_per_span
         self.tokenizer.init_kwargs["min_text_tokens"] = self.min_text_tokens
+        self.tokenizer.init_kwargs["min_label_tokens"] = self.min_label_tokens
 
     @property
     def max_length(self) -> int:
@@ -87,29 +91,34 @@ class GliZNETTokenizer:
 
         # Calculate space: [CLS] + text + [SEP] + labels + [LAB] separators
         overhead = 2  # [CLS] and [SEP]
-        labels_size = sum(len(ids) for ids in label_ids_list) + len(label_ids_list)
+        n_labels = len(label_ids_list)
+        labels_size = sum(len(ids) for ids in label_ids_list) + n_labels  # +1 [LAB] per label
 
         # Allocate space between text and labels
         total_content = len(text_ids) + labels_size
         if total_content + overhead > self.max_length:
-            # Need to truncate
             available = self.max_length - overhead
-            text_budget = max(available // 2, self.min_text_tokens)
-            label_budget = available - text_budget
 
-            text_ids = text_ids[:text_budget]
+            if n_labels == 0:
+                # No labels: just truncate text
+                text_ids = text_ids[:available]
+            else:
+                # Step 1: reduce labels proportionally, text untouched.
+                # label_content_budget excludes the fixed [LAB] separators.
+                label_content_budget = available - len(text_ids) - n_labels
 
-            # Fit as many complete labels as possible
-            fitted_labels = []
-            used = 0
-            for label_ids in label_ids_list:
-                needed = len(label_ids) + 1  # +1 for [LAB] separator
-                if used + needed <= label_budget:
-                    fitted_labels.append(label_ids)
-                    used += needed
+                if label_content_budget >= n_labels * self.min_label_tokens:
+                    # All labels fit if we give each the same equal budget
+                    tokens_per_label = max(
+                        label_content_budget // n_labels, self.min_label_tokens
+                    )
+                    label_ids_list = [ids[:tokens_per_label] for ids in label_ids_list]
                 else:
-                    break
-            label_ids_list = fitted_labels
+                    # Step 2: labels at minimum still overflow — truncate text too
+                    label_ids_list = [ids[: self.min_label_tokens] for ids in label_ids_list]
+                    min_labels_size = n_labels * self.min_label_tokens + n_labels
+                    text_budget = max(available - min_labels_size, self.min_text_tokens)
+                    text_ids = text_ids[:text_budget]
 
         # Build sequence
         sequence = [self.cls_token_id] + text_ids + [self.sep_token_id]
