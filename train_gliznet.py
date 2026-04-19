@@ -41,6 +41,9 @@ def create_model_tokenizer(args: ModelArgs):
         args.model_name,
         lab_token=args.lab_cls_token,
         model_max_length=args.model_max_length,
+        max_tokens_per_span=args.max_tokens_per_span,
+        min_text_tokens=args.min_text_tokens,
+        min_label_tokens=args.min_label_tokens,
         fix_mistral_regex=True,
     )
 

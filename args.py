@@ -6,11 +6,11 @@ from typing import Literal, Optional
 class ModelArgs:
     # Model configuration
     model_name: str = field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
+        default="microsoft/mdeberta-v3-base",
         metadata={"help": "Pretrained model name or path"},
     )
     model_class: str = field(
-        default="BertPreTrainedModel",
+        default="DebertaV2PreTrainedModel",
         metadata={
             "help": "Model class to use (e.g., BertPreTrainedModel, DebertaV2PreTrainedModel)"
         },
@@ -97,6 +97,18 @@ class ModelArgs:
     lab_cls_token: str = field(
         default="[LAB]",
         metadata={"help": "Separator token for labels ([LAB] or ;)"},
+    )
+    max_tokens_per_span: int = field(
+        default=64,
+        metadata={"help": "Maximum number of tokens per label span"},
+    )
+    min_text_tokens: int = field(
+        default=10,
+        metadata={"help": "Minimum number of tokens reserved for text when truncating"},
+    )
+    min_label_tokens: int = field(
+        default=2,
+        metadata={"help": "Minimum number of tokens kept per label when truncating"},
     )
 
     # Training configuration

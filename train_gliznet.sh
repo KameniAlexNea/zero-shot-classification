@@ -36,6 +36,9 @@ nohup uv run train_gliznet.py \
     --use_fast_tokenizer \
     --model_max_length 1024 \
     --lab_cls_token "[LAB]" \
+    --max_tokens_per_span 64 \
+    --min_text_tokens 10 \
+    --min_label_tokens 2 \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
