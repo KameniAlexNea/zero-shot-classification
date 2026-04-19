@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -184,32 +184,20 @@ class LabelAggregator(nn.Module):
                 aggregated_labels,
             )
 
-        # Chunked token-level attention: processes labels in blocks to bound peak memory.
-        # The fully-vectorised version allocates O(N × L × D) all at once — at
-        # B=32, L=512, N=640, D=768 that is ~1 GB per tensor, doubling with backward
-        # activations.  Chunking reduces peak memory by a factor of (chunk_size / N).
-        N = aggregated_labels.shape[0]
-        chunk_size = 64
-        aggregated_text_chunks: List[torch.Tensor] = []
-        for start in range(0, N, chunk_size):
-            chunk_labels = aggregated_labels[start : start + chunk_size]   # (C, D)
-            chunk_batch  = all_batch_ids[start : start + chunk_size]       # (C,)
-            chunk_text   = projected_all[chunk_batch]                      # (C, L, D)
-            chunk_mask   = text_mask[chunk_batch]                          # (C, L)
+        # Token-level attention: for each label, attend over the text tokens of its sample.
+        text_tokens = projected_all[all_batch_ids]                         # (N, L, D)
+        label_mask  = text_mask[all_batch_ids]                             # (N, L)
 
-            scores = torch.bmm(
-                chunk_labels.unsqueeze(1),
-                chunk_text.transpose(1, 2),
-            ).squeeze(1) / self.attention_temperature.abs().clamp(min=0.1)  # (C, L)
+        scores = torch.bmm(
+            aggregated_labels.unsqueeze(1),
+            text_tokens.transpose(1, 2),
+        ).squeeze(1) / self.attention_temperature.abs().clamp(min=0.1)    # (N, L)
 
-            scores = scores.masked_fill(~chunk_mask, float("-inf"))
-            attn_weights = F.softmax(scores, dim=1)                        # (C, L)
-            chunk_agg = torch.bmm(
-                attn_weights.unsqueeze(1), chunk_text
-            ).squeeze(1)                                                   # (C, D)
-            aggregated_text_chunks.append(chunk_agg)
-
-        aggregated_text = torch.cat(aggregated_text_chunks, dim=0)         # (N, D)
+        scores = scores.masked_fill(~label_mask, float("-inf"))
+        attn_weights = F.softmax(scores, dim=1)                            # (N, L)
+        aggregated_text = torch.bmm(
+            attn_weights.unsqueeze(1), text_tokens
+        ).squeeze(1)                                                       # (N, D)
 
         logits, logit_scale = self.similarity_head(aggregated_text, aggregated_labels)
 
