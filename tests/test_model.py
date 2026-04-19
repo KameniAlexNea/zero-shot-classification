@@ -139,16 +139,15 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     # Test similarity metric: dot_learning
     def test_similarity_metric_dot_learning(self):
-        """Test dot_learning similarity metric"""
+        """Test dot similarity metric (true dot product, no learned classifier)"""
         model = self._create_model_with_metric("dot")
 
         # Test configuration
         self.assertEqual(model.config.similarity_metric, "dot")
 
-        # Test that linear layer is created
-        self.assertTrue(hasattr(model.aggregator.similarity_head, "classifier"))
-        self.assertIsInstance(model.aggregator.similarity_head.classifier, nn.Linear)
-        self.assertEqual(model.aggregator.similarity_head.classifier.out_features, 1)
+        # Dot product uses no classifier — it is a true element-wise dot product
+        # scaled by the learnable temperature, so no `classifier` attribute is set.
+        self.assertFalse(hasattr(model.aggregator.similarity_head, "classifier"))
 
         # Test forward pass
         out = model(

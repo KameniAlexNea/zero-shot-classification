@@ -1,3 +1,5 @@
+import logging
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Optional, Tuple, Union, List
 
@@ -15,6 +17,7 @@ from transformers.modeling_outputs import ModelOutput
 if TYPE_CHECKING:
     from gliznet.tokenizer import GliZNETTokenizer
 
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Configuration
@@ -26,7 +29,8 @@ class GliZNetConfig(PretrainedConfig):
 
     Args:
         backbone_model: Name or path of the backbone transformer model
-        backbone_config: Backbone model configuration (loaded automatically if None)
+        backbone_config: Backbone model configuration.  Pass explicitly to avoid a
+                         network call; resolved lazily at model creation if None.
         projected_dim: Dimension for projection layers (None = use hidden_size, no projection)
         similarity_metric: Similarity computation method ('dot', 'bilinear', or 'cosine')
         dropout_rate: Dropout probability for projections
@@ -36,8 +40,12 @@ class GliZNetConfig(PretrainedConfig):
                                  Using [LAB] simplifies computation and speeds up inference.
         lab_token_id: Token ID of the [LAB] separator token (set automatically from tokenizer)
         bce_loss_weight: Weight for binary cross-entropy loss
-        supcon_loss_weight: Weight for supervised contrastive loss
-        label_repulsion_weight: Weight for label repulsion loss
+        supcon_loss_weight: Weight for multi-label softmax loss (legacy name; not true SupCon)
+        label_repulsion_weight: Weight for label repulsion loss (default 0.0 — disabled).
+                               Within-sample repulsion on contextual embeddings is
+                               conceptually unsound: semantically related labels on the
+                               same input should have similar representations.  Enable
+                               only for static/non-contextual label embeddings.
         logit_scale_init: Initial value for learnable temperature scale
         learn_temperature: Whether temperature scale is learnable
         repulsion_threshold: Cosine similarity threshold for repulsion penalty
@@ -58,7 +66,7 @@ class GliZNetConfig(PretrainedConfig):
         # Loss weights
         bce_loss_weight: float = 1.0,
         supcon_loss_weight: float = 1.0,
-        label_repulsion_weight: float = 0.1,
+        label_repulsion_weight: float = 0.0,
         # Temperature/scaling
         logit_scale_init: float = 2.0,  # exp(2) ≈ 7.4 for cosine similarity scaling
         learn_temperature: bool = True,
@@ -84,13 +92,13 @@ class GliZNetConfig(PretrainedConfig):
         self.learn_temperature = learn_temperature
         self.repulsion_threshold = repulsion_threshold
 
-        # Load and store backbone config
-        if backbone_config is None:
-            backbone_config = AutoConfig.from_pretrained(backbone_model)
-        elif isinstance(backbone_config, dict):
-            # Extract model name/path if present, otherwise use backbone_model
+        # Resolve backbone_config without any network I/O.
+        # AutoConfig.from_pretrained() is intentionally NOT called here — config
+        # __init__ must be side-effect-free (no network calls, no disk I/O).
+        # The model's __init__ resolves it lazily, or callers can pass it explicitly.
+        if isinstance(backbone_config, dict):
             backbone_config = AutoConfig.for_model(**backbone_config)
-        self.backbone_config = backbone_config
+        self.backbone_config = backbone_config  # may be None; resolved at model creation
 
 
 # ============================================================================
@@ -104,11 +112,12 @@ class GliZNetOutput(ModelOutput):
 
     Args:
         loss: Training loss (optional)
-        logits: Classification logits
-        batch_indices: Batch index for each prediction
-        label_ids: Label ID for each prediction
-        label_embeddings: Projected label embeddings (for repulsion loss)
-        text_embeddings: Projected text embeddings (CLS token)
+        logits: Classification logits, shape (N, 1) — one score per label span
+        batch_indices: Batch index for each label span (N,)
+        label_ids: Label ID for each label span (N,)
+        label_embeddings: Projected label embeddings (N, D)
+        text_embeddings: Label-specific attended text representations (N, D).
+                         One row per label span; NOT the CLS token.
     """
 
     loss: Optional[torch.FloatTensor] = None
@@ -116,7 +125,7 @@ class GliZNetOutput(ModelOutput):
     batch_indices: Optional[torch.Tensor] = None
     label_ids: Optional[torch.Tensor] = None
     label_embeddings: Optional[torch.Tensor] = None
-    text_embeddings: Optional[torch.Tensor] = None
+    text_embeddings: Optional[torch.Tensor] = None  # label-specific attended text (one row per label span)
 
 
 # ============================================================================
@@ -144,9 +153,7 @@ class SimilarityHead(nn.Module):
 
         if config.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
-        elif config.similarity_metric == "dot":
-            self.classifier = nn.Linear(projected_dim * 2, 1)
-        elif config.similarity_metric != "cosine":
+        elif config.similarity_metric not in ("dot", "cosine"):
             raise ValueError(
                 f"Unknown similarity_metric: {config.similarity_metric}. "
                 "Choose 'dot', 'bilinear', or 'cosine'."
@@ -167,7 +174,9 @@ class SimilarityHead(nn.Module):
         if self.config.similarity_metric == "bilinear":
             logits = self.classifier(text_repr, label_repr)
         elif self.config.similarity_metric == "dot":
-            logits = self.classifier(torch.cat([text_repr, label_repr], dim=-1))
+            # True element-wise dot product, scaled by learnable temperature
+            scale = self.logit_scale.clamp(-10, 10).exp()
+            logits = (text_repr * label_repr).sum(dim=-1, keepdim=True) * scale
         else:  # cosine
             # Normalize for cosine similarity
             text_norm = F.normalize(text_repr, p=2, dim=-1)
@@ -191,6 +200,7 @@ class LabelAggregator(nn.Module):
         hidden_size = config.backbone_config.hidden_size
         projected_dim = config.projected_dim or hidden_size
 
+        self.projected_dim = projected_dim
         self.text_projector = self._build_projector(hidden_size, projected_dim)
         self.label_projector = self._build_projector(hidden_size, projected_dim)
         self.similarity_head = SimilarityHead(config, projected_dim)
@@ -212,7 +222,6 @@ class LabelAggregator(nn.Module):
         input_ids: torch.Tensor,
         lmask: torch.Tensor,
         hidden_states: torch.Tensor,
-        projected_all: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
         batch_size, seq_len, _ = hidden_states.shape
         device = hidden_states.device
@@ -223,12 +232,9 @@ class LabelAggregator(nn.Module):
             # Find [LAB] token positions
             lab_mask = input_ids == self.config.lab_token_id
             if not lab_mask.any():
-                empty = torch.empty(0, 1, device=device)
                 empty_idx = torch.empty(0, dtype=torch.long, device=device)
-                projected_dim = projected_all.shape[-1]
-                empty_emb = torch.empty(0, projected_dim, device=device)
-                dummy_scale = self.similarity_head.logit_scale
-                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, empty_emb
+                empty_emb = torch.empty(0, self.projected_dim, device=device)
+                return empty_emb, empty_idx, empty_idx
 
             # Project [LAB] token embeddings
             label_hidden = self.dropout(self.label_projector(hidden_states[lab_mask]))
@@ -273,12 +279,9 @@ class LabelAggregator(nn.Module):
             # Filter label tokens
             label_mask = lmask > 0
             if not label_mask.any():
-                empty = torch.empty(0, 1, device=device)
                 empty_idx = torch.empty(0, dtype=torch.long, device=device)
-                projected_dim = projected_all.shape[-1]
-                empty_emb = torch.empty(0, projected_dim, device=device)
-                dummy_scale = self.similarity_head.logit_scale
-                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, empty_emb
+                empty_emb = torch.empty(0, self.projected_dim, device=device)
+                return empty_emb, empty_idx, empty_idx
 
             # Project label tokens
             label_hidden = self.dropout(self.label_projector(hidden_states[label_mask]))
@@ -301,22 +304,20 @@ class LabelAggregator(nn.Module):
 
             # Aggregate label representations (mean pooling)
             projected_dim = label_hidden.shape[-1]
-            aggregated = torch.zeros(num_slots, projected_dim, device=device)
-            counts = torch.zeros(num_slots, device=device)
+            aggregated = torch.zeros(num_slots, projected_dim, device=device, dtype=label_hidden.dtype)
+            counts = torch.zeros(num_slots, device=device, dtype=label_hidden.dtype)
 
             aggregated.index_add_(0, flat_indices, label_hidden)
             counts.index_add_(
-                0, flat_indices, torch.ones(len(flat_indices), device=device)
+                0, flat_indices, torch.ones(len(flat_indices), device=device, dtype=label_hidden.dtype)
             )
 
             # Keep only non-empty slots
             valid_mask = counts > 0
             if not valid_mask.any():
-                empty = torch.empty(0, 1, device=device)
                 empty_idx = torch.empty(0, dtype=torch.long, device=device)
                 empty_emb = torch.empty(0, projected_dim, device=device)
-                dummy_scale = self.similarity_head.logit_scale
-                return empty, empty_idx, empty_idx, empty_emb, dummy_scale, empty_emb
+                return empty_emb, empty_idx, empty_idx
 
             aggregated_labels = aggregated[valid_mask] / counts[valid_mask].unsqueeze(
                 -1
@@ -373,41 +374,48 @@ class LabelAggregator(nn.Module):
             text_mask = (lmask == 0) & (attention_mask == 1)
 
         aggregated_labels, all_batch_ids, all_label_ids = self.aggregate_labels(
-            input_ids, lmask, hidden_states, projected_all
+            input_ids, lmask, hidden_states
         )
-        # --- NEW: Fully vectorized token-level attention (no loops!) ---
-        # Use advanced indexing to gather text tokens for each label's batch
-        # projected_all: (B, L, D), all_batch_ids: (N,)
-        # Result: (N, L, D) - each label gets its corresponding batch's text tokens
-        text_tokens_per_label: torch.Tensor = projected_all[all_batch_ids]  # (N, L, D)
-        text_mask_per_label: torch.Tensor = text_mask[all_batch_ids]  # (N, L)
 
-        # Compute attention scores for ALL labels at once via batched matmul:
-        # aggregated_labels: (N, D) -> unsqueeze -> (N, 1, D)
-        # text_tokens_per_label: (N, L, D) -> transpose -> (N, D, L)
-        # bmm: (N, 1, D) @ (N, D, L) -> (N, 1, L) -> squeeze -> (N, L)
-        scores = torch.bmm(
-            aggregated_labels.unsqueeze(1),  # (N, 1, D)
-            text_tokens_per_label.transpose(1, 2),  # (N, D, L)
-        ).squeeze(1) / self.attention_temperature.abs().clamp(
-            min=0.1
-        )  # (N, L)
+        # Early return if no label spans were found (e.g. malformed tokenization).
+        if aggregated_labels.shape[0] == 0:
+            logit_scale = self.similarity_head.logit_scale.clamp(-10, 10)
+            empty_logits = torch.empty(0, 1, device=hidden_states.device)
+            return (
+                empty_logits,
+                all_batch_ids,
+                all_label_ids,
+                aggregated_labels,
+                logit_scale,
+                aggregated_labels,
+            )
 
-        # Mask out non-text positions: (N, L)
-        scores = scores.masked_fill(~text_mask_per_label, float("-inf"))
+        # Chunked token-level attention: processes labels in blocks to bound peak memory.
+        # The fully-vectorised version allocates O(N × L × D) all at once — at
+        # B=32, L=512, N=640, D=768 that is ~1 GB per tensor, doubling with backward
+        # activations.  Chunking reduces peak memory by a factor of (chunk_size / N).
+        N = aggregated_labels.shape[0]
+        chunk_size = 64
+        aggregated_text_chunks: List[torch.Tensor] = []
+        for start in range(0, N, chunk_size):
+            chunk_labels = aggregated_labels[start : start + chunk_size]   # (C, D)
+            chunk_batch  = all_batch_ids[start : start + chunk_size]       # (C,)
+            chunk_text   = projected_all[chunk_batch]                      # (C, L, D)
+            chunk_mask   = text_mask[chunk_batch]                          # (C, L)
 
-        # Softmax to get attention weights: (N, L)
-        attn_weights = F.softmax(scores, dim=1)
+            scores = torch.bmm(
+                chunk_labels.unsqueeze(1),
+                chunk_text.transpose(1, 2),
+            ).squeeze(1) / self.attention_temperature.abs().clamp(min=0.1)  # (C, L)
 
-        # Weighted sum of text tokens via batched matmul:
-        # attn_weights: (N, L) -> (N, 1, L)
-        # text_tokens_per_label: (N, L, D)
-        # bmm: (N, 1, L) @ (N, L, D) -> (N, 1, D) -> squeeze -> (N, D)
-        aggregated_text = torch.bmm(
-            attn_weights.unsqueeze(1), text_tokens_per_label  # (N, 1, L)  # (N, L, D)
-        ).squeeze(
-            1
-        )  # (N, D)
+            scores = scores.masked_fill(~chunk_mask, float("-inf"))
+            attn_weights = F.softmax(scores, dim=1)                        # (C, L)
+            chunk_agg = torch.bmm(
+                attn_weights.unsqueeze(1), chunk_text
+            ).squeeze(1)                                                   # (C, D)
+            aggregated_text_chunks.append(chunk_agg)
+
+        aggregated_text = torch.cat(aggregated_text_chunks, dim=0)         # (N, D)
 
         # Compute similarities between label-specific text and label embeddings
         logits, logit_scale = self.similarity_head(aggregated_text, aggregated_labels)
@@ -482,14 +490,18 @@ class GliZNetLoss(nn.Module):
 
         total_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
 
-        # --- 1. Supervised Contrastive Loss (Primary) ---
+        # --- 1. Multi-label Softmax Loss (Primary) ---
         if self.config.supcon_loss_weight > 0:
-            supcon_loss = self._supcon_loss(dense_logits, current_labels)
-            if torch.isnan(supcon_loss) or torch.isinf(supcon_loss):
-                supcon_loss = torch.tensor(
+            softmax_loss = self._multilabel_softmax_loss(dense_logits, current_labels)
+            if torch.isnan(softmax_loss) or torch.isinf(softmax_loss):
+                logger.warning(
+                    "NaN/Inf in multilabel_softmax_loss; zeroing for training stability. "
+                    "Check inputs and learning rate."
+                )
+                softmax_loss = torch.tensor(
                     0.0, device=logits.device, requires_grad=True
                 )
-            total_loss = total_loss + supcon_loss * self.config.supcon_loss_weight
+            total_loss = total_loss + softmax_loss * self.config.supcon_loss_weight
 
         # --- 2. Label Repulsion Loss (Refined: same-sample only) ---
         if self.config.label_repulsion_weight > 0:
@@ -497,6 +509,9 @@ class GliZNetLoss(nn.Module):
                 label_embeddings, label_ids, batch_indices
             )
             if torch.isnan(repulsion_loss) or torch.isinf(repulsion_loss):
+                logger.warning(
+                    "NaN/Inf in label_repulsion_loss; zeroing for training stability."
+                )
                 repulsion_loss = torch.tensor(
                     0.0, device=logits.device, requires_grad=True
                 )
@@ -508,16 +523,21 @@ class GliZNetLoss(nn.Module):
         if self.config.bce_loss_weight > 0:
             bce_loss = self._bce_loss(dense_logits, current_labels, logit_scale)
             if torch.isnan(bce_loss) or torch.isinf(bce_loss):
+                logger.warning(
+                    "NaN/Inf in bce_loss; zeroing for training stability."
+                )
                 bce_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
             total_loss = total_loss + bce_loss * self.config.bce_loss_weight
 
         return total_loss
 
-    def _supcon_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Supervised Contrastive Loss over all label pairs.
+    def _multilabel_softmax_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Multi-label softmax cross-entropy loss.
 
-        For each sample, treats positive labels as "anchors" and computes
-        softmax over all labels, encouraging high prob for positives.
+        For each sample, computes log-softmax over all label logits and maximises
+        the mean log-probability of positive labels.  This is NOT Supervised
+        Contrastive Loss (SupCon/InfoNCE): it operates on classification logits,
+        not on embedding views, and has no contrastive pairs or anchor structure.
         """
         mask_valid = targets != -100
         targets_clean = targets.clone()
@@ -577,9 +597,12 @@ class GliZNetLoss(nn.Module):
         label_ids: torch.Tensor,
         batch_indices: torch.Tensor,
     ) -> torch.Tensor:
-        """Penalize high cosine similarity between DIFFERENT labels in SAME sample.
+        """Penalize high cosine similarity between DIFFERENT labels in the same sample.
 
-        This prevents label embedding collapse while respecting contextual embeddings.
+        Note: disabled by default (``label_repulsion_weight=0.0``).  Within-sample
+        repulsion on contextual embeddings is conceptually unsound — semantically
+        related labels conditioned on the same input *should* produce similar
+        representations.  Only enable for static/non-contextual label embeddings.
         """
         if embeddings.numel() == 0:
             return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
@@ -633,9 +656,11 @@ class GliZNetLoss(nn.Module):
         valid_logits = valid_logits[finite_mask]
         valid_targets = valid_targets[finite_mask]
 
-        # Decoupling: unscale main logits, then apply BCE-specific scale
-        # This prevents SupCon temperature from dominating BCE gradients
-        scale_clamped = main_logit_scale.clamp(-10, 10).exp().clamp(min=1e-6)
+        # Decoupling: unscale main logits, then apply BCE-specific scale.
+        # Detach the main scale so BCE gradients do not flow back through logit_scale —
+        # without detach() the "decoupled" temperature still receives gradient
+        # contributions from the BCE path, making the decoupling illusory.
+        scale_clamped = main_logit_scale.detach().clamp(-10, 10).exp().clamp(min=1e-6)
         raw_logits = valid_logits / scale_clamped
         bce_logits = raw_logits * self.bce_scale.abs().clamp(min=0.1, max=10.0)
 
@@ -667,16 +692,20 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
     """GliZNet model for zero-shot sequence classification.
 
     Architecture:
-        - Backbone transformer (e.g., DeBERTa)
-        - Separate projectors for text ([CLS]) and labels
-        - Label aggregation via mean pooling
-        - Similarity computation (dot product or bilinear)
+        - Backbone transformer (default: ModernBERT-base)
+        - Separate projectors for text tokens and label spans
+        - Token-level cross-attention to build a label-specific text representation
+        - Similarity computation (cosine by default; dot/bilinear also available)
     """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__(config)
         self.config = config
 
+        if config.backbone_config is None:
+            # Lazy resolution: happens at model construction, not config instantiation,
+            # so GliZNetConfig() remains a pure data object with no side effects.
+            config.backbone_config = AutoConfig.from_pretrained(config.backbone_model)
         self.backbone: PreTrainedModel = AutoModel.from_config(config.backbone_config)
 
         self.aggregator = LabelAggregator(config)
@@ -714,15 +743,14 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         Returns:
             GliZNet model with pretrained backbone
         """
-        # Create model (backbone initialized randomly via from_config)
-        model = cls(config)
-
-        # Load pretrained backbone weights
+        # Load backbone first so backbone_config is populated before model creation,
+        # avoiding a redundant AutoConfig.from_pretrained() call inside __init__.
         pretrained_backbone: PreTrainedModel = AutoModel.from_pretrained(
             config.backbone_model, **kwargs
         )
+        config.backbone_config = pretrained_backbone.config
+        model = cls(config)
         model.backbone.load_state_dict(pretrained_backbone.state_dict())
-        model.config.backbone_config = pretrained_backbone.config
         model.resize_token_embeddings(len(tokenizer))
 
         return model
@@ -815,12 +843,15 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             lmask=lmask,
             return_stats=True,
         )
+        batch_size = input_ids.shape[0]
+        results: List[List[float]] = [[] for _ in range(batch_size)]
+
+        if out.logits is None or out.logits.numel() == 0:
+            return results
+
         scores = torch.sigmoid(out.logits.squeeze(-1))
         batch_indices = out.batch_indices
         label_ids = out.label_ids
-
-        batch_size = input_ids.shape[0]
-        results: List[List[float]] = [[] for _ in range(batch_size)]
 
         # Sort by label_id within each batch item to preserve label order
         order = torch.argsort(batch_indices * (int(label_ids.max().item()) + 1) + label_ids)
