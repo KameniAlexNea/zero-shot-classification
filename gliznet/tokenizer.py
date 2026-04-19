@@ -16,7 +16,8 @@ class GliZNETTokenizer:
         self,
         pretrained_model_name_or_path: str = "bert-base-uncased",
         lab_token: str = "[LAB]",
-        max_length: int = 512,
+        max_tokens_per_span: int = 64,
+        min_text_tokens: int = 10,
         **kwargs,
     ):
         """Initialize GliZNET tokenizer.
@@ -24,13 +25,17 @@ class GliZNETTokenizer:
         Args:
             pretrained_model_name_or_path: HuggingFace model identifier or path
             lab_token: Label separator token (default: '[LAB]')
-            max_length: Maximum sequence length
+            max_tokens_per_span: Maximum number of tokens per label span
+            min_text_tokens: Minimum number of tokens reserved for text when truncating
+            **kwargs: Forwarded to AutoTokenizer.from_pretrained, e.g. model_max_length=512
         """
         self.tokenizer: BertTokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path, **kwargs
         )
 
         self.lab_token = lab_token
+        self.max_tokens_per_span = max_tokens_per_span
+        self.min_text_tokens = min_text_tokens
 
         # Add label token if it doesn't exist
         additional_tokens = getattr(self.tokenizer, "additional_special_tokens", [])
@@ -38,12 +43,6 @@ class GliZNETTokenizer:
             self.tokenizer.add_special_tokens(
                 {"additional_special_tokens": [lab_token]}
             )
-
-        # Set max_length
-        model_max = self.tokenizer.model_max_length
-        self.max_length = (
-            max_length if model_max > 100000 else min(model_max, max_length)
-        )
 
         # Cache token IDs
         self.cls_token_id = self.tokenizer.cls_token_id
@@ -55,10 +54,21 @@ class GliZNETTokenizer:
         @functools.lru_cache(maxsize=10000)
         def _tokenize_label_cached(label: str) -> Tuple[int, ...]:
             return tuple(
-                self.tokenizer.encode(label, add_special_tokens=False, truncation=False)
+                self.tokenizer.encode(
+                    label,
+                    add_special_tokens=False,
+                    truncation=True,
+                    max_length=self.max_tokens_per_span,
+                )
             )
 
         self._tokenize_label_cached = _tokenize_label_cached
+        self.tokenizer.init_kwargs["max_tokens_per_span"] = self.max_tokens_per_span
+        self.tokenizer.init_kwargs["min_text_tokens"] = self.min_text_tokens
+
+    @property
+    def max_length(self) -> int:
+        return self.tokenizer.model_max_length or 1_000_000
 
     def _build_sequence(
         self, text: str, labels: List[str]
@@ -69,13 +79,9 @@ class GliZNETTokenizer:
             text, add_special_tokens=False, truncation=True, max_length=self.max_length
         )
 
-        # Tokenize all labels (cached, truncate individual labels)
+        # Tokenize all labels via cache, truncated to max_tokens_per_span
         label_ids_list = [
-            list(
-                self.tokenizer.encode(
-                    label, add_special_tokens=False, truncation=True, max_length=128
-                )
-            )
+            list(self._tokenize_label_cached(label))
             for label in labels
         ]
 
@@ -88,7 +94,7 @@ class GliZNETTokenizer:
         if total_content + overhead > self.max_length:
             # Need to truncate
             available = self.max_length - overhead
-            text_budget = max(available // 2, 10)  # Give at least 10 tokens to text
+            text_budget = max(available // 2, self.min_text_tokens)
             label_budget = available - text_budget
 
             text_ids = text_ids[:text_budget]
