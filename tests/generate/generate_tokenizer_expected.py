@@ -34,7 +34,7 @@ def main():
     ]
     expected = {}
     for ex in examples:
-        res = tokenizer.tokenize_example(ex["text"], ex["labels"])
+        res = tokenizer.tokenize(ex["text"], ex["labels"])
         expected[ex["name"]] = {
             "text": ex["text"],
             "labels": ex["labels"],

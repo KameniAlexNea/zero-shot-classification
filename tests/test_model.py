@@ -161,7 +161,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_with_labels(self):
         """Test all similarity metrics with labels and loss computation"""
-        metrics = ["dot", "bilinear", "dot"]
+        metrics = ["dot", "bilinear", "cosine"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -185,7 +185,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_predict(self):
         """Test sigmoid scores from forward pass for all similarity metrics."""
-        metrics = ["dot", "bilinear", "dot"]
+        metrics = ["dot", "bilinear", "cosine"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -208,7 +208,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         fixed_attn = torch.where(fixed_input_ids > 0, 1, 0)
         fixed_lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
 
-        metrics = ["dot", "bilinear", "dot"]
+        metrics = ["dot", "bilinear", "cosine"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):

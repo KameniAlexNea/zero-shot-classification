@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Literal, Optional, Tuple, Union, List
 
 import torch
 import torch.nn as nn
@@ -735,7 +735,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         labels: Optional[torch.Tensor] = None,
         return_stats: bool = False,
         return_dict: bool = True,
-        **kwargs,
+        **_,
     ) -> Union[Tuple, GliZNetOutput]:
         """Forward pass.
 
@@ -790,3 +790,41 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             label_embeddings=label_embeddings if return_stats else None,
             text_embeddings=text_embeddings if return_stats else None,
         )
+
+    @torch.inference_mode()
+    def predict(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        lmask: torch.Tensor,
+    ) -> List[List[float]]:
+        """Run inference and return sigmoid scores grouped by batch item.
+
+        Args:
+            input_ids: (B, L)
+            attention_mask: (B, L)
+            lmask: (B, L)
+
+        Returns:
+            List of length B; each element is a list of sigmoid scores for
+            that sample's labels in ascending label-ID order.
+        """
+        out = self(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            lmask=lmask,
+            return_stats=True,
+        )
+        scores = torch.sigmoid(out.logits.squeeze(-1))
+        batch_indices = out.batch_indices
+        label_ids = out.label_ids
+
+        batch_size = input_ids.shape[0]
+        results: List[List[float]] = [[] for _ in range(batch_size)]
+
+        # Sort by label_id within each batch item to preserve label order
+        order = torch.argsort(batch_indices * (int(label_ids.max().item()) + 1) + label_ids)
+        for idx in order.tolist():
+            results[batch_indices[idx].item()].append(scores[idx].item())
+
+        return results

@@ -1,7 +1,5 @@
 import json
-
 import torch
-
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 
@@ -22,7 +20,7 @@ def main():
     seed_everything(42)
     # Initialize tokenizer and model (random weights)
     model_name = "microsoft/deberta-v3-small"
-    tokenizer = GliZNETTokenizer.from_pretrained(model_name)
+    tokenizer = GliZNETTokenizer.from_pretrained(model_name, model_max_length=512)
     config = GliZNetConfig(backbone_model=model_name)
     model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
     model.eval()
@@ -56,8 +54,12 @@ def main():
     ]
     expected = {}
     for ex in examples:
-        enc: dict[str, torch.Tensor] = tokenizer([(ex["text"], ex["labels"])])
-        pred = model.predict(**enc)
+        enc = tokenizer.tokenize(ex["text"], ex["labels"])
+        pred = model.predict(
+            enc["input_ids"].unsqueeze(0),
+            enc["attention_mask"].unsqueeze(0),
+            enc["lmask"].unsqueeze(0),
+        )
         expected[ex["name"]] = {
             "text": ex["text"],
             "labels": ex["labels"],
