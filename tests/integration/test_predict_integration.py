@@ -41,7 +41,7 @@ class TestModelPredictIntegration(unittest.TestCase):
             with self.subTest(example=name):
                 text = data["text"]
                 labels = data["labels"]
-                enc = self.tokenizer.tokenize_example(text, labels)
+                enc = self.tokenizer.tokenize(text, labels)
                 input_ids = enc["input_ids"].unsqueeze(0)
                 attention_mask = enc["attention_mask"].unsqueeze(0)
                 lmask = enc["lmask"].unsqueeze(0)
