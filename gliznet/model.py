@@ -145,7 +145,7 @@ class SimilarityHead(nn.Module):
         if config.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
         elif config.similarity_metric == "dot":
-            self.classifier = nn.Linear(projected_dim, 1)
+            self.classifier = nn.Linear(projected_dim * 2, 1)
         elif config.similarity_metric != "cosine":
             raise ValueError(
                 f"Unknown similarity_metric: {config.similarity_metric}. "
@@ -167,7 +167,7 @@ class SimilarityHead(nn.Module):
         if self.config.similarity_metric == "bilinear":
             logits = self.classifier(text_repr, label_repr)
         elif self.config.similarity_metric == "dot":
-            logits = self.classifier(text_repr * label_repr)
+            logits = self.classifier(torch.cat([text_repr, label_repr], dim=-1))
         else:  # cosine
             # Normalize for cosine similarity
             text_norm = F.normalize(text_repr, p=2, dim=-1)
@@ -184,22 +184,28 @@ class SimilarityHead(nn.Module):
 class LabelAggregator(nn.Module):
     """Aggregates label token embeddings and computes similarities using token-level attention."""
 
-    def __init__(
-        self,
-        config: GliZNetConfig,
-        text_projector: nn.Module,
-        label_projector: nn.Module,
-        similarity_head: "SimilarityHead",
-    ):
+    def __init__(self, config: GliZNetConfig):
         super().__init__()
         self.config = config
-        self.text_projector = text_projector
-        self.label_projector = label_projector
-        self.similarity_head = similarity_head
+
+        hidden_size = config.backbone_config.hidden_size
+        projected_dim = config.projected_dim or hidden_size
+
+        self.text_projector = self._build_projector(hidden_size, projected_dim)
+        self.label_projector = self._build_projector(hidden_size, projected_dim)
+        self.similarity_head = SimilarityHead(config, projected_dim)
         self.dropout = nn.Dropout(config.dropout_rate)
 
         # Temperature for attention softmax (learnable)
         self.attention_temperature = nn.Parameter(torch.tensor(1.0))
+
+    def _build_projector(self, input_dim: int, output_dim: int) -> nn.Module:
+        if input_dim == output_dim and not self.config.use_projection_layernorm:
+            return nn.Identity()
+        layers = [nn.Linear(input_dim, output_dim)]
+        if self.config.use_projection_layernorm:
+            layers.append(nn.LayerNorm(output_dim))
+        return nn.Sequential(*layers)
 
     def aggregate_labels(
         self,
@@ -672,34 +678,12 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         self.config = config
 
         self.backbone: PreTrainedModel = AutoModel.from_config(config.backbone_config)
-        hidden_size = config.backbone_config.hidden_size
-        projected_dim = config.projected_dim or hidden_size
 
-        # Build projection layers (stored only in aggregator to avoid shared tensors)
-        text_projector = self._build_projector(hidden_size, projected_dim)
-        label_projector = self._build_projector(hidden_size, projected_dim)
-
-        # Build task-specific components
-        similarity_head = SimilarityHead(config, projected_dim)
-        self.aggregator = LabelAggregator(
-            config, text_projector, label_projector, similarity_head
-        )
+        self.aggregator = LabelAggregator(config)
         self.loss_fn = GliZNetLoss(config)
 
         # Initialize weights
         self.post_init()
-
-    def _build_projector(self, input_dim: int, output_dim: int) -> nn.Module:
-        """Build a projection layer with optional LayerNorm."""
-        # If dimensions match and no layernorm, no projection needed
-        if input_dim == output_dim and not self.config.use_projection_layernorm:
-            return nn.Identity()
-
-        layers = [nn.Linear(input_dim, output_dim)]
-        if self.config.use_projection_layernorm:
-            layers.append(nn.LayerNorm(output_dim))
-
-        return nn.Sequential(*layers)
 
     def resize_token_embeddings(self, new_num_tokens: int) -> nn.Embedding:
         """Resize token embeddings (for custom tokens)."""
