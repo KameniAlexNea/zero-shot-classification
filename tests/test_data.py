@@ -19,7 +19,7 @@ class TestDataModule(unittest.TestCase):
                 LabelName.lint: [[1], [0, 1]],
             }
         )
-        self.tokenizer = GliZNETTokenizer.from_pretrained("bert-base-uncased")
+        self.tokenizer = GliZNETTokenizer.from_pretrained("bert-base-uncased", model_max_length=512)
         self.dataset = add_tokenized_function(
             hf_dataset=self.hf_data,
             tokenizer=self.tokenizer,

@@ -184,8 +184,9 @@ class GliZNETTokenizer:
         ]
         sequences, lmasks = zip(*all_sequences)
 
-        # Find max length in batch
-        max_len = min(max(len(seq) for seq in sequences), self.max_length)
+        # Pad to model_max_length when set, otherwise to the longest sequence in the batch
+        model_max = self.tokenizer.model_max_length
+        max_len = model_max if (model_max and model_max <= 1_000_000) else max(len(seq) for seq in sequences)
 
         # Pad all sequences
         input_ids = []
