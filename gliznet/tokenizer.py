@@ -103,18 +103,25 @@ class GliZNETTokenizer:
                 # No labels: just truncate text
                 text_ids = text_ids[:available]
             else:
-                # Step 1: reduce labels proportionally, text untouched.
-                # label_content_budget excludes the fixed [LAB] separators.
+                # Step 1: reduce labels, text untouched.
+                # Each label is guaranteed min_label_tokens; the remaining surplus
+                # is distributed proportionally to each label's original length so
+                # that short labels lose little and long labels absorb the bulk of
+                # the cut.
                 label_content_budget = available - len(text_ids) - n_labels
 
                 if label_content_budget >= n_labels * self.min_label_tokens:
-                    # All labels fit if we give each the same equal budget
-                    tokens_per_label = max(
-                        label_content_budget // n_labels, self.min_label_tokens
-                    )
-                    label_ids_list = [ids[:tokens_per_label] for ids in label_ids_list]
+                    total_original = sum(len(ids) for ids in label_ids_list)
+                    surplus = label_content_budget - n_labels * self.min_label_tokens
+                    label_ids_list = [
+                        ids[: self.min_label_tokens + (
+                            int(surplus * len(ids) / total_original)
+                            if total_original > 0 else 0
+                        )]
+                        for ids in label_ids_list
+                    ]
                 else:
-                    # Step 2: labels at minimum still overflow — truncate text too
+                    # Step 2: even min_label_tokens per label overflows — truncate text too
                     label_ids_list = [ids[: self.min_label_tokens] for ids in label_ids_list]
                     min_labels_size = n_labels * self.min_label_tokens + n_labels
                     text_budget = max(available - min_labels_size, self.min_text_tokens)
