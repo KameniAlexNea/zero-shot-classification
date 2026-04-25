@@ -346,5 +346,5 @@ additional_datasets = {
     "tasksource_cycic_classification": load_tasksource_cycic_classification,
     "ml4pubmed_pubmed": load_ml4pubmed_pubmed_text_classification_cased,
     "alexneakameni_qa_africa": load_alexneakameni_qa_africa,
-    "zshot_hardness_couplet": load_zshot_hardness_couplet,
+    # "zshot_hardness_couplet": load_zshot_hardness_couplet,
 }

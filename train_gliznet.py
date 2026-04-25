@@ -121,7 +121,7 @@ def main():
 
     # Set device
     device = (
-        "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
+        "cuda" if torch.cuda.is_available() else "cpu"
     )
     logger.info(f"Using device: {device}")
 
