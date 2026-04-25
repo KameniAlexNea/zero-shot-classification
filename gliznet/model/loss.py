@@ -156,7 +156,11 @@ class GliZNetLoss(nn.Module):
             return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         pos_mask = (targets_clean > 0.5).to(logits.dtype)
-        sum_log_prob_pos = (log_probs * pos_mask).sum(dim=1)
+        # Use torch.where instead of multiplication to avoid -inf * 0 = NaN,
+        # which occurs at padding positions where log_probs=-inf and pos_mask=0.
+        sum_log_prob_pos = torch.where(
+            pos_mask.bool(), log_probs, torch.zeros_like(log_probs)
+        ).sum(dim=1)
         num_pos = pos_mask.sum(dim=1).clamp(min=1e-6)
 
         return (-sum_log_prob_pos / num_pos).mean()

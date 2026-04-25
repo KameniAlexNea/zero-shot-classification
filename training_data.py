@@ -191,24 +191,6 @@ def load_onionmonster_dream(max_size: Optional[int] = None, seed: int = 42):
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_sagnikrayc_mctest(max_size: Optional[int] = None, seed: int = 42):
-    """Load MCTest dataset."""
-
-    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
-        text = ensure_string(f"{x['question']}\n{x['story']}")
-        options = [ensure_string(str(i)) for i in x["answer_options"].values()]
-        lint = [int(i == x["answer"]) for i in x["answer_options"]]
-
-        return {
-            "text": text,
-            LabelName.ltext: options,
-            LabelName.lint: lint,
-        }
-
-    return load_dataset_with_validation(
-        "sagnikrayc/mctest", "mc500", mapper_func=mapper, max_size=max_size, seed=seed
-    )
-
 
 def load_ehovy_race(max_size: Optional[int] = None, seed: int = 42):
     """Load RACE dataset."""
@@ -350,7 +332,7 @@ additional_datasets = {
     "tau_commonsense_qa": load_tau_commonsense_qa,
     "Salesforce_cos_e": load_Salesforce_cos_e,
     "onionmonster_dream": load_onionmonster_dream,
-    "sagnikrayc_mctest": load_sagnikrayc_mctest,
+    # "sagnikrayc_mctest": load_sagnikrayc_mctest, # no more available on HuggingFace sagnikrayc/mctest
     "ehovy_race": load_ehovy_race,
     # "sentence_transformers_wikihow": load_sentence_transformers_wikihow,
     "tasksource_cycic_classification": load_tasksource_cycic_classification,

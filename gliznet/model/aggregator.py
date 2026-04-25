@@ -197,9 +197,10 @@ class LabelAggregator(nn.Module):
         scores = torch.bmm(
             aggregated_labels.unsqueeze(1),
             text_tokens.transpose(1, 2),
-        ).squeeze(1) / self.attention_temperature.abs().clamp(
-            min=0.1
-        )  # (N, L)
+        ).squeeze(1) / (
+            self.attention_temperature.abs().clamp(min=0.1)
+            * (aggregated_labels.shape[-1] ** 0.5)
+        )  # (N, L) — scaled dot-product attention (÷√D prevents bfloat16 exp overflow)
 
         scores = scores.masked_fill(~label_mask, float("-inf"))
         attn_weights = F.softmax(scores, dim=1)  # (N, L)
