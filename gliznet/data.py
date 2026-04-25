@@ -71,11 +71,6 @@ def load_dataset(
         }
 
     ds = datasets.load_dataset(path, name)[split]
-    ds = ds.filter(
-        lambda batch: [("source" not in x) or (x["source"] != "arxiv") for x in batch],
-        batched=True,
-        batch_size=10_000,
-    )
     ds = ds.map(mapper)
     ds = ds.filter(lambda x: len(x[LabelName.ltext]) > 0)
 

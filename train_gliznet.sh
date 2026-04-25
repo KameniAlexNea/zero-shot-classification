@@ -68,9 +68,8 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Performance Optimization` \
     --dataloader_pin_memory \
-    --dataloader_num_workers 16 \
+    --dataloader_num_workers 4 \
     --dataloader_prefetch_factor 1 \
-    --dataloader_drop_last \
     --bf16 \
     \
     `# Logging & Monitoring` \
