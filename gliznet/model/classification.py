@@ -147,9 +147,26 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         if not return_dict:
             return (loss, logits, batch_indices, label_ids)
 
+        # When labels are present, reconstruct dense (batch_size, max_labels) logits so
+        # the Trainer can all_gather fixed-shape tensors in DDP eval and _prepare in
+        # compute_metrics can align logits with labels via the labels != -100 mask.
+        # label_ids are 1-indexed (from lmask), so col_idx = label_ids - 1.
+        # Unused positions are filled with -100.0, matching the label padding convention.
+        output_logits = logits  # sparse (N_spans, 1) for inference without labels
+        if labels is not None and logits.numel() > 0:
+            batch_size = labels.shape[0]
+            max_labels = labels.shape[1]
+            output_logits = logits.new_full((batch_size, max_labels), -100.0)
+            col_idx = label_ids - 1  # convert 1-indexed → 0-indexed
+            in_range = col_idx < max_labels
+            if in_range.any():
+                output_logits[batch_indices[in_range], col_idx[in_range]] = (
+                    logits.squeeze(-1)[in_range]
+                )
+
         return GliZNetOutput(
             loss=loss,
-            logits=logits,
+            logits=output_logits,
             batch_indices=batch_indices if return_stats else None,
             label_ids=label_ids if return_stats else None,
             label_embeddings=label_embeddings if return_stats else None,

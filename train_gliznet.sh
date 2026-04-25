@@ -49,7 +49,7 @@ nohup accelerate launch train_gliznet.py \
     --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
     --num_train_epochs 10 \
     --per_device_train_batch_size 16 \
-    --per_device_eval_batch_size 32 \
+    --per_device_eval_batch_size 16 \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
     --warmup_steps 0.05 \
@@ -70,6 +70,7 @@ nohup accelerate launch train_gliznet.py \
     --dataloader_pin_memory \
     --dataloader_num_workers 4 \
     --dataloader_prefetch_factor 1 \
+    --eval_use_gather_object \
     --bf16 \
     \
     `# Logging & Monitoring` \
