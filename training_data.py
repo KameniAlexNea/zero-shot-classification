@@ -100,10 +100,14 @@ def load_dataset_with_validation(
     name: Optional[str] = None,
     split: str = "train",
     mapper_func: Optional[Callable] = None,
+    max_size: Optional[int] = None,
+    seed: int = 42,
 ) -> datasets.Dataset:
     """Load a HuggingFace dataset, apply an optional mapper, and validate."""
     try:
         ds = datasets.load_dataset(ds_name, name, split=split)
+        if max_size is not None and len(ds) > max_size:
+            ds = ds.shuffle(seed=seed).select(range(max_size))
         if mapper_func:
             ds = ds.map(mapper_func)
         ds = ds.select_columns(selected_columns)
@@ -113,37 +117,37 @@ def load_dataset_with_validation(
         return datasets.Dataset.from_list([])
 
 
-def load_allenai_ai2_arc_easy():
+def load_allenai_ai2_arc_easy(max_size: Optional[int] = None, seed: int = 42):
     """Load ARC-Easy dataset."""
     mapper = create_mcq_mapper("question")
     return load_dataset_with_validation(
-        "allenai/ai2_arc", "ARC-Easy", mapper_func=mapper
+        "allenai/ai2_arc", "ARC-Easy", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_allenai_ai2_arc_challenge():
+def load_allenai_ai2_arc_challenge(max_size: Optional[int] = None, seed: int = 42):
     """Load ARC-Challenge dataset."""
     mapper = create_mcq_mapper("question")
     return load_dataset_with_validation(
-        "allenai/ai2_arc", "ARC-Challenge", mapper_func=mapper
+        "allenai/ai2_arc", "ARC-Challenge", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_allenai_openbookqa():
+def load_allenai_openbookqa(max_size: Optional[int] = None, seed: int = 42):
     """Load OpenBookQA dataset."""
     mapper = create_mcq_mapper("question_stem")
     return load_dataset_with_validation(
-        "allenai/openbookqa", "additional", mapper_func=mapper
+        "allenai/openbookqa", "additional", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_tau_commonsense_qa():
+def load_tau_commonsense_qa(max_size: Optional[int] = None, seed: int = 42):
     """Load CommonsenseQA dataset."""
     mapper = create_mcq_mapper("question")
-    return load_dataset_with_validation("tau/commonsense_qa", None, mapper_func=mapper)
+    return load_dataset_with_validation("tau/commonsense_qa", None, mapper_func=mapper, max_size=max_size, seed=seed)
 
 
-def load_Salesforce_cos_e():
+def load_Salesforce_cos_e(max_size: Optional[int] = None, seed: int = 42):
     """Load CoS-E dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -158,10 +162,10 @@ def load_Salesforce_cos_e():
             LabelName.lint: lint,
         }
 
-    return load_dataset_with_validation("Salesforce/cos_e", "v1.11", mapper_func=mapper)
+    return load_dataset_with_validation("Salesforce/cos_e", "v1.11", mapper_func=mapper, max_size=max_size, seed=seed)
 
 
-def load_onionmonster_dream():
+def load_onionmonster_dream(max_size: Optional[int] = None, seed: int = 42):
     """Load DREAM dataset."""
 
     def mapper_func(ds):
@@ -181,11 +185,13 @@ def load_onionmonster_dream():
         return datasets.Dataset.from_list(raws)
 
     ds = datasets.load_dataset("onionmonster/dream", None, split="train")
+    if max_size is not None and len(ds) > max_size:
+        ds = ds.shuffle(seed=seed).select(range(max_size))
     ds = mapper_func(ds)
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_sagnikrayc_mctest():
+def load_sagnikrayc_mctest(max_size: Optional[int] = None, seed: int = 42):
     """Load MCTest dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -200,11 +206,11 @@ def load_sagnikrayc_mctest():
         }
 
     return load_dataset_with_validation(
-        "sagnikrayc/mctest", "mc500", mapper_func=mapper
+        "sagnikrayc/mctest", "mc500", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_ehovy_race():
+def load_ehovy_race(max_size: Optional[int] = None, seed: int = 42):
     """Load RACE dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -220,10 +226,10 @@ def load_ehovy_race():
             LabelName.lint: lint,
         }
 
-    return load_dataset_with_validation("ehovy/race", "all", mapper_func=mapper)
+    return load_dataset_with_validation("ehovy/race", "all", mapper_func=mapper, max_size=max_size, seed=seed)
 
 
-def load_sentence_transformers_wikihow():
+def load_sentence_transformers_wikihow(max_size: Optional[int] = None, seed: int = 42):
     """Load WikiHow dataset."""
 
     def mapper_func(ds):
@@ -247,11 +253,13 @@ def load_sentence_transformers_wikihow():
         return ds.map(mapper)
 
     ds = datasets.load_dataset("sentence-transformers/wikihow", None, split="train")
+    if max_size is not None and len(ds) > max_size:
+        ds = ds.shuffle(seed=seed).select(range(max_size))
     ds = mapper_func(ds)
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_tasksource_cycic_classification():
+def load_tasksource_cycic_classification(max_size: Optional[int] = None, seed: int = 42):
     """Load CYCIC classification dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -266,11 +274,11 @@ def load_tasksource_cycic_classification():
         }
 
     return load_dataset_with_validation(
-        "tasksource/cycic_classification", None, mapper_func=mapper
+        "tasksource/cycic_classification", None, mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_ml4pubmed_pubmed_text_classification_cased():
+def load_ml4pubmed_pubmed_text_classification_cased(max_size: Optional[int] = None, seed: int = 42):
     """Load PubMed text classification dataset."""
 
     def mapper_func(ds):
@@ -290,11 +298,13 @@ def load_ml4pubmed_pubmed_text_classification_cased():
     ds = datasets.load_dataset(
         "ml4pubmed/pubmed-text-classification-cased", None, split="train"
     )
+    if max_size is not None and len(ds) > max_size:
+        ds = ds.shuffle(seed=seed).select(range(max_size))
     ds = mapper_func(ds)
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_alexneakameni_qa_africa():
+def load_alexneakameni_qa_africa(max_size: Optional[int] = None, seed: int = 42):
     """Load QA Africa dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -312,11 +322,11 @@ def load_alexneakameni_qa_africa():
         }
 
     return load_dataset_with_validation(
-        "alexneakameni/qa_africa", None, mapper_func=mapper
+        "alexneakameni/qa_africa", None, mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_zshot_hardness_couplet():
+def load_zshot_hardness_couplet(max_size: Optional[int] = None, seed: int = 42):
     """Load ZSHOT-HARDSET couplet split."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -327,7 +337,7 @@ def load_zshot_hardness_couplet():
         }
 
     return load_dataset_with_validation(
-        "alexneakameni/ZSHOT-HARDSET", "couplet", split="train", mapper_func=mapper
+        "alexneakameni/ZSHOT-HARDSET", "couplet", split="train", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 

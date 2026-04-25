@@ -85,11 +85,11 @@ def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
     return ds.select(index[:max_size])
 
 
-def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000):
+def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000, seed: int = 42):
     ds = datasets.concatenate_datasets(
         [base_ds]
         + [
-            sample_dataset(ds_loader(), max_size)
+            ds_loader(max_size, seed)
             for ds_loader in additional_datasets.values()
         ]
     )
@@ -167,7 +167,7 @@ def main():
     train_data = train_split
     size_before = len(train_data)
     train_data = add_additional_ds(
-        train_split, model_args.max_extended_ds_size
+        train_split, model_args.max_extended_ds_size, training_args.data_seed
     )  # Uncomment to add additional datasets
     added_size = len(train_data) - size_before
     val_data = splits["test"]
