@@ -41,33 +41,34 @@ class GliZNetLoss(nn.Module):
             Combined loss scalar
         """
         if logits.numel() == 0:
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         batch_size = labels.size(0)
         max_label_id = int(label_ids.max().item()) if label_ids.numel() > 0 else 0
 
         if max_label_id == 0:
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         # Reconstruct dense logits matrix (B, max_labels)
         dense_logits = torch.full(
-            (batch_size, max_label_id), float("-inf"), device=logits.device
+            (batch_size, max_label_id), float("-inf"), device=logits.device, dtype=logits.dtype
         )
         col_indices = label_ids - 1
         dense_logits[batch_indices, col_indices] = logits.squeeze(-1)
 
         # Align targets with dense_logits shape
         valid_cols = min(labels.shape[1], max_label_id)
-        current_labels = labels[:, :valid_cols].float()
+        current_labels = labels[:, :valid_cols].to(logits.dtype)
         if current_labels.shape[1] < max_label_id:
             padding = torch.full(
                 (batch_size, max_label_id - current_labels.shape[1]),
                 -100.0,
                 device=logits.device,
+                dtype=logits.dtype,
             )
             current_labels = torch.cat([current_labels, padding], dim=1)
 
-        total_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+        total_loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         # --- 1. Multi-label Softmax Loss (Primary) ---
         if self.config.supcon_loss_weight > 0:
@@ -78,7 +79,7 @@ class GliZNetLoss(nn.Module):
                     "Check inputs and learning rate."
                 )
                 softmax_loss = torch.tensor(
-                    0.0, device=logits.device, requires_grad=True
+                    0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
                 )
             total_loss = total_loss + softmax_loss * self.config.supcon_loss_weight
 
@@ -92,7 +93,7 @@ class GliZNetLoss(nn.Module):
                     "NaN/Inf in label_repulsion_loss; zeroing for training stability."
                 )
                 repulsion_loss = torch.tensor(
-                    0.0, device=logits.device, requires_grad=True
+                    0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
                 )
             total_loss = (
                 total_loss + repulsion_loss * self.config.label_repulsion_weight
@@ -103,7 +104,7 @@ class GliZNetLoss(nn.Module):
             bce_loss = self._bce_loss(dense_logits, current_labels, logit_scale)
             if torch.isnan(bce_loss) or torch.isinf(bce_loss):
                 logger.warning("NaN/Inf in bce_loss; zeroing for training stability.")
-                bce_loss = torch.tensor(0.0, device=logits.device, requires_grad=True)
+                bce_loss = torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
             total_loss = total_loss + bce_loss * self.config.bce_loss_weight
 
         return total_loss
@@ -124,7 +125,7 @@ class GliZNetLoss(nn.Module):
 
         has_positives = (targets_clean > 0.5).any(dim=1)
         if not has_positives.any():
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         logits = logits[has_positives]
         targets_clean = targets_clean[has_positives]
@@ -132,7 +133,7 @@ class GliZNetLoss(nn.Module):
 
         has_valid_labels = mask_valid_filtered.any(dim=1)
         if not has_valid_labels.any():
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         logits = logits[has_valid_labels]
         targets_clean = targets_clean[has_valid_labels]
@@ -145,16 +146,16 @@ class GliZNetLoss(nn.Module):
         if all_inf.any():
             valid_samples = ~all_inf
             if not valid_samples.any():
-                return torch.tensor(0.0, device=logits.device, requires_grad=True)
+                return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
             logits_masked = logits_masked[valid_samples]
             targets_clean = targets_clean[valid_samples]
 
         log_probs = F.log_softmax(logits_masked, dim=1)
 
         if torch.isnan(log_probs).any() or torch.isinf(log_probs).all():
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
-        pos_mask = (targets_clean > 0.5).float()
+        pos_mask = (targets_clean > 0.5).to(logits.dtype)
         sum_log_prob_pos = (log_probs * pos_mask).sum(dim=1)
         num_pos = pos_mask.sum(dim=1).clamp(min=1e-6)
 
@@ -174,7 +175,7 @@ class GliZNetLoss(nn.Module):
         representations.  Only enable for static/non-contextual label embeddings.
         """
         if embeddings.numel() == 0:
-            return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+            return torch.tensor(0.0, device=embeddings.device, dtype=embeddings.dtype, requires_grad=True)
 
         embeddings_norm = F.normalize(embeddings, p=2, dim=-1)
         sim_matrix = torch.matmul(embeddings_norm, embeddings_norm.T)
@@ -184,7 +185,7 @@ class GliZNetLoss(nn.Module):
         final_mask = diff_label_mask & same_batch_mask
 
         if not final_mask.any():
-            return torch.tensor(0.0, device=embeddings.device, requires_grad=True)
+            return torch.tensor(0.0, device=embeddings.device, dtype=embeddings.dtype, requires_grad=True)
 
         penalties = F.relu(sim_matrix[final_mask] - self.config.repulsion_threshold)
         return penalties.mean()
@@ -201,14 +202,14 @@ class GliZNetLoss(nn.Module):
         """
         mask = targets != -100
         if not mask.any():
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         valid_logits = logits[mask]
         valid_targets = targets[mask]
 
         finite_mask = torch.isfinite(valid_logits)
         if not finite_mask.any():
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
 
         valid_logits = valid_logits[finite_mask]
         valid_targets = valid_targets[finite_mask]

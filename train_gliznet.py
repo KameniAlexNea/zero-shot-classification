@@ -135,6 +135,16 @@ def main():
     # Initialize model and tokenizer
     logger.info(f"Initializing model and tokenizer from {model_args.model_name}...")
     model, tokenizer = create_model_tokenizer(model_args)
+
+    # Cast the full model to the training dtype so all layers (backbone + custom heads)
+    # are dtype-consistent. DataParallel worker threads don't inherit the autocast
+    # context, so without this the backbone can produce bf16/fp16 tensors while custom
+    # layers (aggregator projectors) stay float32 and cause a dtype mismatch.
+    if training_args.bf16:
+        model = model.to(torch.bfloat16)
+    elif training_args.fp16:
+        model = model.to(torch.float16)
+
     logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
     logger.info(f"Model parameters: {model.num_parameters():,}")
 
