@@ -85,13 +85,12 @@ def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
     return ds.select(index[:max_size])
 
 
-def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000, seed: int = 42):
+def add_additional_ds(
+    base_ds: datasets.Dataset, max_size: int = 50_000, seed: int = 42
+):
     ds = datasets.concatenate_datasets(
         [base_ds]
-        + [
-            ds_loader(max_size, seed)
-            for ds_loader in additional_datasets.values()
-        ]
+        + [ds_loader(max_size, seed) for ds_loader in additional_datasets.values()]
     )
     return ds
 
@@ -120,9 +119,7 @@ def main():
     logger.info(f"Set random seed to {training_args.data_seed}")
 
     # Set device
-    device = (
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
 
     # Validate configuration

@@ -1,4 +1,5 @@
 """Pytest tests for gliznet data module (tokenized dataset + collate_fn)."""
+
 import pytest
 import torch
 from datasets import Dataset
@@ -18,7 +19,9 @@ def dataset():
             LabelName.lint: [[1], [0, 1]],
         }
     )
-    tokenizer = GliZNETTokenizer.from_pretrained("bert-base-uncased", model_max_length=512)
+    tokenizer = GliZNETTokenizer.from_pretrained(
+        "bert-base-uncased", model_max_length=512
+    )
     return add_tokenized_function(
         hf_dataset=hf_data,
         tokenizer=tokenizer,

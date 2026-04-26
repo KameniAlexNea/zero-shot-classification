@@ -29,9 +29,9 @@ def _make_eval_pred(scores_list, labels_list):
     max_k = max(len(s) for s in scores_list)
     scores_arr = np.full((len(scores_list), max_k), -100.0)
     labels_arr = np.full((len(labels_list), max_k), -100.0)
-    for i, (s, l) in enumerate(zip(scores_list, labels_list)):
+    for i, (s, lab) in enumerate(zip(scores_list, labels_list)):
         scores_arr[i, : len(s)] = s
-        labels_arr[i, : len(l)] = l
+        labels_arr[i, : len(lab)] = lab
     return scores_arr, labels_arr
 
 
@@ -150,7 +150,7 @@ class TestComputeMetrics:
 
     def test_hit_at_k_increases_with_k(self):
         scores = [[3.0, 2.0, 1.0, 0.0]]
-        labels = [[0, 0, 0, 1]]          # positive at rank 4
+        labels = [[0, 0, 0, 1]]  # positive at rank 4
         m = compute_metrics(_make_eval_pred(scores, labels), ks=(1, 3, 5))
         assert m["hit@1"] == 0.0
         assert m["hit@3"] == 0.0
@@ -180,7 +180,7 @@ class TestComputeMetrics:
     def test_multiple_positives(self):
         """Multiple positives per sample — MRR uses the first positive in ranked order."""
         scores = [[3.0, 2.0, 1.0]]
-        labels = [[0, 1, 1]]           # two positives; top-1 is negative
+        labels = [[0, 1, 1]]  # two positives; top-1 is negative
         m = compute_metrics(_make_eval_pred(scores, labels), ks=(1, 2, 3))
         assert m["hit@1"] == 0.0
         assert m["hit@2"] == pytest.approx(1.0)  # second rank is positive
@@ -204,8 +204,12 @@ class TestComputeMetrics:
         perfect_scores = [[3.0, 2.0, 1.0, 0.0]]
         reversed_scores = [[0.0, 1.0, 2.0, 3.0]]
         labels = [[1, 1, 0, 0]]
-        m_perfect = compute_metrics(_make_eval_pred(perfect_scores, labels), ks=(1, 3, 4))
-        m_reversed = compute_metrics(_make_eval_pred(reversed_scores, labels), ks=(1, 3, 4))
+        m_perfect = compute_metrics(
+            _make_eval_pred(perfect_scores, labels), ks=(1, 3, 4)
+        )
+        m_reversed = compute_metrics(
+            _make_eval_pred(reversed_scores, labels), ks=(1, 3, 4)
+        )
         assert m_perfect["ndcg@4"] > m_reversed["ndcg@4"]
 
     @pytest.mark.parametrize("k", [1, 3, 5])
@@ -221,7 +225,3 @@ class TestComputeMetrics:
         labels = [[1, 0, 0]] * 5
         m = compute_metrics(_make_eval_pred(scores, labels), ks=(k,))
         assert 0.0 <= m[f"ndcg@{k}"] <= 1.0
-
-
-
-

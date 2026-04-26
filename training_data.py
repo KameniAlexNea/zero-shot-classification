@@ -129,7 +129,11 @@ def load_allenai_ai2_arc_challenge(max_size: Optional[int] = None, seed: int = 4
     """Load ARC-Challenge dataset."""
     mapper = create_mcq_mapper("question")
     return load_dataset_with_validation(
-        "allenai/ai2_arc", "ARC-Challenge", mapper_func=mapper, max_size=max_size, seed=seed
+        "allenai/ai2_arc",
+        "ARC-Challenge",
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
     )
 
 
@@ -137,14 +141,20 @@ def load_allenai_openbookqa(max_size: Optional[int] = None, seed: int = 42):
     """Load OpenBookQA dataset."""
     mapper = create_mcq_mapper("question_stem")
     return load_dataset_with_validation(
-        "allenai/openbookqa", "additional", mapper_func=mapper, max_size=max_size, seed=seed
+        "allenai/openbookqa",
+        "additional",
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
     )
 
 
 def load_tau_commonsense_qa(max_size: Optional[int] = None, seed: int = 42):
     """Load CommonsenseQA dataset."""
     mapper = create_mcq_mapper("question")
-    return load_dataset_with_validation("tau/commonsense_qa", None, mapper_func=mapper, max_size=max_size, seed=seed)
+    return load_dataset_with_validation(
+        "tau/commonsense_qa", None, mapper_func=mapper, max_size=max_size, seed=seed
+    )
 
 
 def load_Salesforce_cos_e(max_size: Optional[int] = None, seed: int = 42):
@@ -162,7 +172,9 @@ def load_Salesforce_cos_e(max_size: Optional[int] = None, seed: int = 42):
             LabelName.lint: lint,
         }
 
-    return load_dataset_with_validation("Salesforce/cos_e", "v1.11", mapper_func=mapper, max_size=max_size, seed=seed)
+    return load_dataset_with_validation(
+        "Salesforce/cos_e", "v1.11", mapper_func=mapper, max_size=max_size, seed=seed
+    )
 
 
 def load_onionmonster_dream(max_size: Optional[int] = None, seed: int = 42):
@@ -191,7 +203,6 @@ def load_onionmonster_dream(max_size: Optional[int] = None, seed: int = 42):
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-
 def load_ehovy_race(max_size: Optional[int] = None, seed: int = 42):
     """Load RACE dataset."""
 
@@ -208,7 +219,9 @@ def load_ehovy_race(max_size: Optional[int] = None, seed: int = 42):
             LabelName.lint: lint,
         }
 
-    return load_dataset_with_validation("ehovy/race", "all", mapper_func=mapper, max_size=max_size, seed=seed)
+    return load_dataset_with_validation(
+        "ehovy/race", "all", mapper_func=mapper, max_size=max_size, seed=seed
+    )
 
 
 def load_sentence_transformers_wikihow(max_size: Optional[int] = None, seed: int = 42):
@@ -241,7 +254,9 @@ def load_sentence_transformers_wikihow(max_size: Optional[int] = None, seed: int
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_tasksource_cycic_classification(max_size: Optional[int] = None, seed: int = 42):
+def load_tasksource_cycic_classification(
+    max_size: Optional[int] = None, seed: int = 42
+):
     """Load CYCIC classification dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -256,11 +271,17 @@ def load_tasksource_cycic_classification(max_size: Optional[int] = None, seed: i
         }
 
     return load_dataset_with_validation(
-        "tasksource/cycic_classification", None, mapper_func=mapper, max_size=max_size, seed=seed
+        "tasksource/cycic_classification",
+        None,
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
     )
 
 
-def load_ml4pubmed_pubmed_text_classification_cased(max_size: Optional[int] = None, seed: int = 42):
+def load_ml4pubmed_pubmed_text_classification_cased(
+    max_size: Optional[int] = None, seed: int = 42
+):
     """Load PubMed text classification dataset."""
 
     def mapper_func(ds):
@@ -304,7 +325,11 @@ def load_alexneakameni_qa_africa(max_size: Optional[int] = None, seed: int = 42)
         }
 
     return load_dataset_with_validation(
-        "alexneakameni/qa_africa", None, mapper_func=mapper, max_size=max_size, seed=seed
+        "alexneakameni/qa_africa",
+        None,
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
     )
 
 
@@ -319,7 +344,12 @@ def load_zshot_hardness_couplet(max_size: Optional[int] = None, seed: int = 42):
         }
 
     return load_dataset_with_validation(
-        "alexneakameni/ZSHOT-HARDSET", "couplet", split="train", mapper_func=mapper, max_size=max_size, seed=seed
+        "alexneakameni/ZSHOT-HARDSET",
+        "couplet",
+        split="train",
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
     )
 
 

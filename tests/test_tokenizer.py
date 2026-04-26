@@ -1,4 +1,5 @@
 """Pytest tests for GliZNETTokenizer."""
+
 import os
 import tempfile
 
@@ -55,7 +56,9 @@ def test_padding_behavior(tokenizer, hf_tokenizer):
     assert result["lmask"].shape == (1, 20)
     seq_len = int(result["attention_mask"][0].sum().item())
     assert seq_len < 20
-    assert result["input_ids"][0, seq_len:].tolist() == [hf_tokenizer.pad_token_id] * (20 - seq_len)
+    assert result["input_ids"][0, seq_len:].tolist() == [hf_tokenizer.pad_token_id] * (
+        20 - seq_len
+    )
     assert result["attention_mask"][0, seq_len:].tolist() == [0] * (20 - seq_len)
 
 
@@ -65,7 +68,9 @@ def test_call_single_vs_batch(tokenizer):
     assert single["attention_mask"].shape == (20,)
     assert single["lmask"].shape == (20,)
 
-    batch = tokenizer([("First call.", ["lA"]), ("Second call.", ["lB"])], return_tensors="pt")
+    batch = tokenizer(
+        [("First call.", ["lA"]), ("Second call.", ["lB"])], return_tensors="pt"
+    )
     assert batch["input_ids"].shape == (2, 20)
     assert batch["attention_mask"].shape == (2, 20)
     assert batch["lmask"].shape == (2, 20)
@@ -102,7 +107,9 @@ def test_lab_token_initialization(lab_tokenizer, original_vocab_size):
 def test_lab_token_sequence_building(lab_tokenizer):
     result = lab_tokenizer.tokenize("Hello world", ["positive", "negative"])
     assert lab_tokenizer.lab_token_id in result["input_ids"].tolist()
-    decoded = lab_tokenizer.decode(result["input_ids"].tolist(), skip_special_tokens=True)
+    decoded = lab_tokenizer.decode(
+        result["input_ids"].tolist(), skip_special_tokens=True
+    )
     assert "hello world" in decoded.lower()
     assert "positive" in decoded.lower()
     assert "negative" in decoded.lower()
@@ -140,7 +147,9 @@ def test_batch_tokenization_with_lab_token(lab_tokenizer):
 
 
 def test_from_pretrained_custom_params(original_vocab_size):
-    tok = GliZNETTokenizer.from_pretrained(MODEL, lab_token="[CUSTOM]", min_text_tokens=5)
+    tok = GliZNETTokenizer.from_pretrained(
+        MODEL, lab_token="[CUSTOM]", min_text_tokens=5
+    )
     assert tok.lab_token == "[CUSTOM]"
     assert tok.min_text_tokens == 5
     assert len(tok) == original_vocab_size + 1
@@ -161,8 +170,9 @@ def test_from_pretrained_custom_params(original_vocab_size):
 @pytest.fixture(scope="module")
 def struct_tok():
     """Tokenizer with no max_length cap so we can inspect raw structure."""
-    return GliZNETTokenizer(pretrained_model_name_or_path=MODEL, lab_token="[LAB]",
-                            model_max_length=512)
+    return GliZNETTokenizer(
+        pretrained_model_name_or_path=MODEL, lab_token="[LAB]", model_max_length=512
+    )
 
 
 def test_sequence_starts_with_cls(struct_tok):
@@ -172,7 +182,7 @@ def test_sequence_starts_with_cls(struct_tok):
 
 def test_sequence_has_sep_after_text(struct_tok):
     """[SEP] must appear exactly once between [CLS] and the first label token."""
-    ids = result = struct_tok.tokenize("hello world", ["positive"])["input_ids"].tolist()
+    ids = struct_tok.tokenize("hello world", ["positive"])["input_ids"].tolist()
     assert struct_tok.sep_token_id in ids
     sep_pos = ids.index(struct_tok.sep_token_id)
     # Everything before sep is CLS + text (no LAB or SEP)
@@ -187,7 +197,9 @@ def test_sequence_contains_lab_token_per_label(struct_tok):
         labels = [f"label_{i}" for i in range(n_labels)]
         ids = struct_tok.tokenize("test text", labels)["input_ids"].tolist()
         lab_count = ids.count(struct_tok.lab_token_id)
-        assert lab_count == n_labels, f"expected {n_labels} [LAB] tokens, got {lab_count}"
+        assert lab_count == n_labels, (
+            f"expected {n_labels} [LAB] tokens, got {lab_count}"
+        )
 
 
 def test_lmask_zero_for_special_tokens(struct_tok):
@@ -195,10 +207,16 @@ def test_lmask_zero_for_special_tokens(struct_tok):
     result = struct_tok.tokenize("hello world", ["pos", "neg"])
     ids = result["input_ids"].tolist()
     lmask = result["lmask"].tolist()
-    special_ids = {struct_tok.cls_token_id, struct_tok.sep_token_id, struct_tok.lab_token_id}
+    special_ids = {
+        struct_tok.cls_token_id,
+        struct_tok.sep_token_id,
+        struct_tok.lab_token_id,
+    }
     for pos, (tok_id, mask_val) in enumerate(zip(ids, lmask)):
         if tok_id in special_ids:
-            assert mask_val == 0, f"special token at pos {pos} (id={tok_id}) has lmask={mask_val}"
+            assert mask_val == 0, (
+                f"special token at pos {pos} (id={tok_id}) has lmask={mask_val}"
+            )
 
 
 def test_lmask_labels_are_1indexed(struct_tok):
@@ -215,13 +233,16 @@ def test_lmask_label_order_matches_input(struct_tok):
     result = struct_tok.tokenize("foo bar", ["first", "second", "third"])
     lmask = result["lmask"].tolist()
     non_zero = [v for v in lmask if v > 0]
-    assert non_zero == sorted(non_zero), "lmask label indices are not in ascending order"
+    assert non_zero == sorted(non_zero), (
+        "lmask label indices are not in ascending order"
+    )
 
 
 def test_lmask_pad_positions_are_zero(struct_tok):
     """Padding positions (attention_mask == 0) must have lmask == 0."""
-    tok = GliZNETTokenizer(pretrained_model_name_or_path=MODEL, lab_token="[LAB]",
-                           model_max_length=30)
+    tok = GliZNETTokenizer(
+        pretrained_model_name_or_path=MODEL, lab_token="[LAB]", model_max_length=30
+    )
     result = tok.tokenize("hi", ["a"])
     attn = result["attention_mask"].tolist()
     lmask = result["lmask"].tolist()
@@ -259,7 +280,11 @@ def test_no_labels_produces_valid_structure(struct_tok):
     lmask = result["lmask"][0].tolist()
     assert ids[0] == struct_tok.cls_token_id
     assert struct_tok.sep_token_id in ids
-    assert all(v == 0 for v in lmask if ids[lmask.index(v) if v else 0] != struct_tok.pad_token_id or True)
+    assert all(
+        v == 0
+        for v in lmask
+        if ids[lmask.index(v) if v else 0] != struct_tok.pad_token_id or True
+    )
     # No label values in lmask
     assert all(v == 0 for v in lmask)
 
@@ -274,17 +299,18 @@ def test_batch_lmask_shapes_consistent(struct_tok):
     assert result["input_ids"].shape == result["lmask"].shape
 
 
-@pytest.mark.parametrize("text,labels", [
-    ("Simple text", ["cat"]),
-    ("", ["dog", "fish"]),
-    ("X" * 200, ["very long label " * 5]),
-    ("Multi label test", ["a", "b", "c", "d", "e"]),
-])
+@pytest.mark.parametrize(
+    "text,labels",
+    [
+        ("Simple text", ["cat"]),
+        ("", ["dog", "fish"]),
+        ("X" * 200, ["very long label " * 5]),
+        ("Multi label test", ["a", "b", "c", "d", "e"]),
+    ],
+)
 def test_tokenize_no_error_various_inputs(struct_tok, text, labels):
     """Tokenizer must not raise on any of these inputs."""
-    result = struct_tok([( text, labels)], return_tensors="pt")
+    result = struct_tok([(text, labels)], return_tensors="pt")
     assert "input_ids" in result
     assert "attention_mask" in result
     assert "lmask" in result
-
-

@@ -163,7 +163,9 @@ class TestForwardPass:
 
     def test_with_labels_loss_non_negative(self):
         model = _make_model()
-        out = model(input_ids=INPUT_IDS, attention_mask=ATTN, lmask=LMASK, labels=LABELS)
+        out = model(
+            input_ids=INPUT_IDS, attention_mask=ATTN, lmask=LMASK, labels=LABELS
+        )
         assert "loss" in out
         assert isinstance(out["loss"], torch.Tensor)
         assert out["loss"].item() >= 0.0
@@ -183,6 +185,7 @@ class TestCustomTokens:
     @pytest.fixture
     def tokenizer(self):
         from gliznet.tokenizer import GliZNETTokenizer
+
         return GliZNETTokenizer.from_pretrained("bert-base-uncased", lab_token="[LAB]")
 
     def _make(self, tokenizer, **kwargs):
@@ -221,8 +224,13 @@ class TestCustomTokens:
         assert model.config.lab_token_id == tokenizer.lab_token_id
 
     def test_forward_lab_token_mode(self, tokenizer):
-        model = self._swap(self._make(tokenizer, use_lab_token_for_labels=True,
-                                      lab_token_id=tokenizer.lab_token_id))
+        model = self._swap(
+            self._make(
+                tokenizer,
+                use_lab_token_for_labels=True,
+                lab_token_id=tokenizer.lab_token_id,
+            )
+        )
         batch = tokenizer.tokenize("Test text", ["positive", "negative"])
         with torch.no_grad():
             out = model(
@@ -274,6 +282,7 @@ class TestBackboneWeightIntegrity:
     @pytest.fixture(scope="class")
     def models(self):
         from gliznet.tokenizer import GliZNETTokenizer
+
         tokenizer = GliZNETTokenizer.from_pretrained(self.MODEL_NAME)
         config = GliZNetConfig(backbone_model=self.MODEL_NAME)
         gliznet = GliZNetForSequenceClassification.from_backbone_pretrained(
@@ -289,11 +298,13 @@ class TestBackboneWeightIntegrity:
         ids = torch.tensor([[101, 7592, 102]])
         mask = torch.ones_like(ids)
         with torch.no_grad():
-            gout = gliznet.backbone(input_ids=ids, attention_mask=mask, return_dict=True)
+            gout = gliznet.backbone(
+                input_ids=ids, attention_mask=mask, return_dict=True
+            )
             aout = automodel(input_ids=ids, attention_mask=mask, return_dict=True)
-        assert torch.allclose(gout.last_hidden_state, aout.last_hidden_state, atol=1e-5), (
-            "GliZNet backbone hidden states differ from standalone AutoModel"
-        )
+        assert torch.allclose(
+            gout.last_hidden_state, aout.last_hidden_state, atol=1e-5
+        ), "GliZNet backbone hidden states differ from standalone AutoModel"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -351,13 +362,17 @@ class TestGliZNetLoss:
         assert torch.isfinite(out)
 
     def test_softmax_only(self):
-        loss_fn = GliZNetLoss(_default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0))
+        loss_fn = GliZNetLoss(
+            _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
+        )
         out = loss_fn(*_make_loss_inputs())
         assert torch.isfinite(out)
         assert out.item() >= 0.0
 
     def test_bce_only(self):
-        loss_fn = GliZNetLoss(_default_config(bce_loss_weight=1.0, supcon_loss_weight=0.0))
+        loss_fn = GliZNetLoss(
+            _default_config(bce_loss_weight=1.0, supcon_loss_weight=0.0)
+        )
         out = loss_fn(*_make_loss_inputs())
         assert torch.isfinite(out)
         assert out.item() >= 0.0
@@ -369,17 +384,21 @@ class TestGliZNetLoss:
         assert out.item() >= 0.0
 
     def test_all_losses_disabled_returns_zero(self):
-        loss_fn = GliZNetLoss(_default_config(
-            bce_loss_weight=0.0,
-            supcon_loss_weight=0.0,
-            label_repulsion_weight=0.0,
-        ))
+        loss_fn = GliZNetLoss(
+            _default_config(
+                bce_loss_weight=0.0,
+                supcon_loss_weight=0.0,
+                label_repulsion_weight=0.0,
+            )
+        )
         out = loss_fn(*_make_loss_inputs())
         assert out.item() == pytest.approx(0.0)
 
     def test_no_positives_returns_zero_supcon(self):
         """Samples with no positive labels → softmax loss should be 0 (skipped)."""
-        loss_fn = GliZNetLoss(_default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0))
+        loss_fn = GliZNetLoss(
+            _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
+        )
         logits, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs()
         labels_no_pos = torch.zeros_like(labels)
         out = loss_fn(logits, labels_no_pos, batch_indices, label_ids, embs, scale)
@@ -393,13 +412,17 @@ class TestGliZNetLoss:
         empty_ids = torch.zeros(0, dtype=torch.long)
         empty_embs = torch.zeros(0, 8)
         scale = torch.tensor(1.0)
-        out = loss_fn(empty_logits, empty_labels, empty_batch, empty_ids, empty_embs, scale)
+        out = loss_fn(
+            empty_logits, empty_labels, empty_batch, empty_ids, empty_embs, scale
+        )
         assert out.item() == pytest.approx(0.0, abs=1e-6)
 
     def test_perfect_scores_lower_loss_than_random(self):
         """Logits that perfectly separate positives from negatives should give lower loss."""
         loss_fn = GliZNetLoss(_default_config())
-        _, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs(batch=4, n_labels=4)
+        _, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs(
+            batch=4, n_labels=4
+        )
 
         # Perfect scores: positives at +10, negatives at -10
         perfect_logits = torch.where(
@@ -409,8 +432,12 @@ class TestGliZNetLoss:
         )
         random_logits = torch.randn_like(perfect_logits)
 
-        loss_perfect = loss_fn(perfect_logits, labels, batch_indices, label_ids, embs, scale)
-        loss_random = loss_fn(random_logits, labels, batch_indices, label_ids, embs, scale)
+        loss_perfect = loss_fn(
+            perfect_logits, labels, batch_indices, label_ids, embs, scale
+        )
+        loss_random = loss_fn(
+            random_logits, labels, batch_indices, label_ids, embs, scale
+        )
 
         assert loss_perfect.item() < loss_random.item()
 
