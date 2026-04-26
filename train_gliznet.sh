@@ -35,6 +35,7 @@ nohup accelerate launch train_gliznet.py \
     --min_label_length 3 \
     --data_seed 42 \
     --max_extended_ds_size 5000 \
+    --use_additional_datasets \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
@@ -68,9 +69,10 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Performance Optimization` \
     --dataloader_pin_memory \
-    --dataloader_num_workers 4 \
-    --dataloader_prefetch_factor 1 \
+    --dataloader_num_workers 8 \
+    --dataloader_prefetch_factor 2 \
     --eval_use_gather_object \
+    # --find_unused_parameters false \
     --bf16 \
     \
     `# Logging & Monitoring` \
