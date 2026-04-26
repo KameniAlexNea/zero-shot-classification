@@ -1,13 +1,5 @@
 import numpy as np
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    f1_score,
-    matthews_corrcoef,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -36,95 +28,107 @@ def _prepare(
     return logits[valid], labels[valid]
 
 
+def _ndcg_at_k(ranked_relevance: np.ndarray, k: int) -> float:
+    """NDCG@k for a single sample given binary relevance sorted by descending score."""
+    k = min(k, len(ranked_relevance))
+    if k == 0:
+        return 0.0
+    top_k = ranked_relevance[:k].astype(float)
+    discounts = np.log2(np.arange(2, k + 2))  # log2(2), ..., log2(k+1)
+    dcg = (top_k / discounts).sum()
+    ideal_k = min(k, int(ranked_relevance.sum()))
+    if ideal_k == 0:
+        return 0.0
+    idcg = (1.0 / np.log2(np.arange(2, ideal_k + 2))).sum()
+    return float(dcg / idcg)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 def compute_metrics(
-    eval_pred: tuple[list[np.ndarray], list[np.ndarray]],
-    activated: bool = False,
-    threshold: float = 0.5,
+    eval_pred: tuple,
+    ks: tuple[int, ...] = (1, 3, 5),
 ) -> dict:
-    """Compute binary classification metrics for a batch of predictions.
+    """Compute ranking metrics for zero-shot classification.
+
+    Expects dense predictions of shape (N_samples, max_labels) where padding
+    positions are filled with -100.0, matching the label padding convention
+    set by GliZNetForSequenceClassification.forward().
+
+    Per-sample metrics:
+        - Hit@k   : 1 if at least one positive label is in the top-k
+        - NDCG@k  : normalised discounted cumulative gain at k
+        - MRR     : reciprocal rank of the first positive label
+        - ROC-AUC : area under the ROC curve (rank-based, threshold-free)
+        - AP      : average precision (area under precision-recall curve)
 
     Args:
-        eval_pred: (logits, labels) where each is a list of arrays.
-        activated: If True the logits are already sigmoid probabilities.
-        threshold: Decision threshold for converting probabilities to predictions.
+        eval_pred: (predictions, labels) — both (N_samples, max_labels).
+        ks: Top-k cut-offs for Hit@k and NDCG@k.
 
     Returns:
-        Dict of metric names → values.
+        Dict of aggregated metric names → mean values across samples.
     """
-    logits, labels = _prepare(*eval_pred)
+    predictions, labels = eval_pred
 
-    probs = logits if activated else _sigmoid(logits)
-    predictions = (probs > threshold).astype(int)
+    if not isinstance(predictions, np.ndarray):
+        predictions = np.array(predictions)
+    if not isinstance(labels, np.ndarray):
+        labels = np.array(labels)
 
-    metrics: dict = {
-        "accuracy": accuracy_score(labels, predictions),
-        "precision": precision_score(labels, predictions, zero_division=0),
-        "recall": recall_score(labels, predictions, zero_division=0),
-        "f1": f1_score(labels, predictions, zero_division=0),
-        "support": len(labels),
-        "threshold": threshold,
-        "num_positive": int(np.sum(labels)),
-        "avg_probability": float(np.mean(probs)),
-    }
+    # Ensure 2-D: Trainer sometimes concatenates to (N,) if max_labels==1
+    if predictions.ndim == 1:
+        predictions = predictions.reshape(-1, 1)
+    if labels.ndim == 1:
+        labels = labels.reshape(-1, 1)
 
-    if len(np.unique(labels)) > 1:
-        try:
-            metrics["roc_auc"] = roc_auc_score(labels, probs)
-            metrics["avg_precision"] = average_precision_score(labels, probs)
-            metrics["matthews_corrcoef"] = matthews_corrcoef(labels, predictions)
-        except ValueError:
-            pass
+    hits = {k: [] for k in ks}
+    ndcgs = {k: [] for k in ks}
+    rr = []
+    aucs = []
+    aps = []
 
-    return metrics
+    for scores, gt in zip(predictions, labels):
+        valid = gt != -100
+        if not valid.any():
+            continue
+        s = scores[valid].astype(float)
+        g = gt[valid].astype(float)
 
+        n_pos = int(g.sum())
+        if n_pos == 0:
+            continue
 
-def compute_best_metrics(
-    logits: list[float],
-    labels: list[float],
-    multi: bool = False,
-) -> dict:
-    """Find the threshold that maximises F1 and return metrics at that threshold.
+        ranked = g[np.argsort(-s)]  # sort labels by descending predicted score
 
-    Args:
-        logits: Predicted probabilities (already sigmoid-activated).
-        labels: Ground-truth binary labels.
-        multi: If True, treat `logits` as pre-thresholded multi-label predictions
-               and use weighted averaging.
+        for k in ks:
+            hits[k].append(float(ranked[:k].any()))
+            ndcgs[k].append(_ndcg_at_k(ranked, k))
 
-    Returns:
-        Dict of metric names → values (includes the chosen threshold).
-    """
-    logits = np.array(logits)
-    labels = np.array(labels)
+        # MRR: reciprocal rank of first positive (1-indexed)
+        pos_ranks = np.where(ranked > 0.5)[0]
+        if len(pos_ranks) > 0:
+            rr.append(1.0 / (pos_ranks[0] + 1))
 
-    average = "weighted" if multi else "binary"
+        # ROC-AUC and AP require both classes present
+        if len(np.unique(g)) > 1:
+            probs = _sigmoid(s)
+            try:
+                aucs.append(roc_auc_score(g, probs))
+                aps.append(average_precision_score(g, probs))
+            except ValueError:
+                pass
 
-    if multi:
-        # Multi-label: logits are already binarised predictions
-        predictions = logits
-        threshold = None
-    else:
-        # Binary: search for the threshold that maximises F1
-        threshold = 0.5
-        best_f1 = 0.0
-        for t in np.linspace(logits.min(), logits.max(), 20):
-            preds = (logits > t).astype(int)
-            score = f1_score(labels, preds, zero_division=0, average=average)
-            if score > best_f1:
-                best_f1, threshold = score, float(t)
-        predictions = (logits > threshold).astype(int)
+    result: dict = {}
+    for k in ks:
+        result[f"hit@{k}"] = float(np.mean(hits[k])) if hits[k] else 0.0
+        result[f"ndcg@{k}"] = float(np.mean(ndcgs[k])) if ndcgs[k] else 0.0
+    result["mrr"] = float(np.mean(rr)) if rr else 0.0
+    result["roc_auc"] = float(np.mean(aucs)) if aucs else 0.0
+    result["avg_precision"] = float(np.mean(aps)) if aps else 0.0
+    result["num_samples"] = len(rr)
 
-    return {
-        "accuracy": accuracy_score(labels, predictions),
-        "precision": precision_score(
-            labels, predictions, zero_division=0, average=average
-        ),
-        "recall": recall_score(labels, predictions, zero_division=0, average=average),
-        "f1": f1_score(labels, predictions, zero_division=0, average=average),
-        "threshold": threshold,
-    }
+    return result

@@ -122,3 +122,9 @@ class ModelArgs:
         default=False,
         metadata={"help": "Whether to use [LAB] token for label separation"},
     )
+
+    # Whether to augment the training set with additional datasets
+    use_additional_datasets: bool = field(
+        default=False,
+        metadata={"help": "Whether to augment the training set with additional datasets defined in training_data.py"},
+    )

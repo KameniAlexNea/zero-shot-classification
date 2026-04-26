@@ -167,9 +167,10 @@ def main():
     train_split = splits["train"]
     train_data = train_split
     size_before = len(train_data)
-    train_data = add_additional_ds(
-        train_split, model_args.max_extended_ds_size, training_args.data_seed
-    )  # Uncomment to add additional datasets
+    if model_args.use_additional_datasets:
+        train_data = add_additional_ds(
+            train_split, model_args.max_extended_ds_size, training_args.data_seed
+        )
     added_size = len(train_data) - size_before
     val_data = splits["test"]
 

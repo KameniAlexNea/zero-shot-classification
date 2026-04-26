@@ -63,6 +63,7 @@ nohup accelerate launch train_gliznet.py \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
     --early_stopping_patience 3 \
+    --metric_for_best_model f1 \
     --eval_on_start \
     --eval_do_concat_batches False \
     \
