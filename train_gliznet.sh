@@ -7,10 +7,14 @@
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-nohup uv run train_gliznet.py \
+# Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
+# auto-detects GPUs, and ensures torch.autocast propagates correctly per process.
+
+nohup accelerate launch train_gliznet.py \
     \
     `# Model Configuration` \
-    --model_name answerdotai/ModernBERT-base \
+    --model_name microsoft/deberta-v3-base \
+    --model_class DebertaV2PreTrainedModel \
     --projected_dim 1024 \
     --similarity_metric cosine \
     --dropout_rate 0.1 \
@@ -25,7 +29,7 @@ nohup uv run train_gliznet.py \
     --repulsion_threshold 0.3 \
     \
     `# Data Configuration` \
-    --dataset_path alexneakameni/synthetic-classification-dataset \
+    --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
     --max_labels 20 \
     --shuffle_labels \
     --min_label_length 3 \
@@ -36,35 +40,39 @@ nohup uv run train_gliznet.py \
     --use_fast_tokenizer \
     --model_max_length 1024 \
     --lab_cls_token "[LAB]" \
+    --max_tokens_per_span 64 \
+    --min_text_tokens 10 \
+    --min_label_tokens 2 \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
-    --output_dir "results/modern-bert-base_${TIMESTAMP}" \
+    --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
     --num_train_epochs 10 \
-    --per_device_train_batch_size 32 \
-    --per_device_eval_batch_size 64 \
+    --per_device_train_batch_size 16 \
+    --per_device_eval_batch_size 16 \
     --gradient_accumulation_steps 4 \
     --learning_rate 1e-4 \
-    --warmup_ratio 0.05 \
+    --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
     \
     `# Evaluation & Checkpointing` \
-    --eval_strategy epochs \
-    --save_strategy epochs \
+    --eval_strategy epoch \
+    --save_strategy epoch \
     --save_total_limit 4 \
     --load_best_model_at_end \
     --metric_for_best_model eval_loss \
     --early_stopping_patience 3 \
+    --metric_for_best_model f1 \
     --eval_on_start \
     --eval_do_concat_batches False \
     \
     `# Performance Optimization` \
     --dataloader_pin_memory \
-    --dataloader_num_workers 16 \
+    --dataloader_num_workers 4 \
     --dataloader_prefetch_factor 1 \
-    --dataloader_drop_last \
-    --fp16 \
+    --eval_use_gather_object \
+    --bf16 \
     \
     `# Logging & Monitoring` \
     --logging_steps 100 \

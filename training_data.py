@@ -1,15 +1,26 @@
+"""Project-specific dataset loaders for GliZNet training.
+
+Each loader normalises a public HuggingFace dataset into the GliZNet format:
+    - text  (str)
+    - ltext (list[str]) — label strings
+    - lint  (list[int]) — 1 for positive, 0 for negative
+
+Add or remove entries from ``additional_datasets`` to control which
+supplementary datasets are mixed in during training.
+"""
+
 import random
 from typing import Any, Callable, Dict, Optional
 
 import datasets
 
-from . import LabelName
+from gliznet.training_config import LabelName
 
 selected_columns = ["text", LabelName.ltext, LabelName.lint]
 
 
 def ensure_string(value: Any) -> str:
-    """Ensure value is a string and not empty."""
+    """Ensure value is a non-empty string."""
     if value is None or not isinstance(value, str):
         return ""
     return str(value).replace("_", " ").strip()
@@ -25,13 +36,11 @@ def validate_and_filter_dataset(ds: datasets.Dataset) -> datasets.Dataset:
 
         valid_entries = []
         for text, ltext_list, lint_list in zip(texts, ltexts, lints):
-            # Ensure text is a non-empty string
             text_str = ensure_string(text)
             if not text_str:
                 valid_entries.append(False)
                 continue
 
-            # Ensure ltext is a list of non-empty strings
             if not isinstance(ltext_list, list) or len(ltext_list) == 0:
                 valid_entries.append(False)
                 continue
@@ -41,7 +50,6 @@ def validate_and_filter_dataset(ds: datasets.Dataset) -> datasets.Dataset:
                 valid_entries.append(False)
                 continue
 
-            # Ensure lint is a list of same length as ltext
             if not isinstance(lint_list, list) or len(lint_list) != len(ltext_list):
                 valid_entries.append(False)
                 continue
@@ -60,7 +68,7 @@ def create_mcq_mapper(
     choices_text_key: str = "text",
     choices_label_key: str = "label",
 ) -> Callable:
-    """Create a mapper function for multiple choice question datasets."""
+    """Create a mapper function for multiple-choice question datasets."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
         choices = x[choices_column]
@@ -92,10 +100,14 @@ def load_dataset_with_validation(
     name: Optional[str] = None,
     split: str = "train",
     mapper_func: Optional[Callable] = None,
+    max_size: Optional[int] = None,
+    seed: int = 42,
 ) -> datasets.Dataset:
-    """Load and validate a dataset with proper error handling."""
+    """Load a HuggingFace dataset, apply an optional mapper, and validate."""
     try:
         ds = datasets.load_dataset(ds_name, name, split=split)
+        if max_size is not None and len(ds) > max_size:
+            ds = ds.shuffle(seed=seed).select(range(max_size))
         if mapper_func:
             ds = ds.map(mapper_func)
         ds = ds.select_columns(selected_columns)
@@ -105,37 +117,37 @@ def load_dataset_with_validation(
         return datasets.Dataset.from_list([])
 
 
-def load_allenai_ai2_arc_easy():
+def load_allenai_ai2_arc_easy(max_size: Optional[int] = None, seed: int = 42):
     """Load ARC-Easy dataset."""
     mapper = create_mcq_mapper("question")
     return load_dataset_with_validation(
-        "allenai/ai2_arc", "ARC-Easy", mapper_func=mapper
+        "allenai/ai2_arc", "ARC-Easy", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_allenai_ai2_arc_challenge():
+def load_allenai_ai2_arc_challenge(max_size: Optional[int] = None, seed: int = 42):
     """Load ARC-Challenge dataset."""
     mapper = create_mcq_mapper("question")
     return load_dataset_with_validation(
-        "allenai/ai2_arc", "ARC-Challenge", mapper_func=mapper
+        "allenai/ai2_arc", "ARC-Challenge", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_allenai_openbookqa():
+def load_allenai_openbookqa(max_size: Optional[int] = None, seed: int = 42):
     """Load OpenBookQA dataset."""
     mapper = create_mcq_mapper("question_stem")
     return load_dataset_with_validation(
-        "allenai/openbookqa", "additional", mapper_func=mapper
+        "allenai/openbookqa", "additional", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_tau_commonsense_qa():
+def load_tau_commonsense_qa(max_size: Optional[int] = None, seed: int = 42):
     """Load CommonsenseQA dataset."""
     mapper = create_mcq_mapper("question")
-    return load_dataset_with_validation("tau/commonsense_qa", None, mapper_func=mapper)
+    return load_dataset_with_validation("tau/commonsense_qa", None, mapper_func=mapper, max_size=max_size, seed=seed)
 
 
-def load_Salesforce_cos_e():
+def load_Salesforce_cos_e(max_size: Optional[int] = None, seed: int = 42):
     """Load CoS-E dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -150,10 +162,10 @@ def load_Salesforce_cos_e():
             LabelName.lint: lint,
         }
 
-    return load_dataset_with_validation("Salesforce/cos_e", "v1.11", mapper_func=mapper)
+    return load_dataset_with_validation("Salesforce/cos_e", "v1.11", mapper_func=mapper, max_size=max_size, seed=seed)
 
 
-def load_onionmonster_dream():
+def load_onionmonster_dream(max_size: Optional[int] = None, seed: int = 42):
     """Load DREAM dataset."""
 
     def mapper_func(ds):
@@ -163,7 +175,6 @@ def load_onionmonster_dream():
                 text = ensure_string(f"{query['question']}\n" + "\n".join(x["0"]))
                 ltext = [ensure_string(choice) for choice in query["choice"]]
                 lint = [int(i == query["answer"]) for i in query["choice"]]
-
                 raws.append(
                     {
                         "text": text,
@@ -171,34 +182,17 @@ def load_onionmonster_dream():
                         LabelName.lint: lint,
                     }
                 )
-
         return datasets.Dataset.from_list(raws)
 
     ds = datasets.load_dataset("onionmonster/dream", None, split="train")
+    if max_size is not None and len(ds) > max_size:
+        ds = ds.shuffle(seed=seed).select(range(max_size))
     ds = mapper_func(ds)
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_sagnikrayc_mctest():
-    """Load MCTest dataset."""
 
-    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
-        text = ensure_string(f"{x['question']}\n{x['story']}")
-        options = [ensure_string(str(i)) for i in x["answer_options"].values()]
-        lint = [int(i == x["answer"]) for i in x["answer_options"]]
-
-        return {
-            "text": text,
-            LabelName.ltext: options,
-            LabelName.lint: lint,
-        }
-
-    return load_dataset_with_validation(
-        "sagnikrayc/mctest", "mc500", mapper_func=mapper
-    )
-
-
-def load_ehovy_race():
+def load_ehovy_race(max_size: Optional[int] = None, seed: int = 42):
     """Load RACE dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -214,10 +208,10 @@ def load_ehovy_race():
             LabelName.lint: lint,
         }
 
-    return load_dataset_with_validation("ehovy/race", "all", mapper_func=mapper)
+    return load_dataset_with_validation("ehovy/race", "all", mapper_func=mapper, max_size=max_size, seed=seed)
 
 
-def load_sentence_transformers_wikihow():
+def load_sentence_transformers_wikihow(max_size: Optional[int] = None, seed: int = 42):
     """Load WikiHow dataset."""
 
     def mapper_func(ds):
@@ -228,12 +222,10 @@ def load_sentence_transformers_wikihow():
         def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
             text = ensure_string(x["text"])
             summary = ensure_string(x["summary"])
-
             neg_count = random.randint(1, 4)
             neg_labels = random.sample(all_labels, min(neg_count, len(all_labels)))
             labels = [summary] + neg_labels
             random.shuffle(labels)
-
             return {
                 "text": text,
                 LabelName.ltext: labels,
@@ -243,11 +235,13 @@ def load_sentence_transformers_wikihow():
         return ds.map(mapper)
 
     ds = datasets.load_dataset("sentence-transformers/wikihow", None, split="train")
+    if max_size is not None and len(ds) > max_size:
+        ds = ds.shuffle(seed=seed).select(range(max_size))
     ds = mapper_func(ds)
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_tasksource_cycic_classification():
+def load_tasksource_cycic_classification(max_size: Optional[int] = None, seed: int = 42):
     """Load CYCIC classification dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -262,11 +256,11 @@ def load_tasksource_cycic_classification():
         }
 
     return load_dataset_with_validation(
-        "tasksource/cycic_classification", None, mapper_func=mapper
+        "tasksource/cycic_classification", None, mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_ml4pubmed_pubmed_text_classification_cased():
+def load_ml4pubmed_pubmed_text_classification_cased(max_size: Optional[int] = None, seed: int = 42):
     """Load PubMed text classification dataset."""
 
     def mapper_func(ds):
@@ -275,7 +269,6 @@ def load_ml4pubmed_pubmed_text_classification_cased():
         def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
             text = ensure_string(x["description_cln"])
             target = ensure_string(x["target"])
-
             return {
                 "text": text,
                 LabelName.ltext: labels,
@@ -287,11 +280,13 @@ def load_ml4pubmed_pubmed_text_classification_cased():
     ds = datasets.load_dataset(
         "ml4pubmed/pubmed-text-classification-cased", None, split="train"
     )
+    if max_size is not None and len(ds) > max_size:
+        ds = ds.shuffle(seed=seed).select(range(max_size))
     ds = mapper_func(ds)
     return validate_and_filter_dataset(ds.select_columns(selected_columns))
 
 
-def load_alexneakameni_qa_africa():
+def load_alexneakameni_qa_africa(max_size: Optional[int] = None, seed: int = 42):
     """Load QA Africa dataset."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
@@ -309,11 +304,13 @@ def load_alexneakameni_qa_africa():
         }
 
     return load_dataset_with_validation(
-        "alexneakameni/qa_africa", None, mapper_func=mapper
+        "alexneakameni/qa_africa", None, mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
-def load_zshot_hardness_couplet():
+def load_zshot_hardness_couplet(max_size: Optional[int] = None, seed: int = 42):
+    """Load ZSHOT-HARDSET couplet split."""
+
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "text": ensure_string(x["text"]),
@@ -322,10 +319,12 @@ def load_zshot_hardness_couplet():
         }
 
     return load_dataset_with_validation(
-        "alexneakameni/ZSHOT-HARDSET", "couplet", split="train", mapper_func=mapper
+        "alexneakameni/ZSHOT-HARDSET", "couplet", split="train", mapper_func=mapper, max_size=max_size, seed=seed
     )
 
 
+# Registry of additional datasets to mix in during training.
+# Comment out or remove entries to disable specific sources.
 additional_datasets = {
     "allenai_ai2_arc_easy": load_allenai_ai2_arc_easy,
     "allenai_ai2_arc_challenge": load_allenai_ai2_arc_challenge,
@@ -333,11 +332,11 @@ additional_datasets = {
     "tau_commonsense_qa": load_tau_commonsense_qa,
     "Salesforce_cos_e": load_Salesforce_cos_e,
     "onionmonster_dream": load_onionmonster_dream,
-    "sagnikrayc_mctest": load_sagnikrayc_mctest,
+    # "sagnikrayc_mctest": load_sagnikrayc_mctest, # no more available on HuggingFace sagnikrayc/mctest
     "ehovy_race": load_ehovy_race,
     # "sentence_transformers_wikihow": load_sentence_transformers_wikihow,
     "tasksource_cycic_classification": load_tasksource_cycic_classification,
     "ml4pubmed_pubmed": load_ml4pubmed_pubmed_text_classification_cased,
     "alexneakameni_qa_africa": load_alexneakameni_qa_africa,
-    "zshot_hardness_couplet": load_zshot_hardness_couplet,
+    # "zshot_hardness_couplet": load_zshot_hardness_couplet,
 }

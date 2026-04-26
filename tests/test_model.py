@@ -3,8 +3,9 @@ from collections import namedtuple
 
 import torch
 import torch.nn as nn
+from transformers import AutoModel
 
-from gliznet.model import GliZNetForSequenceClassification
+from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 
 
 class DummyEncoder(nn.Module):
@@ -19,12 +20,13 @@ class DummyEncoder(nn.Module):
         return_dict=True,
         output_attentions=False,
         *args,
-        **kwargs
+        **kwargs,
     ):
         batch, seq_len = input_ids.shape
-        # last_hidden_state[b,s,:] = input_ids[b,s] repeated
+        # last_hidden_state[b,s,:] = input_ids[b,s] repeated, scaled to avoid overflow
         last_hidden_state = (
             input_ids.unsqueeze(-1).repeat(1, 1, self.config.hidden_size).float()
+            / 1000.0
         )
 
         # Create dummy attention weights
@@ -69,13 +71,11 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
             similarity_metric="dot",
         )
         # replace encoder and align config + bypass proj
-        setattr(
-            self.model, self.model.base_model_prefix, DummyEncoder(self.hidden_size)
-        )
+        self.model.backbone = DummyEncoder(self.hidden_size)
         self.model.config.hidden_size = self.hidden_size
         self.model.hidden_size = self.hidden_size
-        self.model.aggregator.cls_proj = nn.Identity()
-        self.model.aggregator.label_proj = nn.Identity()
+        self.model.aggregator.text_projector = nn.Identity()
+        self.model.aggregator.label_projector = nn.Identity()
         # sample inputs: batch=2, seq_len=4
         self.input_ids = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
         self.attn = torch.where(self.input_ids > 0, 1, 0)
@@ -91,11 +91,11 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
             projected_dim=self.hidden_size,
             similarity_metric=similarity_metric,
         )
-        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
+        model.backbone = DummyEncoder(self.hidden_size)
         model.config.hidden_size = self.hidden_size
         model.hidden_size = self.hidden_size
-        model.aggregator.cls_proj = nn.Identity()
-        model.aggregator.label_proj = nn.Identity()
+        model.aggregator.text_projector = nn.Identity()
+        model.aggregator.label_projector = nn.Identity()
         return model
 
     # Test similarity metric: dot
@@ -140,16 +140,15 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     # Test similarity metric: dot_learning
     def test_similarity_metric_dot_learning(self):
-        """Test dot_learning similarity metric"""
+        """Test dot similarity metric (true dot product, no learned classifier)"""
         model = self._create_model_with_metric("dot")
 
         # Test configuration
         self.assertEqual(model.config.similarity_metric, "dot")
 
-        # Test that linear layer is created
-        self.assertTrue(hasattr(model.aggregator.similarity_head, "classifier"))
-        self.assertIsInstance(model.aggregator.similarity_head.classifier, nn.Linear)
-        self.assertEqual(model.aggregator.similarity_head.classifier.out_features, 1)
+        # Dot product uses no classifier — it is a true element-wise dot product
+        # scaled by the learnable temperature, so no `classifier` attribute is set.
+        self.assertFalse(hasattr(model.aggregator.similarity_head, "classifier"))
 
         # Test forward pass
         out = model(
@@ -163,7 +162,7 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
 
     def test_all_similarity_metrics_with_labels(self):
         """Test all similarity metrics with labels and loss computation"""
-        metrics = ["dot", "bilinear", "dot"]
+        metrics = ["dot", "bilinear", "cosine"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
@@ -186,27 +185,22 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
                 self.assertEqual(out["logits"].shape, (2, 1))
 
     def test_all_similarity_metrics_predict(self):
-        """Test prediction method for all similarity metrics"""
-        metrics = ["dot", "bilinear", "dot"]
+        """Test sigmoid scores from forward pass for all similarity metrics."""
+        metrics = ["dot", "bilinear", "cosine"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
                 model = self._create_model_with_metric(metric)
 
-                results = model.predict(
+                out = model(
                     input_ids=self.input_ids,
                     attention_mask=self.attn,
                     lmask=self.lmask,
+                    labels=None,
                 )
 
-                # Check results structure
-                self.assertEqual(len(results), 2)  # Two samples
-                for idx, res in enumerate(results):
-                    self.assertIsInstance(res, list)
-                    self.assertEqual(len(res), 1)  # One label per sample
-                    self.assertIsInstance(res[0], float)
-                    self.assertGreaterEqual(res[0], 0.0)
-                    self.assertLessEqual(res[0], 1.0)  # Should be sigmoid output
+                self.assertEqual(out["logits"].shape, (2, 1))
+                self.assertTrue(out["logits"].isfinite().all())
 
     def test_similarity_metric_consistency(self):
         """Test that similarity computations are consistent within each metric"""
@@ -215,21 +209,15 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         fixed_attn = torch.where(fixed_input_ids > 0, 1, 0)
         fixed_lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
 
-        metrics = ["dot", "bilinear", "dot"]
+        metrics = ["dot", "bilinear", "cosine"]
 
         for metric in metrics:
             with self.subTest(similarity_metric=metric):
                 model1 = self._create_model_with_metric(metric)
                 model2 = self._create_model_with_metric(metric)
 
-                # Copy weights from model1 to model2 to ensure identical parameters
-                if (
-                    hasattr(model1.aggregator.similarity_head, "classifier")
-                    and model1.aggregator.similarity_head.classifier is not None
-                ):
-                    model2.aggregator.similarity_head.classifier.load_state_dict(
-                        model1.aggregator.similarity_head.classifier.state_dict()
-                    )
+                # Copy all weights to ensure identical parameters
+                model2.load_state_dict(model1.state_dict())
 
                 # Forward pass on both models
                 out1 = model1(
@@ -288,262 +276,127 @@ class TestGliZNetForSequenceClassification(unittest.TestCase):
         self.assertGreaterEqual(out["loss"].item(), 0.0)
 
     def test_predict(self):
-        results = self.model.predict(
+        out = self.model(
             input_ids=self.input_ids,
             attention_mask=self.attn,
             lmask=self.lmask,
+            labels=None,
         )
-        # two samples
-        self.assertEqual(len(results), 2)
-        for idx, res in enumerate(results):
-            self.assertIsInstance(res, list)
+        self.assertEqual(out["logits"].shape, (2, 1))
+        self.assertTrue(out["logits"].isfinite().all())
 
 
 class TestGliZNetWithCustomTokens(unittest.TestCase):
-    """Test suite for model functionality with custom tokens and embedding resizing"""
+    """Test suite for model functionality with custom tokens and embedding resizing."""
 
     def setUp(self):
+        from gliznet.tokenizer import GliZNETTokenizer
+
         self.hidden_size = 8
+        self.tokenizer = GliZNETTokenizer.from_pretrained(
+            "bert-base-uncased", lab_token="[LAB]"
+        )
+
+    def _make_model(self, **kwargs):
+        """Create a model and resize embeddings to match the tokenizer."""
+        model = GliZNetForSequenceClassification.from_pretrained(
+            "bert-base-uncased",
+            projected_dim=self.hidden_size,
+            **kwargs,
+        )
+        model.resize_token_embeddings(len(self.tokenizer))
+        return model
+
+    def _swap_encoder(self, model):
+        model.backbone = DummyEncoder(self.hidden_size)
+        model.config.hidden_size = self.hidden_size
+        model.aggregator.text_projector = nn.Identity()
+        model.aggregator.label_projector = nn.Identity()
+        return model
 
     def test_resize_token_embeddings(self):
-        """Test token embedding resizing functionality"""
-        # Create base model
+        """Test token embedding resizing."""
         model = GliZNetForSequenceClassification.from_pretrained("bert-base-uncased")
-        original_vocab_size = model.config.vocab_size
-
-        # Resize embeddings
+        original_vocab_size = model.config.backbone_config.vocab_size
         new_vocab_size = original_vocab_size + 5
-        new_embeddings = model.resize_token_embeddings(new_vocab_size)
-
-        # Check that embeddings were resized
-        self.assertEqual(new_embeddings.num_embeddings, new_vocab_size)
-        self.assertEqual(model.get_input_embeddings().num_embeddings, new_vocab_size)
-
-        # Config gets updated by transformers' resize_token_embeddings
-        self.assertEqual(model.config.vocab_size, new_vocab_size)
-
-    def test_from_pretrained_with_tokenizer_default(self):
-        """Test model creation with default tokenizer (no custom tokens)"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", pooling_strategy="mean"
-        )
-
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer
-        )
-
-        # Should not resize embeddings or set separator pooling
-        self.assertFalse(model.config.use_separator_pooling)
-        self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
-
-    def test_from_pretrained_with_tokenizer_custom(self):
-        """Test model creation with custom tokenizer ([LAB] tokens)"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", lab_cls_token="[LAB]"
-        )
-
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer
-        )
-
-        # Should resize embeddings and set separator pooling
-        self.assertTrue(model.config.use_separator_pooling)
-        self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
+        model.resize_token_embeddings(new_vocab_size)
+        self.assertEqual(model.config.backbone_config.vocab_size, new_vocab_size)
         self.assertEqual(
-            model.get_input_embeddings().num_embeddings, tokenizer.get_vocab_size()
+            model.backbone.get_input_embeddings().num_embeddings, new_vocab_size
         )
 
-    def test_compute_batch_logits_method_selection(self):
-        """Test that correct computation method is selected based on use_separator_pooling"""
-        from gliznet.tokenizer import GliZNETTokenizer
+    def test_use_lab_token_flag_default(self):
+        """By default use_lab_token_for_labels is False."""
+        model = GliZNetForSequenceClassification.from_pretrained("bert-base-uncased")
+        self.assertFalse(model.config.use_lab_token_for_labels)
 
-        # Create model with custom tokens
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", lab_cls_token="[LAB]"
+    def test_use_lab_token_flag_custom(self):
+        """When use_lab_token_for_labels=True the flag and lab_token_id are stored in config."""
+        model = GliZNetForSequenceClassification.from_pretrained(
+            "bert-base-uncased",
+            use_lab_token_for_labels=True,
+            lab_token_id=self.tokenizer.lab_token_id,
         )
+        self.assertTrue(model.config.use_lab_token_for_labels)
+        self.assertEqual(model.config.lab_token_id, self.tokenizer.lab_token_id)
 
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
+    def test_forward_with_lab_token_mode(self):
+        """Forward pass works when use_lab_token_for_labels=True."""
+        model = self._make_model(
+            use_lab_token_for_labels=True,
+            lab_token_id=self.tokenizer.lab_token_id,
         )
+        model = self._swap_encoder(model)
 
-        # Replace with dummy encoder for testing
-        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
-        model.config.hidden_size = self.hidden_size
-        model.aggregator.cls_proj = nn.Identity()
-        model.aggregator.label_proj = nn.Identity()
-
-        # Test that use_separator_pooling flag is set
-        self.assertTrue(model.config.use_separator_pooling)
-
-        # Create test inputs
         text = "Test text"
         labels = ["positive", "negative"]
-        batch = tokenizer.tokenize_example(text, labels)
+        batch = self.tokenizer.tokenize(text, labels)
 
-        # Test forward pass works
         with torch.no_grad():
-            outputs = model.forward(
+            outputs = model(
                 input_ids=batch["input_ids"].unsqueeze(0),
                 attention_mask=batch["attention_mask"].unsqueeze(0),
                 lmask=batch["lmask"].unsqueeze(0),
             )
 
         self.assertIsNotNone(outputs.logits)
-        self.assertTrue(outputs.logits.numel() > 0)
+        self.assertGreater(outputs.logits.numel(), 0)
 
-    def test_model_config_persistence(self):
-        """Test that model config correctly stores resize information"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", lab_cls_token="[CUSTOM]"
+    def test_model_inference_batch(self):
+        """Batch inference produces one score per (sample, label) pair."""
+        model = self._make_model(
+            use_lab_token_for_labels=False,
+            lab_token_id=self.tokenizer.lab_token_id,
         )
+        model = self._swap_encoder(model)
 
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer
-        )
-
-        # Check that config has been updated properly
-        self.assertTrue(hasattr(model.config, "use_separator_pooling"))
-        self.assertTrue(model.config.use_separator_pooling)
-        self.assertEqual(model.config.vocab_size, tokenizer.get_vocab_size())
-
-    def test_model_inference_with_custom_tokens(self):
-        """Test model inference with custom tokens"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", lab_cls_token="[LAB]"
-        )
-
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
-        )
-
-        # Replace with dummy encoder
-        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
-        model.config.hidden_size = self.hidden_size
-        model.aggregator.cls_proj = nn.Identity()
-        model.aggregator.label_proj = nn.Identity()
-
-        # Test prediction
         texts = ["Great movie!", "Terrible film."]
         labels = [["positive", "negative"], ["good", "bad"]]
-
-        batch = tokenizer.tokenize_batch(texts, labels)
-
-        predictions = model.predict(
-            input_ids=batch["input_ids"],
-            attention_mask=batch["attention_mask"],
-            lmask=batch["lmask"],
-        )
-
-        # Should return predictions for both samples
-        self.assertEqual(len(predictions), 2)
-        for pred in predictions:
-            self.assertIsInstance(pred, list)
-            self.assertTrue(len(pred) > 0)
-
-    def test_encode_method(self):
-        """Test the encode method with resized embeddings"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", lab_cls_token="[LAB]"
-        )
-
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
-        )
-
-        # Replace with dummy encoder
-        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
-        model.config.hidden_size = self.hidden_size
-
-        # Test encoding
-        text = "Test encoding"
-        batch = tokenizer.tokenize_example(text, ["label"])
-
-        encoding = model.encode(
-            input_ids=batch["input_ids"].unsqueeze(0),
-            attention_mask=batch["attention_mask"].unsqueeze(0),
-        )
-
-        # Should return CLS token encoding
-        self.assertEqual(encoding.shape, (1, self.hidden_size))
-
-    def test_backward_compatibility(self):
-        """Test that models without custom tokens still work"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        # Default tokenizer (no custom tokens)
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", pooling_strategy="mean"
-        )
-
-        model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            "bert-base-uncased", tokenizer, projected_dim=self.hidden_size
-        )
-
-        # Replace with dummy encoder
-        setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
-        model.config.hidden_size = self.hidden_size
-        model.aggregator.cls_proj = nn.Identity()
-        model.aggregator.label_proj = nn.Identity()
-
-        # Should not use separator pooling
-        self.assertFalse(model.config.use_separator_pooling)
-
-        # Test inference still works
-        text = "Test text"
-        labels = ["positive", "negative"]
-        batch = tokenizer.tokenize_example(text, labels)
+        batch = self.tokenizer(list(zip(texts, labels)), return_tensors="pt")
 
         with torch.no_grad():
-            outputs = model.forward(
-                input_ids=batch["input_ids"].unsqueeze(0),
-                attention_mask=batch["attention_mask"].unsqueeze(0),
-                lmask=batch["lmask"].unsqueeze(0),
+            out = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                lmask=batch["lmask"],
             )
 
-        self.assertIsNotNone(outputs.logits)
+        scores = torch.sigmoid(out["logits"])
+        self.assertGreater(scores.numel(), 0)
+        self.assertTrue((scores >= 0.0).all())
+        self.assertTrue((scores <= 1.0).all())
 
     def test_similarity_metrics_with_custom_tokens(self):
-        """Test different similarity metrics with custom tokens"""
-        from gliznet.tokenizer import GliZNETTokenizer
-
-        tokenizer = GliZNETTokenizer.from_pretrained(
-            "bert-base-uncased", lab_cls_token="[LAB]"
-        )
-
-        metrics = ["dot", "bilinear", "dot"]
-
-        for metric in metrics:
+        """Different similarity metrics work with resized embeddings."""
+        for metric in ["dot", "bilinear", "cosine"]:
             with self.subTest(metric=metric):
-                model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-                    "bert-base-uncased",
-                    tokenizer,
-                    projected_dim=self.hidden_size,
-                    similarity_metric=metric,
-                )
+                model = self._make_model(similarity_metric=metric)
+                model = self._swap_encoder(model)
 
-                # Replace with dummy encoder
-                setattr(model, model.base_model_prefix, DummyEncoder(self.hidden_size))
-                model.config.hidden_size = self.hidden_size
-                model.aggregator.cls_proj = nn.Identity()
-                model.aggregator.label_proj = nn.Identity()
-
-                # Test forward pass
-                text = "Test text"
-                labels = ["positive", "negative"]
-                batch = tokenizer.tokenize_example(text, labels)
+                batch = self.tokenizer.tokenize("Test text", ["positive", "negative"])
 
                 with torch.no_grad():
-                    outputs = model.forward(
+                    outputs = model(
                         input_ids=batch["input_ids"].unsqueeze(0),
                         attention_mask=batch["attention_mask"].unsqueeze(0),
                         lmask=batch["lmask"].unsqueeze(0),
@@ -551,6 +404,54 @@ class TestGliZNetWithCustomTokens(unittest.TestCase):
 
                 self.assertIsNotNone(outputs.logits)
                 self.assertEqual(model.config.similarity_metric, metric)
+
+
+class TestBackboneWeightIntegrity(unittest.TestCase):
+    """Verify that the backbone inside GliZNet produces identical outputs
+    to a standalone AutoModel loaded from the same checkpoint."""
+
+    MODEL_NAME = "bert-base-uncased"
+
+    @classmethod
+    def setUpClass(cls):
+        from gliznet.tokenizer import GliZNETTokenizer
+
+        tokenizer = GliZNETTokenizer.from_pretrained(cls.MODEL_NAME)
+        config = GliZNetConfig(backbone_model=cls.MODEL_NAME)
+        cls.gliznet = GliZNetForSequenceClassification.from_backbone_pretrained(
+            config, tokenizer=tokenizer
+        )
+        cls.gliznet.eval()
+
+        cls.automodel = AutoModel.from_pretrained(cls.MODEL_NAME)
+        cls.automodel.eval()
+
+        # Simple two-token input
+        cls.input_ids = torch.tensor([[101, 7592, 102]])  # [CLS] hello [SEP]
+        cls.attention_mask = torch.ones_like(cls.input_ids)
+
+    def test_backbone_outputs_match_automodel(self):
+        with torch.no_grad():
+            gliznet_out = self.gliznet.backbone(
+                input_ids=self.input_ids,
+                attention_mask=self.attention_mask,
+                return_dict=True,
+            )
+            auto_out = self.automodel(
+                input_ids=self.input_ids,
+                attention_mask=self.attention_mask,
+                return_dict=True,
+            )
+
+        self.assertTrue(
+            torch.allclose(
+                gliznet_out.last_hidden_state,
+                auto_out.last_hidden_state,
+                atol=1e-5,
+            ),
+            "GliZNet backbone hidden states differ from standalone AutoModel — "
+            "backbone weights were not loaded correctly.",
+        )
 
 
 if __name__ == "__main__":

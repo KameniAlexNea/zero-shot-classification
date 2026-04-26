@@ -3,7 +3,7 @@ import unittest
 
 import torch
 
-from gliznet.model import GliZNetForSequenceClassification
+from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 
 
@@ -26,10 +26,12 @@ class TestModelPredictIntegration(unittest.TestCase):
         seed_everything(42)
         model_name = "microsoft/deberta-v3-small"
         cls.tokenizer = GliZNETTokenizer.from_pretrained(
-            model_name,
+            model_name, model_max_length=512
         )
-        cls.model = GliZNetForSequenceClassification.from_pretrained_with_tokenizer(
-            model_name, cls.tokenizer
+        model_name = "microsoft/deberta-v3-small"
+        config = GliZNetConfig(backbone_model=model_name)
+        cls.model = GliZNetForSequenceClassification.from_backbone_pretrained(
+            config, cls.tokenizer
         )
         cls.model.eval()
         expected_file = "tests/testing_data/expected_model_predict_outputs.json"
@@ -41,7 +43,7 @@ class TestModelPredictIntegration(unittest.TestCase):
             with self.subTest(example=name):
                 text = data["text"]
                 labels = data["labels"]
-                enc = self.tokenizer.tokenize_example(text, labels)
+                enc = self.tokenizer.tokenize(text, labels)
                 input_ids = enc["input_ids"].unsqueeze(0)
                 attention_mask = enc["attention_mask"].unsqueeze(0)
                 lmask = enc["lmask"].unsqueeze(0)

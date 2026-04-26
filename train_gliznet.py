@@ -18,13 +18,13 @@ from transformers import (
     TrainingArguments,
 )
 
-from gliznet.arguments import ModelArgs
+from args import ModelArgs
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
-from gliznet.training_data import additional_datasets
+from training_data import additional_datasets
 
 
 def create_model_tokenizer(args: ModelArgs):
@@ -41,6 +41,9 @@ def create_model_tokenizer(args: ModelArgs):
         args.model_name,
         lab_token=args.lab_cls_token,
         model_max_length=args.model_max_length,
+        max_tokens_per_span=args.max_tokens_per_span,
+        min_text_tokens=args.min_text_tokens,
+        min_label_tokens=args.min_label_tokens,
         fix_mistral_regex=True,
     )
 
@@ -82,11 +85,11 @@ def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
     return ds.select(index[:max_size])
 
 
-def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000):
+def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000, seed: int = 42):
     ds = datasets.concatenate_datasets(
         [base_ds]
         + [
-            sample_dataset(ds_loader(), max_size)
+            ds_loader(max_size, seed)
             for ds_loader in additional_datasets.values()
         ]
     )
@@ -118,7 +121,7 @@ def main():
 
     # Set device
     device = (
-        "cuda" if torch.cuda.is_available() and not training_args.no_cuda else "cpu"
+        "cuda" if torch.cuda.is_available() else "cpu"
     )
     logger.info(f"Using device: {device}")
 
@@ -132,6 +135,7 @@ def main():
     # Initialize model and tokenizer
     logger.info(f"Initializing model and tokenizer from {model_args.model_name}...")
     model, tokenizer = create_model_tokenizer(model_args)
+
     logger.info(f"Tokenizer vocab size: {len(tokenizer)}")
     logger.info(f"Model parameters: {model.num_parameters():,}")
 
@@ -163,9 +167,10 @@ def main():
     train_split = splits["train"]
     train_data = train_split
     size_before = len(train_data)
-    train_data = add_additional_ds(
-        train_split, model_args.max_extended_ds_size
-    )  # Uncomment to add additional datasets
+    if model_args.use_additional_datasets:
+        train_data = add_additional_ds(
+            train_split, model_args.max_extended_ds_size, training_args.data_seed
+        )
     added_size = len(train_data) - size_before
     val_data = splits["test"]
 
@@ -247,7 +252,7 @@ def main():
     final_model_path = os.path.join(training_args.output_dir, "init_model")
     logger.info(f"Saving initial model to {final_model_path}...")
     os.makedirs(final_model_path, exist_ok=True)
-    trainer.save_model(final_model_path)
+    model.save_pretrained(final_model_path)
     tokenizer.save_pretrained(final_model_path)
     logger.info("✓ Model and tokenizer saved successfully")
 

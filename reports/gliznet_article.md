@@ -1,11 +1,11 @@
 # GliZNet: A Novel Architecture for Zero-Shot Text Classification
 
-**Authors**: Alex Kameni (Ivalua / Massy, France, eak@ivalua.com), Vu Son (ENSEA / Cergy, France, vu.son@ensea.com)  
+**Authors**: Alex Kameni (Ivalua / Massy, France, eak@ivalua.com)  
 **Date**: July 7, 2025
 
 ## Abstract
 
-Zero-shot text classification, crucial for dynamic and data-scarce environments, often struggles with computational inefficiency and limited inter-label reasoning, particularly for large label sets. We introduce GliZNet (Generalized Zero-Shot Network), a novel architecture that addresses these challenges through a joint text-label encoding mechanism, processing text and all candidate labels in a single transformer forward pass to achieve O(1) complexity. Enhanced by a hybrid loss combining binary cross-entropy with contrastive learning and hard negative mining, GliZNet generates label-aware contextual embeddings, enabling fine-grained differentiation of semantically similar labels. Trained on a diverse synthetic dataset, GliZNet promises superior scalability and accuracy for multi-label and single-label classification tasks, with potential applications in real-time content moderation and beyond. This work sets a new benchmark for efficient and context-sensitive zero-shot learning in natural language processing.
+Zero-shot text classification, crucial for dynamic and data-scarce environments, often struggles with computational inefficiency and limited inter-label reasoning, particularly for large label sets. We introduce GliZNet (Generalized Zero-Shot Network), a novel architecture that addresses these challenges through a joint text-label encoding mechanism, processing text and all candidate labels in a single transformer forward pass to achieve O(1) complexity. Enhanced by a multi-objective loss combining multi-label softmax cross-entropy, auxiliary binary cross-entropy with decoupled temperature, and optional label repulsion, GliZNet generates label-aware contextual embeddings, enabling fine-grained differentiation of semantically similar labels. Trained on a diverse synthetic dataset, GliZNet promises superior scalability and accuracy for multi-label and single-label classification tasks, with potential applications in real-time content moderation and beyond. This work sets a new benchmark for efficient and context-sensitive zero-shot learning in natural language processing.
 
 ## 1. Introduction
 
@@ -13,7 +13,7 @@ Zero-shot text classification enables models to categorize text into labels not 
 
 However, traditional approaches, such as prompt-based and natural language inference (NLI)-based methods, often process text and labels independently, incurring O(n) computational complexity for n labels. This inefficiency becomes prohibitive for large label sets, as seen in real-time systems with thousands of categories. Moreover, these methods fail to model inter-label dependencies within the context of the input text, limiting their ability to distinguish nuanced or overlapping categories.
 
-We introduce GliZNet (Generalized Zero-Shot Network), a novel framework that addresses these limitations through a joint text-label encoding mechanism and a hybrid contrastive learning objective. By processing text and all candidate labels in a single transformer forward pass, GliZNet achieves O(1) complexity, enabling scalability for large label sets. Its label-aware embeddings capture dynamic inter-label relationships, enhancing classification accuracy. This report details GliZNet's methodology, situates it within the state of the art, and highlights its contributions to zero-shot text classification.
+We introduce GliZNet (Generalized Zero-Shot Network), a novel framework that addresses these limitations through a joint text-label encoding mechanism and a multi-objective loss function. By processing text and all candidate labels in a single transformer forward pass, GliZNet achieves O(1) complexity, enabling scalability for large label sets. Its label-aware embeddings capture dynamic inter-label relationships, enhancing classification accuracy. This report details GliZNet's methodology, situates it within the state of the art, and highlights its contributions to zero-shot text classification.
 
 ## 2. State of the Art
 
@@ -79,10 +79,10 @@ GliZNet's methodology is built on three core components: a novel joint encoding 
 GliZNet processes text and all candidate labels in a single transformer forward pass, achieving O(1) complexity. This is enabled by a custom tokenizer, `GliZNETTokenizer`, which constructs a unified input sequence:
 
 ```
-[CLS] text_tokens [SEP] label_1_tokens ; label_2_tokens ; ... [PAD]
+[CLS] text_tokens [SEP] label_1_tokens [LAB] label_2_tokens [LAB] ... label_n_tokens [LAB] [PAD]
 ```
 
-The tokenizer, based on WordPiece (similar to BERT), supports a maximum sequence length of 512 tokens. A label mask (`lmask`) tensor assigns a value of 0 to text tokens and unique integers (1, 2, 3, etc.) to each label's tokens, enabling the model to distinguish components during encoding. This joint encoding captures contextual interplay between text and labels, unlike traditional O(n) methods requiring separate passes per label.
+The tokenizer, based on the DeBERTa-v3 SentencePiece vocabulary, supports a maximum sequence length of 1024 tokens. A label mask (`lmask`) tensor assigns a value of 0 to text tokens and unique integers (1, 2, 3, etc.) to each label's tokens, enabling the model to distinguish components during encoding. This joint encoding captures contextual interplay between text and labels, unlike traditional O(n) methods requiring separate passes per label.
 
 ### 3.2 Label-Aware Contextual Embeddings
 
@@ -92,29 +92,23 @@ The joint encoding produces label-aware embeddings in a single transformer pass:
 
 An optional projection layer (linear, reducing from 768 to 256 dimensions) enhances computational efficiency. This approach enables dynamic inter-label reasoning, as all embeddings are computed within the same contextual window, unlike static embeddings in methods like Lbl2Vec.
 
-### 3.3 Training Objective: Hybrid BCE and Contrastive Loss
+### 3.3 Training Objective: Multi-Objective Loss
 
-GliZNet is trained with a hybrid loss combining binary cross-entropy (BCE) and contrastive loss with hard negative mining, balancing accuracy and discriminative power:
+GliZNet is trained with a multi-objective loss combining three complementary terms:
 
 ```
-L_total = α · L_bce + β · L_contrastive
+L_total = λ_softmax · L_softmax + λ_bce · L_bce + λ_repulsion · L_repulsion
 ```
 
-where α = 0.7 and β = 0.3 are empirically determined scaling factors.
+where λ_softmax = 1.0, λ_bce = 1.0, and λ_repulsion = 0.1 (disabled by default).
 
-- **Binary Cross-Entropy Loss (L_bce)**: Treats classification as independent binary decisions per label:
-  ```
-  L_bce = -(y · log(p) + (1 - y) · log(1 - p))
-  ```
-  where y is the ground-truth (0 or 1) and p is the predicted probability.
+- **Multi-Label Softmax Loss (L_softmax)**: For each sample, computes log-softmax over all label logits and maximises the mean log-probability of positive labels. This provides a relative ranking signal, encouraging positive labels to score higher than all negatives in one pass.
 
-- **Contrastive Loss (L_contrastive)**: Focuses on hard negatives to enhance separation:
-  ```
-  L_contrastive = max(0, margin + max_neg_score - min_pos_score)
-  ```
-  where margin = 0.5, min_pos_score is the lowest similarity for positive labels, and max_neg_score is the highest for negative labels.
+- **Auxiliary BCE Loss (L_bce)**: Standard binary cross-entropy applied per label with a decoupled learnable temperature, providing an absolute per-label calibration signal independent of the softmax distribution.
 
-This hybrid loss leverages BCE's stability for multi-label tasks and contrastive learning's ability to distinguish similar labels, ensuring robust zero-shot performance.
+- **Label Repulsion Loss (L_repulsion)**: Penalises high cosine similarity between different label embeddings *within the same sample*, preventing representation collapse while respecting contextual label similarity across samples. Disabled by default (`λ_repulsion = 0.0`).
+
+The softmax and BCE losses are complementary: softmax provides relative ranking gradients while BCE provides absolute thresholding gradients, together ensuring both discriminative ranking and well-calibrated per-label probabilities.
 
 ### 3.4 Synthetic Data Generation
 
@@ -123,26 +117,27 @@ GliZNet is trained on a synthetic dataset of 50,847 text-label pairs, generated 
 ### 3.5 Model Architecture
 
 GliZNet comprises three components:
-- **Text Encoder**: A pre-trained transformer (`deberta-v3-small`, 44M parameters) processes the joint sequence.
-- **Projection Layer**: An optional linear layer reducing embedding dimensionality to 256 for efficiency.
-- **Similarity Computation**: Scores text-label alignment using a learned linear transformation (default), with alternatives like dot-product or bilinear metrics.
+- **Text Encoder**: A pre-trained transformer (`microsoft/deberta-v3-base`, ~184M parameters) processes the joint sequence.
+- **Projection Layer**: A linear layer projecting embeddings to 1024 dimensions, with optional LayerNorm.
+- **Similarity Computation**: Scores text-label alignment using cosine similarity (default) with a learnable temperature scale, with alternatives including dot-product and bilinear metrics.
 
-The architecture is optimized with AdamW (learning rate 2e-5, batch size 32) over 10 epochs, balancing efficiency and expressive power.
+The architecture is optimised with AdamW (learning rate 1e-4, effective batch size 128) over up to 10 epochs with early stopping.
 
 ### 3.6 Implementation Details
 
 For reproducibility:
-- `GliZNETTokenizer` uses WordPiece tokenization, handling up to 512 tokens, including text and multiple labels.
-- The transformer (`deberta-v3-small`) was chosen for its balance of size and performance; alternatives like RoBERTa are under exploration.
-- The projection layer is a linear transformation without activation, reducing embeddings to 256 dimensions.
-- Training uses a synthetic dataset, with code and data to be released at https://github.com/KameniAlexNea/zero-shot-classification upon publication.
+- `GliZNETTokenizer` uses the DeBERTa-v3 SentencePiece tokenizer, augmented with a custom `[LAB]` separator token, handling up to 1024 tokens including text and all labels.
+- The backbone (`microsoft/deberta-v3-base`) was chosen for its strong contextual representations; the architecture supports any HuggingFace-compatible encoder.
+- The projection layer maps to 1024 dimensions without an activation function.
+- Training is distributed across 2 GPUs using DeepSpeed ZeRO-2 via `accelerate launch`.
+- Code: https://github.com/KameniAlexNea/zero-shot-classification — Data generation: https://github.com/KameniAlexNea/generate-gliznet-data
 
 ## 4. Contributions to the State of the Art
 
 GliZNet advances zero-shot text classification through:
 - **Scalable Efficiency**: O(1) complexity via joint encoding, enabling efficient processing of large label sets, unlike O(n) methods.
 - **Contextual Label Reasoning**: Label-aware embeddings capture dynamic inter-label dependencies, surpassing static representations.
-- **Robust Training**: Hard negative mining and synthetic data enhance discriminative power and adaptability across domains.
+- **Robust Training**: A multi-objective loss (multi-label softmax + auxiliary BCE + optional label repulsion) and synthetic data with hard negatives enhance discriminative power and adaptability across domains.
 
 These innovations position GliZNet as a pioneering framework with potential to shape future research in scalable, context-sensitive NLP.
 

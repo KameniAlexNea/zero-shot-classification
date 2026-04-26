@@ -19,7 +19,7 @@ class TestTokenizerIntegration(unittest.TestCase):
             with self.subTest(example=name):
                 text = data["text"]
                 labels = data["labels"]
-                result = self.tokenizer.tokenize_example(text, labels)
+                result = self.tokenizer.tokenize(text, labels)
                 # Compare each tensor output to expected lists
                 self.assertListEqual(
                     result["input_ids"].tolist(),

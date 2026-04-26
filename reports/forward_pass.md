@@ -14,13 +14,13 @@ graph TD
         G --> H["Similarity Computing<br/>dot/bilinear/dot_learning"];
         H --> I["Logits<br/>similarity scores"];
         I --> J{"Training Mode?"};
-        J -->|Yes| K["Loss Computation<br/>BCEWithLogitsLoss"];
+        J -->|Yes| K["Loss Computation<br/>MultiLabel-Softmax + BCE + Repulsion"];
         J -->|No| L["GliZNetOutput<br/>logits only"];
         K --> M["GliZNetOutput<br/>loss + logits"];
     end
 
     subgraph "Tokenizer Details"
-        N["Sequence Building<br/>[CLS] + text + [SEP] + lab1 + [;] + lab2 + [;]..."] --> B;
+        N["Sequence Building<br/>[CLS] + text + [SEP] + lab1 + [LAB] + lab2 + [LAB]..."] --> B;
         O["Label Masking<br/>0=text, 1,2,3...=label groups"] --> C;
         P["Length Management<br/>truncation & padding to max_length"] --> C;
     end
@@ -29,7 +29,7 @@ graph TD
         Q["Backbone<br/>BERT/RoBERTa/etc"] --> E;
         R["Projection Layer<br/>Linear/Identity"] --> G;
         S["Similarity Function<br/>configurable metric"] --> H;
-        T["Loss Function<br/>scaled BCE"] --> K;
+        T["Loss Function<br/>MultiLabel-Softmax (primary)<br/>+ Auxiliary BCE (decoupled temp)<br/>+ Label Repulsion (optional)"] --> K;
     end
 
     style A fill:#ffecb3
