@@ -46,7 +46,7 @@ class GliZNetLoss(nn.Module):
             )
 
         batch_size = labels.size(0)
-        max_label_id = int(label_ids.max().item()) if label_ids.numel() > 0 else 0
+        max_label_id = self.config.max_labels
 
         if max_label_id == 0:
             return torch.tensor(

@@ -52,7 +52,7 @@ nohup accelerate launch train_gliznet.py \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 16 \
     --gradient_accumulation_steps 4 \
-    --learning_rate 1e-4 \
+    --learning_rate 4e-5 \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
@@ -74,6 +74,7 @@ nohup accelerate launch train_gliznet.py \
     --eval_use_gather_object \
     --ddp_find_unused_parameters False \
     --torch_compile \
+    --torch_compile_mode reduce-overhead \
     --bf16 \
     \
     `# Logging & Monitoring` \
