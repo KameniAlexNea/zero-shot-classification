@@ -74,10 +74,35 @@ def compute_metrics(
     """
     predictions, labels = eval_pred
 
-    if not isinstance(predictions, np.ndarray):
-        predictions = np.array(predictions)
-    if not isinstance(labels, np.ndarray):
-        labels = np.array(labels)
+    def _to_dense(arrays, pad_value: float) -> np.ndarray:
+        if isinstance(arrays, np.ndarray):
+            return arrays
+        # Recursively collect all leaf 2-D numpy arrays from any nesting depth.
+        # Needed because with eval_use_gather_object + DDP, each batch step
+        # produces a list of per-rank arrays: [[gpu0, gpu1], [gpu0, gpu1], ...]
+        flat: list[np.ndarray] = []
+
+        def _collect(x) -> None:
+            if isinstance(x, np.ndarray):
+                flat.append(x if x.ndim == 2 else x.reshape(1, -1))
+            elif isinstance(x, (list, tuple)):
+                for item in x:
+                    _collect(item)
+
+        _collect(arrays)
+        if not flat:
+            return np.array(arrays)
+        max_cols = max(a.shape[1] for a in flat)
+        return np.concatenate(
+            [
+                np.pad(a, ((0, 0), (0, max_cols - a.shape[1])), constant_values=pad_value)
+                for a in flat
+            ],
+            axis=0,
+        )
+
+    predictions = _to_dense(predictions, pad_value=0.0)
+    labels = _to_dense(labels, pad_value=-100)
 
     # Ensure 2-D: Trainer sometimes concatenates to (N,) if max_labels==1
     if predictions.ndim == 1:

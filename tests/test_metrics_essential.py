@@ -219,6 +219,41 @@ class TestComputeMetrics:
         m = compute_metrics(_make_eval_pred(scores, labels), ks=(k,))
         assert 0.0 <= m[f"hit@{k}"] <= 1.0
 
+    def test_ragged_batch_list(self):
+        """compute_metrics handles list of per-batch arrays with different max_labels (DDP case)."""
+        # Batch 1: 2 samples, 3 labels
+        b1_preds = np.array([[2.0, 1.0, -1.0], [-1.0, 2.0, 1.0]])
+        b1_labels = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        # Batch 2: 2 samples, 5 labels — different max_labels
+        b2_preds = np.array([[3.0, 1.0, -1.0, 0.5, 0.2], [0.5, -1.0, 2.0, 1.0, -0.5]])
+        b2_labels = np.array([[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]])
+
+        m = compute_metrics(([b1_preds, b2_preds], [b1_labels, b2_labels]))
+        assert "hit@1" in m
+        assert m["num_samples"] == 4
+        assert m["hit@1"] == pytest.approx(1.0)
+
+    def test_nested_per_rank_batch_list(self):
+        """compute_metrics handles eval_use_gather_object + DDP structure: list of per-batch
+        lists of per-rank arrays, with different max_labels across batches and ranks."""
+        # Simulates: [[rank0_batch0, rank1_batch0], [rank0_batch1, rank1_batch1]]
+        # rank0 batch0: 2 samples, 3 labels
+        r0b0_preds = np.array([[2.0, 1.0, -1.0], [-1.0, 2.0, 1.0]])
+        r0b0_labels = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        # rank1 batch0: 2 samples, 5 labels (different max_labels)
+        r1b0_preds = np.array([[3.0, 1.0, -1.0, 0.5, 0.2], [0.5, -1.0, 2.0, 1.0, -0.5]])
+        r1b0_labels = np.array([[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]])
+        # rank0 batch1: 2 samples, 4 labels
+        r0b1_preds = np.array([[1.0, 3.0, -1.0, 0.0], [2.0, 0.5, -0.5, 1.0]])
+        r0b1_labels = np.array([[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
+
+        nested_preds = [[r0b0_preds, r1b0_preds], [r0b1_preds]]
+        nested_labels = [[r0b0_labels, r1b0_labels], [r0b1_labels]]
+
+        m = compute_metrics((nested_preds, nested_labels))
+        assert "hit@1" in m
+        assert m["num_samples"] == 6
+
     @pytest.mark.parametrize("k", [1, 3, 5])
     def test_ndcg_at_k_bounds(self, k):
         scores = [[2.0, 1.0, 0.0]] * 5
