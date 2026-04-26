@@ -761,6 +761,21 @@ wheels = [
 ]
 
 [[package]]
+name = "gliclass"
+version = "0.1.14"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/3d/b0a4531fb1a2621c9e9ae5061f3df25e402e5265b9caff39651487791695/gliclass-0.1.14.tar.gz", hash = "sha256:476c612b70ef31c6c73493360339e08b2aa51012ef064ace8c198732c39933ce", size = 44981, upload-time = "2026-01-26T09:53:14.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/73/6e14682dfa572d3d43880e20869203e59689ee235c9a2accdd05f7f9f5bc/gliclass-0.1.14-py3-none-any.whl", hash = "sha256:8f8bccb055a1299137eacc5bc0cbd7df8e336866d55f6731b5c8f08de0ab4697", size = 45909, upload-time = "2026-01-26T09:53:12.523Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1990,6 +2005,27 @@ wheels = [
 ]
 
 [[package]]
+name = "peft"
+version = "0.19.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "psutil" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "torch" },
+    { name = "tqdm" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/cf/037f1e3d5186496c05513a6754639e2dab3038a05f384284d49a9bd06a2d/peft-0.19.1.tar.gz", hash = "sha256:0d97542fe96dcdaa20d3b81c06f26f988618f416a73544ab23c3618ccb674a40", size = 763738, upload-time = "2026-04-16T15:46:45.105Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/b6/f54d676ed93cc2dd2234c3b172ea9c8c3d7d29361e66b1b23dec57a67465/peft-0.19.1-py3-none-any.whl", hash = "sha256:2113f72a81621b5913ef28f9022204c742df111890c5f49d812716a4a301e356", size = 680692, upload-time = "2026-04-16T15:46:42.886Z" },
+]
+
+[[package]]
 name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3106,6 +3142,18 @@ wheels = [
 ]
 
 [[package]]
+name = "transformers-onnx"
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/22/e5/2e765580a0f7308739189294c4f7fda141e052a95028382dd76f7d477b5f/transformers_onnx-0.0.2.tar.gz", hash = "sha256:fafee518ee5a0304b72b29ccc2200a596ca3ed8018c2d108774d4f7a3e9b3f64", size = 8653, upload-time = "2022-04-18T12:02:50.726Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/03/239688da65ed53b9c2ad33b7eb250d6265998643af9f006e4aba3edfaf9e/transformers_onnx-0.0.2-py3-none-any.whl", hash = "sha256:16e60fae85c2250d461660ec3b94bec5b122bbb7a41a37a60c61df880f61f006", size = 8537, upload-time = "2022-04-18T12:02:49.079Z" },
+]
+
+[[package]]
 name = "triton"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3464,8 +3512,11 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "gliclass" },
     { name = "ipywidgets" },
     { name = "jupyter" },
+    { name = "peft" },
+    { name = "transformers-onnx" },
 ]
 
 [package.metadata]
@@ -3490,6 +3541,9 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "gliclass", specifier = ">=0.1.14" },
     { name = "ipywidgets", specifier = ">=8.1.8" },
     { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "peft", specifier = ">=0.19.1" },
+    { name = "transformers-onnx", specifier = ">=0.0.2" },
 ]

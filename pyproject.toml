@@ -33,6 +33,9 @@ explicit = true
 
 [dependency-groups]
 dev = [
+    "gliclass>=0.1.14",
     "ipywidgets>=8.1.8",
     "jupyter>=1.1.1",
+    "peft>=0.19.1",
+    "transformers-onnx>=0.0.2",
 ]

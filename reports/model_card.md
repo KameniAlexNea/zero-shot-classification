@@ -109,17 +109,33 @@ model  = AutoModel.from_pretrained("alexneakameni/gliznet-deberta-v3-base")
 
 ## Performance
 
-Evaluated on the held-out test split of **ZSHOT-HARDSET-v2** (1,322 samples, up to 20 labels per sample).
+Evaluated on the held-out test split of **ZSHOT-HARDSET-v2** (1,322 samples, up to 20 labels per sample).  
+All models evaluated under identical ranking metrics.
 
-| Metric | Score |
-|---|---|
-| MRR | **0.966** |
-| Hit@1 | **0.935** |
-| Hit@3 | **0.985** |
-| Hit@5 | **1.000** |
-| NDCG@10 | **0.942** |
+### GliZNet vs GLiClass (direct competitor)
 
-*Metrics computed on `checkpoint-850` (best checkpoint by eval loss from epoch 1 of 10).*
+GLiClass is the closest published competitor — it also encodes text and labels jointly in a single forward pass.
+
+| Model | MRR | Hit@1 | Hit@3 | Hit@5 | NDCG@10 |
+|---|---|---|---|---|---|
+| `knowledgator/gliclass-base-v3.0` | 0.927 | 0.862 | 0.996 | 0.999 | 0.920 |
+| **GliZNet-deberta-v3-base (ours)** | **0.966** | **0.935** | 0.985 | **1.000** | **0.942** |
+
+**Δ GliZNet − GLiClass**: MRR +0.039 · Hit@1 +0.073 · NDCG@10 +0.023
+
+### GliZNet vs sentence-embedding baselines
+
+Independent text/label embedding with cosine similarity
+
+| Model | MRR | Hit@1 | Hit@3 | Hit@5 | NDCG@10 | ROC-AUC | Avg Precision |
+|---|---|---|---|---|---|---|---|
+| `OrdalieTech/Solon-embeddings-large-0.1` | 0.914 | 0.843 | 0.989 | 1.000 | 0.895 | 0.708 | 0.800 |
+| `jinaai/jina-embeddings-v5-text-small` | 0.936 | 0.883 | 0.995 | 1.000 | 0.914 | 0.759 | 0.832 |
+| `microsoft/harrier-oss-v1-0.6b` | 0.915 | 0.840 | 0.992 | 1.000 | 0.897 | 0.716 | 0.804 |
+| `intfloat/e5-large-v2` | 0.931 | 0.871 | 0.994 | 1.000 | 0.911 | 0.753 | 0.828 |
+| **GliZNet-deberta-v3-base (ours)** | **0.966** | **0.935** | 0.985 | **1.000** | **0.942** | **0.825** | **0.874** |
+
+*All GliZNet results from `checkpoint-850` (best checkpoint by eval loss).*
 
 ---
 
