@@ -39,11 +39,11 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
-    --model_max_length 1024 \
+    --model_max_length 512 \
     --lab_cls_token "[LAB]" \
-    --max_tokens_per_span 64 \
-    --min_text_tokens 10 \
-    --min_label_tokens 2 \
+    --max_tokens_per_span 16 \
+    --min_text_tokens 5 \
+    --min_label_tokens 1 \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
@@ -72,7 +72,8 @@ nohup accelerate launch train_gliznet.py \
     --dataloader_num_workers 8 \
     --dataloader_prefetch_factor 2 \
     --eval_use_gather_object \
-    # --find_unused_parameters false \
+    --ddp_find_unused_parameters False \
+    --torch_compile \
     --bf16 \
     \
     `# Logging & Monitoring` \

@@ -69,6 +69,7 @@ def create_model_tokenizer(args: ModelArgs):
         # label id
         lab_token_id=tokenizer.lab_token_id,
         use_lab_token_for_labels=args.use_lab_token_for_labels,
+        max_labels=args.max_labels,
     )
     model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
     logger.info(f"Model configuration: {config.to_dict()}")

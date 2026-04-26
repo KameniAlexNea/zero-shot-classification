@@ -51,6 +51,8 @@ class GliZNetConfig(PretrainedConfig):
         learn_temperature: bool = True,
         # Repulsion settings
         repulsion_threshold: float = 0.3,  # Penalize if cosine sim > this
+        # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
+        max_labels: int = 20,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -70,6 +72,7 @@ class GliZNetConfig(PretrainedConfig):
         self.logit_scale_init = logit_scale_init
         self.learn_temperature = learn_temperature
         self.repulsion_threshold = repulsion_threshold
+        self.max_labels = max_labels
 
         # Resolve backbone_config without any network I/O.
         # AutoConfig.from_pretrained() is intentionally NOT called here — config

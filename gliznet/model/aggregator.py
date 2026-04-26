@@ -62,7 +62,7 @@ class LabelAggregator(nn.Module):
             all_batch_ids = batch_indices_all[lab_mask]
 
             lab_counts = lab_mask.sum(dim=1)
-            max_labels = int(lab_counts.max().item())
+            max_labels = self.config.max_labels
 
             batch_label_grid = (
                 torch.arange(batch_size, device=device)
@@ -98,7 +98,7 @@ class LabelAggregator(nn.Module):
             token_batch_ids = batch_indices_all[label_mask]
             token_label_ids = lmask[label_mask].long()
 
-            max_label_id = int(token_label_ids.max().item())
+            max_label_id = self.config.max_labels
             num_slots = batch_size * max_label_id
             flat_indices = token_batch_ids * max_label_id + (token_label_ids - 1)
 
@@ -195,7 +195,7 @@ class LabelAggregator(nn.Module):
         # Pack labels into (B, max_labels, D) and use two batched bmm ops instead.
         B = hidden_states.shape[0]
         D = aggregated_labels.shape[-1]
-        max_label_id = int(all_label_ids.max().item())
+        max_label_id = self.config.max_labels
         scale = self.attention_temperature.abs().clamp(min=0.1) * (D ** 0.5)
 
         dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
