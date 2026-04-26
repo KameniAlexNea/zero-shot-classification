@@ -159,16 +159,15 @@ def main():
         split="train",
         min_label_length=data_config.min_label_length,
     )
-    splits = dataset.train_test_split(test_size=0.1, seed=training_args.data_seed)
-
-    train_split = splits["train"]
-    train_data = train_split
-    size_before = len(train_data)
+    size_before = len(dataset)
     if model_args.use_additional_datasets:
-        train_data = add_additional_ds(
-            train_split, model_args.max_extended_ds_size, training_args.data_seed
+        dataset = add_additional_ds(
+            dataset, model_args.max_extended_ds_size, training_args.data_seed
         )
-    added_size = len(train_data) - size_before
+    added_size = len(dataset) - size_before
+
+    splits = dataset.train_test_split(test_size=0.05, seed=training_args.data_seed)
+    train_data = splits["train"]
     val_data = splits["test"]
 
     logger.info(
