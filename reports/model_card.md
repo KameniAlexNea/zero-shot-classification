@@ -23,7 +23,7 @@ pipeline_tag: zero-shot-classification
 
 **GliZNet** (Generalized Zero-Shot Network) is a zero-shot text classification model that processes the input text and **all candidate labels jointly in a single forward pass**, achieving O(1) inference complexity regardless of the number of labels.
 
-Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, generates label-aware contextual embeddings, and scores each label via cosine similarity. A hybrid loss (BCE + contrastive with hard negative mining) sharpens discrimination between semantically similar labels.
+Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, generates label-aware contextual embeddings, and scores each label via cosine similarity. A hybrid loss combining multi-label softmax cross-entropy (primary), auxiliary BCE with decoupled temperature, and optional label repulsion sharpens discrimination between semantically similar labels.
 
 > **Paper**: *GliZNet: A Novel Architecture for Zero-Shot Text Classification*  
 > Alex Kameni (Ivalua / Massy, France)
@@ -62,7 +62,7 @@ Input: [CLS] <text tokens> [SEP] <label_1 tokens> [LAB] <label_2 tokens> [LAB] .
                      │
               Learnable temperature scale
                      │
-              BCE + Contrastive loss (training)
+              MultiLabel-Softmax + BCE + Repulsion (training)
 ```
 
 ---
@@ -137,7 +137,7 @@ Evaluated on the held-out test split of **ZSHOT-HARDSET-v2** (1,322 samples, up 
 | Precision | bf16 |
 | Distributed training | DeepSpeed ZeRO-2 via `accelerate launch` |
 | Hardware | 2 × NVIDIA GPU |
-| Loss | BCE (weight 1.0) + SupCon / contrastive (weight 1.0) |
+| Loss | Multi-label softmax (weight 1.0) + auxiliary BCE (weight 1.0) + label repulsion (weight 0.1, disabled by default) |
 | Max labels per sample | 20 |
 
 ---
@@ -147,7 +147,7 @@ Evaluated on the held-out test split of **ZSHOT-HARDSET-v2** (1,322 samples, up 
 `GliZNETTokenizer` wraps the DeBERTa-v3 sentencepiece tokenizer and adds a custom `[LAB]` separator token. The input format is:
 
 ```
-[CLS] <text> [SEP] <label_1> [LAB] <label_2> [LAB] ... <label_n> [PAD]*
+[CLS] <text> [SEP] <label_1> [LAB] <label_2> [LAB] ... <label_n> [LAB] [PAD]*
 ```
 
 The `lmask` tensor (label mask) assigns 0 to text tokens and unique integers 1…n to each label's tokens, allowing the model to pool each label independently.

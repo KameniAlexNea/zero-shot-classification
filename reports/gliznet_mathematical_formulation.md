@@ -248,11 +248,11 @@ where $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_p \times d_p}$ is a learne
 
 GliZNet's loss is a weighted combination of three complementary objectives:
 
-$$\mathcal{L}_{\text{total}} = \lambda_{\text{SupCon}} \mathcal{L}_{\text{SupCon}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{BCE}} \mathcal{L}_{\text{BCE}}$$
+$$\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softmax}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{BCE}} \mathcal{L}_{\text{BCE}}$$
 
-where $\lambda_{\text{SupCon}}, \lambda_{\text{repulsion}}, \lambda_{\text{BCE}} \geq 0$ are hyperparameters.
+where $\lambda_{\text{softmax}}, \lambda_{\text{repulsion}}, \lambda_{\text{BCE}} \geq 0$ are hyperparameters.
 
-### 8.1 Supervised Contrastive Loss (Primary Objective)
+### 8.1 Multi-Label Softmax Loss (Primary Objective)
 
 #### **8.1.1 Formulation**
 
@@ -260,35 +260,19 @@ For each sample $b$, let:
 - $\mathcal{P}_b = \{j \mid y_{b,j} = 1\}$ be the set of positive (ground truth) labels
 - $\mathcal{N}_b$ be all labels (including positives and negatives)
 
-The SupCon loss encourages the model to assign high probability mass to positive labels:
+The primary loss encourages the model to assign high log-softmax probability to each positive label, averaged over all positives in the sample. Only samples with at least one positive label contribute:
 
-$$\mathcal{L}_{\text{SupCon}} = -\frac{1}{B} \sum_{b=1}^{B} \frac{1}{|\mathcal{P}_b|} \sum_{j \in \mathcal{P}_b} \log \frac{\exp(\text{sim}_{b,j})}{\sum_{k \in \mathcal{N}_b} \exp(\text{sim}_{b,k})}$$
+$$\mathcal{L}_{\text{softmax}} = -\frac{1}{|\mathcal{B}^+|} \sum_{b \in \mathcal{B}^+} \frac{1}{|\mathcal{P}_b|} \sum_{j \in \mathcal{P}_b} \text{log\_softmax}(\text{sim}_{b,:})_j$$
 
-Equivalently, using log-softmax:
-
-$$\mathcal{L}_{\text{SupCon}} = -\frac{1}{B} \sum_{b=1}^{B} \frac{1}{|\mathcal{P}_b|} \sum_{j \in \mathcal{P}_b} \text{log\_softmax}(\text{sim}_{b,:})_j$$
+where $\mathcal{B}^+ = \{b \mid |\mathcal{P}_b| > 0\}$ is the set of samples with at least one positive label.
 
 #### **8.1.2 Intuition**
 
-- **Contrastive Nature**: For each positive label, the loss compares its similarity against ALL other labels
-- **Ranking**: Encourages positive labels to have higher similarity than negatives
-- **Calibration**: Naturally produces calibrated probability distributions via softmax
-- **Multi-label Support**: Averaging over all positives handles multiple correct labels
+- **Ranking**: Encourages positive labels to have higher similarity than negatives — operates on classification logits, not on embedding views
+- **Multi-label Support**: Averaging over all positives handles multiple correct labels per sample
+- **Stability**: Invalid (padding) positions are masked to $-\infty$ before softmax
 
-#### **8.1.3 Connection to InfoNCE**
-
-This is a generalization of the InfoNCE loss used in contrastive learning (e.g., SimCLR, CLIP):
-
-$$\mathcal{L}_{\text{InfoNCE}} = -\log \frac{\exp(\text{sim}_{\text{pos}})}{\exp(\text{sim}_{\text{pos}}) + \sum_{k} \exp(\text{sim}_{k}^{\text{neg}})}$$
-
-In GliZNet:
-- "Positive" = ground truth labels
-- "Negatives" = other labels in the candidate set
-
-**Why SupCon?** It provides:
-- Strong discriminative gradients
-- Robustness to label imbalance
-- Effective representation learning through contrastive structure
+> **Note**: This is *not* Supervised Contrastive Loss (SupCon/InfoNCE). It operates on per-sample classification logits over the candidate label set, with no contrastive pairs or anchor structure.
 
 ### 8.2 Label Repulsion Loss
 
@@ -347,19 +331,19 @@ where:
 
 #### **8.3.2 Why Add BCE?**
 
-- **Complementary Signal**: BCE provides direct per-label supervision, while SupCon is comparative
-- **Calibration**: BCE encourages well-calibrated probabilities for individual labels
-- **Stability**: Helps when SupCon gradients are noisy (e.g., few labels per sample)
+- **Complementary Signal**: BCE provides direct per-label supervision, while the softmax loss is comparative (relative ranking)
+- **Calibration**: BCE encourages well-calibrated per-label probabilities
+- **Stability**: Helps when softmax gradients are noisy (e.g., very few labels per sample)
 
-#### **8.3.3 Interaction with SupCon**
+#### **8.3.3 Interaction with Multi-Label Softmax**
 
 The two losses have complementary gradient flows:
 
-$$\frac{\partial \mathcal{L}_{\text{SupCon}}}{\partial \text{sim}_{b,j}} = p_{b,j}^{\text{softmax}} - \mathbb{1}[j \in \mathcal{P}_b]$$
+$$\frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_{b,j}} = p_{b,j}^{\text{softmax}} - \mathbb{1}[j \in \mathcal{P}_b]$$
 
 $$\frac{\partial \mathcal{L}_{\text{BCE}}}{\partial \text{sim}_{b,j}} = \sigma(\text{sim}_{b,j}) - y_{b,j}$$
 
-- SupCon: Relative gradient (depends on distribution over all labels)
+- Softmax loss: Relative gradient (depends on distribution over all labels in the sample)
 - BCE: Absolute gradient (independent per label)
 
 Together, they provide both **ranking** and **thresholding** signals.
@@ -372,12 +356,12 @@ Together, they provide both **ranking** and **thresholding** signals.
 
 The composite loss creates a rich gradient landscape. For label embedding $\mathbf{e}_j^{\text{label}}$:
 
-$$\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{SupCon}} \frac{\partial \mathcal{L}_{\text{SupCon}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{BCE}} \frac{\partial \mathcal{L}_{\text{BCE}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}}$$
+$$\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{softmax}} \frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{BCE}} \frac{\partial \mathcal{L}_{\text{BCE}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}}$$
 
 **Three forces**:
-1. **SupCon**: Pull positives toward text, push negatives away (contrastive)
-2. **Repulsion**: Push different labels apart (geometric)
-3. **BCE**: Adjust magnitude for calibrated probabilities (scale)
+1. **Multi-label Softmax**: Pull positives toward text, push negatives away (relative ranking)
+2. **Repulsion**: Push different labels apart within the same sample (geometric)
+3. **BCE**: Adjust per-label magnitude for calibrated probabilities (absolute threshold)
 
 ### 9.2 Learnable Parameters
 
