@@ -90,6 +90,10 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             config.backbone_model, **kwargs
         )
         config.backbone_config = pretrained_backbone.config
+        # Remove the backbone's dtype field — it reflects the original pretrained
+        # model's serialization dtype, not the actual training dtype (e.g. bfloat16
+        # from DeepSpeed).  Keeping it causes a dtype mismatch on reload.
+        config.backbone_config.dtype = None
         model = cls(config)
         model.backbone.load_state_dict(pretrained_backbone.state_dict())
         model.resize_token_embeddings(len(tokenizer))
