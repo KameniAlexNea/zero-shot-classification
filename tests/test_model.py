@@ -332,14 +332,13 @@ def _make_loss_inputs(batch=2, n_labels=3, n_pos_per_sample=1):
     batch_indices = torch.repeat_interleave(torch.arange(batch), n_labels)
     label_ids = torch.tile(torch.arange(1, n_labels + 1), (batch,))
     label_embeddings = torch.randn(n_spans, 8)
-    logit_scale = torch.tensor(1.0)
 
     labels = torch.zeros(batch, n_labels)
     for i in range(batch):
         for j in range(n_pos_per_sample):
             labels[i, j % n_labels] = 1.0
 
-    return logits, labels, batch_indices, label_ids, label_embeddings, logit_scale
+    return logits, labels, batch_indices, label_ids, label_embeddings
 
 
 class TestGliZNetLoss:
@@ -410,9 +409,9 @@ class TestGliZNetLoss:
         """Samples with no positive labels → softmax loss should be 0 (skipped)."""
         cfg = _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
         loss_fn = GliZNetLoss(cfg)
-        logits, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs()
+        logits, labels, batch_indices, label_ids, embs = _make_loss_inputs()
         labels_no_pos = torch.zeros_like(labels)
-        out = loss_fn(logits, labels_no_pos, batch_indices, label_ids, embs, scale)
+        out = loss_fn(logits, labels_no_pos, batch_indices, label_ids, embs)
         assert out["softmax"].item() == pytest.approx(0.0, abs=1e-6)
 
     def test_empty_logits_returns_zero(self):
@@ -422,9 +421,8 @@ class TestGliZNetLoss:
         empty_batch = torch.zeros(0, dtype=torch.long)
         empty_ids = torch.zeros(0, dtype=torch.long)
         empty_embs = torch.zeros(0, 8)
-        scale = torch.tensor(1.0)
         out = loss_fn(
-            empty_logits, empty_labels, empty_batch, empty_ids, empty_embs, scale
+            empty_logits, empty_labels, empty_batch, empty_ids, empty_embs
         )
         assert self._total(out).item() == pytest.approx(0.0, abs=1e-6)
 
@@ -432,7 +430,7 @@ class TestGliZNetLoss:
         """Logits that perfectly separate positives from negatives should give lower loss."""
         cfg = _default_config()
         loss_fn = GliZNetLoss(cfg)
-        _, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs(
+        _, labels, batch_indices, label_ids, embs = _make_loss_inputs(
             batch=4, n_labels=4
         )
 
@@ -445,10 +443,10 @@ class TestGliZNetLoss:
         random_logits = torch.randn_like(perfect_logits)
 
         loss_perfect = self._total(
-            loss_fn(perfect_logits, labels, batch_indices, label_ids, embs, scale), cfg
+            loss_fn(perfect_logits, labels, batch_indices, label_ids, embs), cfg
         )
         loss_random = self._total(
-            loss_fn(random_logits, labels, batch_indices, label_ids, embs, scale), cfg
+            loss_fn(random_logits, labels, batch_indices, label_ids, embs), cfg
         )
 
         assert loss_perfect.item() < loss_random.item()
@@ -457,9 +455,9 @@ class TestGliZNetLoss:
         """Loss must provide gradients to logits."""
         cfg = _default_config()
         loss_fn = GliZNetLoss(cfg)
-        logits, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs()
+        logits, labels, batch_indices, label_ids, embs = _make_loss_inputs()
         logits = logits.requires_grad_(True)
-        out = loss_fn(logits, labels, batch_indices, label_ids, embs, scale)
+        out = loss_fn(logits, labels, batch_indices, label_ids, embs)
         self._total(out, cfg).backward()
         assert logits.grad is not None
         assert logits.grad.isfinite().all()

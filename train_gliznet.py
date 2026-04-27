@@ -64,7 +64,6 @@ def create_model_tokenizer(args: ModelArgs):
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
         logit_scale_init=args.logit_scale_init,
-        learn_temperature=args.learn_temperature,
         repulsion_threshold=args.repulsion_threshold,
         # label id
         lab_token_id=tokenizer.lab_token_id,

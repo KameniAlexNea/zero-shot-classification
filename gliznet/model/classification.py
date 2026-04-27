@@ -133,7 +133,6 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             batch_indices,
             label_ids,
             label_embeddings,
-            logit_scale,
             text_embeddings,
         ) = self.aggregator(hidden_states, lmask, input_ids, attention_mask)
 
@@ -145,7 +144,6 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                 batch_indices=batch_indices,
                 label_ids=label_ids,
                 label_embeddings=label_embeddings,
-                logit_scale=logit_scale,
             )
             loss = (
                 loss_dict["softmax"] * self.config.supcon_loss_weight

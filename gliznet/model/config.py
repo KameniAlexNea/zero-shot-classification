@@ -26,7 +26,6 @@ class GliZNetConfig(PretrainedConfig):
                                same input should have similar representations.  Enable
                                only for static/non-contextual label embeddings.
         logit_scale_init: Initial value for learnable temperature scale
-        learn_temperature: Whether temperature scale is learnable
         repulsion_threshold: Cosine similarity threshold for repulsion penalty
     """
 
@@ -48,7 +47,6 @@ class GliZNetConfig(PretrainedConfig):
         label_repulsion_weight: float = 0.0,
         # Temperature/scaling
         logit_scale_init: float = 2.0,  # exp(2) ≈ 7.4 for cosine similarity scaling
-        learn_temperature: bool = True,
         # Repulsion settings
         repulsion_threshold: float = 0.3,  # Penalize if cosine sim > this
         # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
@@ -73,7 +71,6 @@ class GliZNetConfig(PretrainedConfig):
         self.supcon_loss_weight = supcon_loss_weight
         self.label_repulsion_weight = label_repulsion_weight
         self.logit_scale_init = logit_scale_init
-        self.learn_temperature = learn_temperature
         self.repulsion_threshold = repulsion_threshold
         self.max_labels = max_labels
 

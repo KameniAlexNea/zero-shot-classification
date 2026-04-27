@@ -160,7 +160,6 @@ class LabelAggregator(nn.Module):
             batch_indices: Batch index for each score (N,)
             label_ids: Label ID for each score (N,)
             label_embeddings: Aggregated label embeddings (N, D)
-            logit_scale: Current temperature scale
             text_aggregations: Label-specific text representations (N, D)
         """
         # Project ALL tokens (not just CLS)
@@ -179,14 +178,12 @@ class LabelAggregator(nn.Module):
 
         # Early return if no label spans were found (e.g. malformed tokenization).
         if aggregated_labels.shape[0] == 0:
-            logit_scale = self.similarity_head.logit_scale.clamp(-10, 10)
             empty_logits = torch.empty(0, 1, device=hidden_states.device)
             return (
                 empty_logits,
                 all_batch_ids,
                 all_label_ids,
                 aggregated_labels,
-                logit_scale,
                 aggregated_labels,
             )
 
@@ -213,13 +210,12 @@ class LabelAggregator(nn.Module):
         # Extract only the valid (N,) label slots
         aggregated_text = aggregated_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
 
-        logits, logit_scale = self.similarity_head(aggregated_text, aggregated_labels)
+        logits = self.similarity_head(aggregated_text, aggregated_labels)
 
         return (
             logits,
             all_batch_ids,
             all_label_ids,
             aggregated_labels,
-            logit_scale,
             aggregated_text,
         )

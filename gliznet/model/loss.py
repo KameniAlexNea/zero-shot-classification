@@ -15,8 +15,6 @@ class GliZNetLoss(nn.Module):
     def __init__(self, config: GliZNetConfig):
         super().__init__()
         self.config = config
-        # Learnable scale specifically for the auxiliary BCE loss (decoupled from main temperature)
-        self.bce_scale = nn.Parameter(torch.tensor(1.0))
 
     def forward(
         self,
@@ -25,7 +23,6 @@ class GliZNetLoss(nn.Module):
         batch_indices: torch.Tensor,
         label_ids: torch.Tensor,
         label_embeddings: torch.Tensor,
-        logit_scale: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         """Compute individual loss components.
 
@@ -100,9 +97,9 @@ class GliZNetLoss(nn.Module):
             else:
                 repulsion_loss = computed
 
-        # --- 3. Auxiliary BCE (Decoupled Temperature) ---
+        # --- 3. Auxiliary BCE ---
         if self.config.bce_loss_weight > 0:
-            computed = self._bce_loss(dense_logits, current_labels, logit_scale)
+            computed = self._bce_loss(dense_logits, current_labels)
             if torch.isnan(computed) or torch.isinf(computed):
                 logger.warning("NaN/Inf in bce_loss; zeroing for training stability.")
             else:
@@ -217,12 +214,8 @@ class GliZNetLoss(nn.Module):
         self,
         logits: torch.Tensor,
         targets: torch.Tensor,
-        main_logit_scale: torch.Tensor,
     ) -> torch.Tensor:
-        """Binary cross-entropy with decoupled temperature.
-
-        Unscales the main logits and applies BCE-specific scaling.
-        """
+        """Binary cross-entropy loss."""
         mask = targets != -100
         if not mask.any():
             return torch.tensor(
@@ -241,13 +234,6 @@ class GliZNetLoss(nn.Module):
         valid_logits = valid_logits[finite_mask]
         valid_targets = valid_targets[finite_mask]
 
-        # Detach the main scale so BCE gradients do not flow back through logit_scale —
-        # without detach() the "decoupled" temperature still receives gradient
-        # contributions from the BCE path, making the decoupling illusory.
-        scale_clamped = main_logit_scale.detach().clamp(-10, 10).exp().clamp(min=1e-6)
-        raw_logits = valid_logits / scale_clamped
-        bce_logits = raw_logits * self.bce_scale.abs().clamp(min=0.1, max=10.0)
-
         return F.binary_cross_entropy_with_logits(
-            bce_logits, valid_targets, reduction="mean"
+            valid_logits, valid_targets, reduction="mean"
         )

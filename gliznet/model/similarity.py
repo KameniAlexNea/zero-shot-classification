@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,15 +13,9 @@ class SimilarityHead(nn.Module):
         self.config = config
 
         # Learnable temperature for scaling logits
-        if config.learn_temperature:
-            self.logit_scale = nn.Parameter(
-                torch.tensor(config.logit_scale_init, dtype=torch.float32)
-            )
-        else:
-            self.register_buffer(
-                "logit_scale",
-                torch.tensor(config.logit_scale_init, dtype=torch.float32),
-            )
+        self.logit_scale = nn.Parameter(
+            torch.tensor(config.logit_scale_init, dtype=torch.float32)
+        )
 
         if config.similarity_metric == "bilinear":
             self.classifier = nn.Bilinear(projected_dim, projected_dim, 1)
@@ -35,7 +27,7 @@ class SimilarityHead(nn.Module):
 
     def forward(
         self, text_repr: torch.Tensor, label_repr: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """Compute similarity scores.
 
         Args:
@@ -43,7 +35,7 @@ class SimilarityHead(nn.Module):
             label_repr: Label representations (N, D)
 
         Returns:
-            Tuple of (scaled similarity scores (N, 1), logit_scale)
+            Scaled similarity scores (N, 1)
         """
         if self.config.similarity_metric == "bilinear":
             logits = self.classifier(text_repr, label_repr)
@@ -58,4 +50,4 @@ class SimilarityHead(nn.Module):
             scale = self.logit_scale.clamp(-10, 10).exp()
             logits = raw_sim * scale
 
-        return logits, self.logit_scale.clamp(-10, 10)
+        return logits

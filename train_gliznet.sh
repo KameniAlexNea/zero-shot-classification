@@ -25,7 +25,6 @@ nohup accelerate launch train_gliznet.py \
     --supcon_loss_weight 0.5 \
     --label_repulsion_weight 0.05 \
     --logit_scale_init 1.0 \
-    --learn_temperature \
     --repulsion_threshold 0.3 \
     \
     `# Data Configuration` \
@@ -51,7 +50,7 @@ nohup accelerate launch train_gliznet.py \
     --num_train_epochs 10 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 16 \
-    --gradient_accumulation_steps 4 \
+    --gradient_accumulation_steps 2 \
     --learning_rate 4e-5 \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
