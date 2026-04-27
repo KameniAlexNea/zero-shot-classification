@@ -146,6 +146,7 @@ class LabelAggregator(nn.Module):
         lmask: torch.Tensor,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
+        inference: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
         """Aggregate label representations and compute similarities using token-level attention.
 
@@ -192,7 +193,7 @@ class LabelAggregator(nn.Module):
         # Pack labels into (B, max_labels, D) and use two batched bmm ops instead.
         B = hidden_states.shape[0]
         D = aggregated_labels.shape[-1]
-        max_label_id = self.config.max_labels
+        max_label_id = int(all_label_ids.max().item()) if inference else self.config.max_labels
         scale = self.attention_temperature.abs().clamp(min=0.1) * (D ** 0.5)
 
         dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
