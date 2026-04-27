@@ -57,6 +57,9 @@ class GliZNetConfig(PretrainedConfig):
     ):
         super().__init__(**kwargs)
 
+        if max_labels <= 0:
+            raise ValueError("max_labels must be a positive integer")
+
         self.backbone_model = backbone_model
         self.projected_dim = projected_dim
         self.similarity_metric = similarity_metric

@@ -26,8 +26,8 @@ class GliZNetLoss(nn.Module):
         label_ids: torch.Tensor,
         label_embeddings: torch.Tensor,
         logit_scale: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute combined loss.
+    ) -> dict[str, torch.Tensor]:
+        """Compute individual loss components.
 
         Args:
             logits: Predicted scores (N, 1) - already scaled by SimilarityHead
@@ -38,20 +38,18 @@ class GliZNetLoss(nn.Module):
             logit_scale: Current temperature scale from SimilarityHead
 
         Returns:
-            Combined loss scalar
+            Dict with keys ``softmax``, ``repulsion``, ``bce`` — each an
+            unweighted scalar loss.  The caller applies the configured weights
+            and sums them.
         """
+        def _zero() -> torch.Tensor:
+            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
+
         if logits.numel() == 0:
-            return torch.tensor(
-                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-            )
+            return {"softmax": _zero(), "repulsion": _zero(), "bce": _zero()}
 
         batch_size = labels.size(0)
         max_label_id = self.config.max_labels
-
-        if max_label_id == 0:
-            return torch.tensor(
-                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-            )
 
         # Reconstruct dense logits matrix (B, max_labels)
         dense_logits = torch.full(
@@ -75,50 +73,42 @@ class GliZNetLoss(nn.Module):
             )
             current_labels = torch.cat([current_labels, padding], dim=1)
 
-        total_loss = torch.tensor(
-            0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-        )
+        softmax_loss = _zero()
+        repulsion_loss = _zero()
+        bce_loss = _zero()
 
         # --- 1. Multi-label Softmax Loss (Primary) ---
         if self.config.supcon_loss_weight > 0:
-            softmax_loss = self._multilabel_softmax_loss(dense_logits, current_labels)
-            if torch.isnan(softmax_loss) or torch.isinf(softmax_loss):
+            computed = self._multilabel_softmax_loss(dense_logits, current_labels)
+            if torch.isnan(computed) or torch.isinf(computed):
                 logger.warning(
                     "NaN/Inf in multilabel_softmax_loss; zeroing for training stability. "
                     "Check inputs and learning rate."
                 )
-                softmax_loss = torch.tensor(
-                    0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-                )
-            total_loss = total_loss + softmax_loss * self.config.supcon_loss_weight
+            else:
+                softmax_loss = computed
 
         # --- 2. Label Repulsion Loss (disabled by default) ---
         if self.config.label_repulsion_weight > 0:
-            repulsion_loss = self._label_repulsion_loss(
+            computed = self._label_repulsion_loss(
                 label_embeddings, label_ids, batch_indices
             )
-            if torch.isnan(repulsion_loss) or torch.isinf(repulsion_loss):
+            if torch.isnan(computed) or torch.isinf(computed):
                 logger.warning(
                     "NaN/Inf in label_repulsion_loss; zeroing for training stability."
                 )
-                repulsion_loss = torch.tensor(
-                    0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-                )
-            total_loss = (
-                total_loss + repulsion_loss * self.config.label_repulsion_weight
-            )
+            else:
+                repulsion_loss = computed
 
         # --- 3. Auxiliary BCE (Decoupled Temperature) ---
         if self.config.bce_loss_weight > 0:
-            bce_loss = self._bce_loss(dense_logits, current_labels, logit_scale)
-            if torch.isnan(bce_loss) or torch.isinf(bce_loss):
+            computed = self._bce_loss(dense_logits, current_labels, logit_scale)
+            if torch.isnan(computed) or torch.isinf(computed):
                 logger.warning("NaN/Inf in bce_loss; zeroing for training stability.")
-                bce_loss = torch.tensor(
-                    0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-                )
-            total_loss = total_loss + bce_loss * self.config.bce_loss_weight
+            else:
+                bce_loss = computed
 
-        return total_loss
+        return {"softmax": softmax_loss, "repulsion": repulsion_loss, "bce": bce_loss}
 
     def _multilabel_softmax_loss(
         self, logits: torch.Tensor, targets: torch.Tensor

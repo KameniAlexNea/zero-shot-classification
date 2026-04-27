@@ -343,66 +343,77 @@ def _make_loss_inputs(batch=2, n_labels=3, n_pos_per_sample=1):
 
 
 class TestGliZNetLoss:
-    def test_returns_scalar(self):
+    def _total(self, out: dict, cfg=None) -> torch.Tensor:
+        """Weighted sum matching the caller in classification.py."""
+        if cfg is None:
+            cfg = _default_config()
+        return (
+            out["softmax"] * cfg.supcon_loss_weight
+            + out["repulsion"] * cfg.label_repulsion_weight
+            + out["bce"] * cfg.bce_loss_weight
+        )
+
+    def test_returns_dict(self):
         loss_fn = GliZNetLoss(_default_config())
         args = _make_loss_inputs()
         out = loss_fn(*args)
-        assert out.dim() == 0
-        assert out.item() >= 0.0
+        assert isinstance(out, dict)
+        assert set(out.keys()) == {"softmax", "repulsion", "bce"}
+        for v in out.values():
+            assert v.dim() == 0
+        assert self._total(out).item() >= 0.0
 
     def test_non_negative(self):
         loss_fn = GliZNetLoss(_default_config())
+        cfg = _default_config()
         for _ in range(5):
             out = loss_fn(*_make_loss_inputs())
-            assert out.item() >= 0.0
+            assert self._total(out, cfg).item() >= 0.0
 
     def test_finite(self):
         loss_fn = GliZNetLoss(_default_config())
         out = loss_fn(*_make_loss_inputs())
-        assert torch.isfinite(out)
+        assert torch.isfinite(self._total(out))
 
     def test_softmax_only(self):
-        loss_fn = GliZNetLoss(
-            _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
-        )
+        cfg = _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
+        loss_fn = GliZNetLoss(cfg)
         out = loss_fn(*_make_loss_inputs())
-        assert torch.isfinite(out)
-        assert out.item() >= 0.0
+        assert torch.isfinite(self._total(out, cfg))
+        assert self._total(out, cfg).item() >= 0.0
 
     def test_bce_only(self):
-        loss_fn = GliZNetLoss(
-            _default_config(bce_loss_weight=1.0, supcon_loss_weight=0.0)
-        )
+        cfg = _default_config(bce_loss_weight=1.0, supcon_loss_weight=0.0)
+        loss_fn = GliZNetLoss(cfg)
         out = loss_fn(*_make_loss_inputs())
-        assert torch.isfinite(out)
-        assert out.item() >= 0.0
+        assert torch.isfinite(self._total(out, cfg))
+        assert self._total(out, cfg).item() >= 0.0
 
     def test_repulsion_enabled(self):
-        loss_fn = GliZNetLoss(_default_config(label_repulsion_weight=0.1))
+        cfg = _default_config(label_repulsion_weight=0.1)
+        loss_fn = GliZNetLoss(cfg)
         out = loss_fn(*_make_loss_inputs(batch=2, n_labels=3))
-        assert torch.isfinite(out)
-        assert out.item() >= 0.0
+        assert torch.isfinite(self._total(out, cfg))
+        assert self._total(out, cfg).item() >= 0.0
 
     def test_all_losses_disabled_returns_zero(self):
-        loss_fn = GliZNetLoss(
-            _default_config(
-                bce_loss_weight=0.0,
-                supcon_loss_weight=0.0,
-                label_repulsion_weight=0.0,
-            )
+        cfg = _default_config(
+            bce_loss_weight=0.0,
+            supcon_loss_weight=0.0,
+            label_repulsion_weight=0.0,
         )
+        loss_fn = GliZNetLoss(cfg)
         out = loss_fn(*_make_loss_inputs())
-        assert out.item() == pytest.approx(0.0)
+        assert self._total(out, cfg).item() == pytest.approx(0.0)
 
     def test_no_positives_returns_zero_supcon(self):
         """Samples with no positive labels → softmax loss should be 0 (skipped)."""
-        loss_fn = GliZNetLoss(
-            _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
-        )
+        cfg = _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
+        loss_fn = GliZNetLoss(cfg)
         logits, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs()
         labels_no_pos = torch.zeros_like(labels)
         out = loss_fn(logits, labels_no_pos, batch_indices, label_ids, embs, scale)
-        assert out.item() == pytest.approx(0.0, abs=1e-6)
+        assert out["softmax"].item() == pytest.approx(0.0, abs=1e-6)
 
     def test_empty_logits_returns_zero(self):
         loss_fn = GliZNetLoss(_default_config())
@@ -415,11 +426,12 @@ class TestGliZNetLoss:
         out = loss_fn(
             empty_logits, empty_labels, empty_batch, empty_ids, empty_embs, scale
         )
-        assert out.item() == pytest.approx(0.0, abs=1e-6)
+        assert self._total(out).item() == pytest.approx(0.0, abs=1e-6)
 
     def test_perfect_scores_lower_loss_than_random(self):
         """Logits that perfectly separate positives from negatives should give lower loss."""
-        loss_fn = GliZNetLoss(_default_config())
+        cfg = _default_config()
+        loss_fn = GliZNetLoss(cfg)
         _, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs(
             batch=4, n_labels=4
         )
@@ -432,34 +444,37 @@ class TestGliZNetLoss:
         )
         random_logits = torch.randn_like(perfect_logits)
 
-        loss_perfect = loss_fn(
-            perfect_logits, labels, batch_indices, label_ids, embs, scale
+        loss_perfect = self._total(
+            loss_fn(perfect_logits, labels, batch_indices, label_ids, embs, scale), cfg
         )
-        loss_random = loss_fn(
-            random_logits, labels, batch_indices, label_ids, embs, scale
+        loss_random = self._total(
+            loss_fn(random_logits, labels, batch_indices, label_ids, embs, scale), cfg
         )
 
         assert loss_perfect.item() < loss_random.item()
 
     def test_gradients_flow(self):
         """Loss must provide gradients to logits."""
-        loss_fn = GliZNetLoss(_default_config())
+        cfg = _default_config()
+        loss_fn = GliZNetLoss(cfg)
         logits, labels, batch_indices, label_ids, embs, scale = _make_loss_inputs()
         logits = logits.requires_grad_(True)
         out = loss_fn(logits, labels, batch_indices, label_ids, embs, scale)
-        out.backward()
+        self._total(out, cfg).backward()
         assert logits.grad is not None
         assert logits.grad.isfinite().all()
 
     @pytest.mark.parametrize("n_labels", [1, 2, 5, 10])
     def test_various_label_counts(self, n_labels):
-        loss_fn = GliZNetLoss(_default_config())
+        cfg = _default_config()
+        loss_fn = GliZNetLoss(cfg)
         out = loss_fn(*_make_loss_inputs(batch=2, n_labels=n_labels))
-        assert torch.isfinite(out)
+        assert torch.isfinite(self._total(out, cfg))
 
     @pytest.mark.parametrize("batch_size", [1, 4, 8])
     def test_various_batch_sizes(self, batch_size):
-        loss_fn = GliZNetLoss(_default_config())
+        cfg = _default_config()
+        loss_fn = GliZNetLoss(cfg)
         out = loss_fn(*_make_loss_inputs(batch=batch_size, n_labels=3))
-        assert torch.isfinite(out)
-        assert out.item() >= 0.0
+        assert torch.isfinite(self._total(out, cfg))
+        assert self._total(out, cfg).item() >= 0.0
