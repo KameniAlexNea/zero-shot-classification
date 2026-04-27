@@ -21,10 +21,10 @@ nohup accelerate launch train_gliznet.py \
     --use_projection_layernorm \
     \
     `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
-    --bce_loss_weight 1.0 \
-    --supcon_loss_weight 1.0 \
-    --label_repulsion_weight 0.1 \
-    --logit_scale_init 2.0 \
+    --bce_loss_weight 0.5 \
+    --supcon_loss_weight 0.5 \
+    --label_repulsion_weight 0.05 \
+    --logit_scale_init 1.0 \
     --learn_temperature \
     --repulsion_threshold 0.3 \
     \
@@ -56,13 +56,14 @@ nohup accelerate launch train_gliznet.py \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
+    --max_grad_norm 2.0 \
     \
     `# Evaluation & Checkpointing` \
     --eval_strategy epoch \
     --save_strategy epoch \
     --save_total_limit 4 \
     --load_best_model_at_end \
-    --metric_for_best_model hit@1 \
+    --metric_for_best_model loss \
     --early_stopping_patience 3 \
     --eval_on_start \
     --eval_do_concat_batches False \
