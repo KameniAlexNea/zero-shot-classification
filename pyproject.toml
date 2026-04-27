@@ -7,7 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.13.0",
     "datasets>=4.8.4",
-    "deepspeed>=0.18.9",
     "huggingface-hub>=1.8.0",
     "llm-output-parser>=0.3.0",
     "loguru>=0.7.3",
@@ -23,6 +22,9 @@ dependencies = [
     "wandb>=0.25.1",
 ]
 
+[tool.setuptools.packages.find]
+include = ["gliznet*"]
+
 [tool.uv.sources]
 torch = { index = "pytorch" }
 
@@ -33,9 +35,15 @@ explicit = true
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.11.0",
+    "tox>=4.53.0",
+    "tox-uv>=1.0.0",
+]
+evaluate = [
     "gliclass>=0.1.14",
     "ipywidgets>=8.1.8",
     "jupyter>=1.1.1",
     "peft>=0.19.1",
-    "transformers-onnx>=0.0.2",
 ]

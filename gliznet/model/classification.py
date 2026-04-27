@@ -133,19 +133,22 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             batch_indices,
             label_ids,
             label_embeddings,
-            logit_scale,
             text_embeddings,
         ) = self.aggregator(hidden_states, lmask, input_ids, attention_mask)
 
         loss = None
         if labels is not None:
-            loss = self.loss_fn(
+            loss_dict = self.loss_fn(
                 logits=logits,
                 labels=labels,
                 batch_indices=batch_indices,
                 label_ids=label_ids,
                 label_embeddings=label_embeddings,
-                logit_scale=logit_scale,
+            )
+            loss = (
+                loss_dict["softmax"] * self.config.supcon_loss_weight
+                + loss_dict["repulsion"] * self.config.label_repulsion_weight
+                + loss_dict["bce"] * self.config.bce_loss_weight
             )
 
         if not return_dict:

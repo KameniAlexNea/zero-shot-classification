@@ -64,11 +64,11 @@ def create_model_tokenizer(args: ModelArgs):
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
         logit_scale_init=args.logit_scale_init,
-        learn_temperature=args.learn_temperature,
         repulsion_threshold=args.repulsion_threshold,
         # label id
         lab_token_id=tokenizer.lab_token_id,
         use_lab_token_for_labels=args.use_lab_token_for_labels,
+        max_labels=args.max_labels,
     )
     model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
     logger.info(f"Model configuration: {config.to_dict()}")
@@ -85,13 +85,12 @@ def sample_dataset(ds: datasets.Dataset, max_size: int = 50_000):
     return ds.select(index[:max_size])
 
 
-def add_additional_ds(base_ds: datasets.Dataset, max_size: int = 50_000, seed: int = 42):
+def add_additional_ds(
+    base_ds: datasets.Dataset, max_size: int = 50_000, seed: int = 42
+):
     ds = datasets.concatenate_datasets(
         [base_ds]
-        + [
-            ds_loader(max_size, seed)
-            for ds_loader in additional_datasets.values()
-        ]
+        + [ds_loader(max_size, seed) for ds_loader in additional_datasets.values()]
     )
     return ds
 
@@ -104,8 +103,7 @@ def seed_everything(seed: int = 42):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = True
 
 
 def main():
@@ -120,9 +118,7 @@ def main():
     logger.info(f"Set random seed to {training_args.data_seed}")
 
     # Set device
-    device = (
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"Using device: {device}")
 
     # Validate configuration
@@ -162,16 +158,15 @@ def main():
         split="train",
         min_label_length=data_config.min_label_length,
     )
-    splits = dataset.train_test_split(test_size=0.1, seed=training_args.data_seed)
-
-    train_split = splits["train"]
-    train_data = train_split
-    size_before = len(train_data)
+    size_before = len(dataset)
     if model_args.use_additional_datasets:
-        train_data = add_additional_ds(
-            train_split, model_args.max_extended_ds_size, training_args.data_seed
+        dataset = add_additional_ds(
+            dataset, model_args.max_extended_ds_size, training_args.data_seed
         )
-    added_size = len(train_data) - size_before
+    added_size = len(dataset) - size_before
+
+    splits = dataset.train_test_split(test_size=0.05, seed=training_args.data_seed)
+    train_data = splits["train"]
     val_data = splits["test"]
 
     logger.info(

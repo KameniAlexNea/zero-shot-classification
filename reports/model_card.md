@@ -48,21 +48,17 @@ Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deb
 
 ### Architecture Summary
 
-```
-Input: [CLS] <text tokens> [SEP] <label_1 tokens> [LAB] <label_2 tokens> [LAB] ... [PAD]
-         │
-    DeBERTa-v3-base  (frozen/fine-tuned)
-         │
-    ┌────┴────────────────────────┐
-    │  Text repr (CLS hidden)     │  Label reprs (avg per label span)
-    └────────────────┬────────────┘
-              Linear projection → dim 1024
-                     │
-              Cosine similarity
-                     │
-              Learnable temperature scale
-                     │
-              MultiLabel-Softmax + BCE + Repulsion (training)
+```mermaid
+flowchart TD
+    A["Input sequence\n[CLS] &lt;text&gt; [SEP] &lt;label_1&gt; [LAB] &lt;label_2&gt; [LAB] … [PAD]"]
+    A --> B["DeBERTa-v3-base\nContextual hidden states"]
+    B --> C["Text repr\nCLS hidden state"]
+    B --> D["Label reprs\nAvg pooling per label span"]
+    C --> E["Linear projection\ndim → 1024"]
+    D --> E
+    E --> F["Cosine similarity\ntext · label_i"]
+    F --> G["Learnable temperature scale"]
+    G --> H["MultiLabel-Softmax loss\n+ auxiliary BCE\n+ label repulsion\n(training only)"]
 ```
 
 ---
@@ -109,33 +105,30 @@ model  = AutoModel.from_pretrained("alexneakameni/gliznet-deberta-v3-base")
 
 ## Performance
 
-Evaluated on the held-out test split of **ZSHOT-HARDSET-v2** (1,322 samples, up to 20 labels per sample).  
-All models evaluated under identical ranking metrics.
+Evaluated on the **GLiClass benchmark** — 10 standard text-classification datasets reported as **macro F1**.  
+GLiClass variants are the closest published competitors; all encode text and labels jointly in a single forward pass.
 
-### GliZNet vs GLiClass (direct competitor)
+![GliZNet Performance](./gliznet_performance.png)
 
-GLiClass is the closest published competitor — it also encodes text and labels jointly in a single forward pass.
+### Macro F1 on GLiClass benchmark datasets
 
-| Model | MRR | Hit@1 | Hit@3 | Hit@5 | NDCG@10 |
-|---|---|---|---|---|---|
-| `knowledgator/gliclass-base-v3.0` | 0.927 | 0.862 | 0.996 | 0.999 | 0.920 |
-| **GliZNet-deberta-v3-base (ours)** | **0.966** | **0.935** | 0.985 | **1.000** | **0.942** |
+| Dataset | GliZNet (ours) | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-large | GLiClass-modern-base | GLiClass-edge |
+|---|---|---|---|---|---|---|
+| CR | 0.8148 | 0.9398 | 0.9127 | 0.8952 | 0.8902 | 0.8215 |
+| SST-2 | 0.8566 | 0.9192 | 0.8959 | 0.9330 | 0.8959 | 0.8199 |
+| SST-5 | 0.2737 | 0.4606 | 0.3376 | 0.4619 | 0.2756 | 0.2823 |
+| IMDb | 0.8807 | 0.9366 | 0.9251 | 0.9402 | 0.9158 | 0.8485 |
+| 20-Newsgroups | 0.3269 | 0.5958 | 0.4759 | 0.3905 | 0.3433 | 0.2217 |
+| Enron Spam | 0.5995 | 0.7584 | 0.6760 | 0.5813 | 0.6398 | 0.5623 |
+| Financial PhraseBank | 0.4370 | 0.9000 | 0.8971 | 0.5929 | 0.4200 | 0.5004 |
+| AG News | 0.6849 | 0.7181 | 0.7279 | 0.7269 | 0.6663 | 0.6645 |
+| Emotion | 0.3990 | 0.4506 | 0.4447 | 0.4517 | 0.4254 | 0.3851 |
+| Rotten Tomatoes | 0.7917 | 0.8411 | 0.7943 | 0.7664 | 0.7070 | 0.7024 |
+| **AVERAGE** | **0.6065** | **0.7520** | **0.7087** | **0.6740** | **0.6179** | **0.5809** |
 
-**Δ GliZNet − GLiClass**: MRR +0.039 · Hit@1 +0.073 · NDCG@10 +0.023
+**Δ GliZNet vs GLiClass-large**: −0.1455 · **Δ vs GLiClass-base**: −0.1022 · **Δ vs GLiClass-modern-large**: −0.0675 · **Δ vs GLiClass-edge**: +0.0256
 
-### GliZNet vs sentence-embedding baselines
-
-Independent text/label embedding with cosine similarity
-
-| Model | MRR | Hit@1 | Hit@3 | Hit@5 | NDCG@10 | ROC-AUC | Avg Precision |
-|---|---|---|---|---|---|---|---|
-| `OrdalieTech/Solon-embeddings-large-0.1` | 0.914 | 0.843 | 0.989 | 1.000 | 0.895 | 0.708 | 0.800 |
-| `jinaai/jina-embeddings-v5-text-small` | 0.936 | 0.883 | 0.995 | 1.000 | 0.914 | 0.759 | 0.832 |
-| `microsoft/harrier-oss-v1-0.6b` | 0.915 | 0.840 | 0.992 | 1.000 | 0.897 | 0.716 | 0.804 |
-| `intfloat/e5-large-v2` | 0.931 | 0.871 | 0.994 | 1.000 | 0.911 | 0.753 | 0.828 |
-| **GliZNet-deberta-v3-base (ours)** | **0.966** | **0.935** | 0.985 | **1.000** | **0.942** | **0.825** | **0.874** |
-
-*All GliZNet results from `checkpoint-850` (best checkpoint by eval loss).*
+*GliZNet is a DeBERTa-v3-**base** model trained on synthetic data only; GLiClass-large uses a significantly bigger backbone.*
 
 ---
 

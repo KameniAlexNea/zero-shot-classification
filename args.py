@@ -52,10 +52,6 @@ class ModelArgs:
         default=2.0,
         metadata={"help": "Initial value for learnable logit scale (exp(2) ≈ 7.4)"},
     )
-    learn_temperature: bool = field(
-        default=True,
-        metadata={"help": "Whether to learn temperature/scale parameter"},
-    )
     repulsion_threshold: float = field(
         default=0.3,
         metadata={"help": "Cosine similarity threshold for repulsion penalty"},
@@ -126,5 +122,7 @@ class ModelArgs:
     # Whether to augment the training set with additional datasets
     use_additional_datasets: bool = field(
         default=False,
-        metadata={"help": "Whether to augment the training set with additional datasets defined in training_data.py"},
+        metadata={
+            "help": "Whether to augment the training set with additional datasets defined in training_data.py"
+        },
     )

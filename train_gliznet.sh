@@ -21,11 +21,10 @@ nohup accelerate launch train_gliznet.py \
     --use_projection_layernorm \
     \
     `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
-    --bce_loss_weight 1.0 \
-    --supcon_loss_weight 1.0 \
-    --label_repulsion_weight 0.1 \
-    --logit_scale_init 2.0 \
-    --learn_temperature \
+    --bce_loss_weight 0.5 \
+    --supcon_loss_weight 0.5 \
+    --label_repulsion_weight 0.05 \
+    --logit_scale_init 1.0 \
     --repulsion_threshold 0.3 \
     \
     `# Data Configuration` \
@@ -34,15 +33,16 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 5000 \
+    --max_extended_ds_size 20000 \
+    --use_additional_datasets \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
-    --model_max_length 1024 \
+    --model_max_length 512 \
     --lab_cls_token "[LAB]" \
-    --max_tokens_per_span 64 \
-    --min_text_tokens 10 \
-    --min_label_tokens 2 \
+    --max_tokens_per_span 16 \
+    --min_text_tokens 5 \
+    --min_label_tokens 1 \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
@@ -50,28 +50,30 @@ nohup accelerate launch train_gliznet.py \
     --num_train_epochs 10 \
     --per_device_train_batch_size 16 \
     --per_device_eval_batch_size 16 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 1e-4 \
+    --gradient_accumulation_steps 2 \
+    --learning_rate 4e-5 \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
+    --max_grad_norm 2.0 \
     \
     `# Evaluation & Checkpointing` \
     --eval_strategy epoch \
     --save_strategy epoch \
     --save_total_limit 4 \
     --load_best_model_at_end \
-    --metric_for_best_model eval_loss \
+    --metric_for_best_model loss \
     --early_stopping_patience 3 \
-    --metric_for_best_model f1 \
     --eval_on_start \
     --eval_do_concat_batches False \
     \
     `# Performance Optimization` \
     --dataloader_pin_memory \
-    --dataloader_num_workers 4 \
-    --dataloader_prefetch_factor 1 \
+    --dataloader_num_workers 8 \
+    --dataloader_prefetch_factor 2 \
     --eval_use_gather_object \
+    --ddp_find_unused_parameters False \
+    --torch_compile \
     --bf16 \
     \
     `# Logging & Monitoring` \

@@ -1,303 +1,262 @@
 """
-Essential unittest tests for metrics module.
-Focused on the most critical functions with clear, simple test cases.
+Pytest tests for gliznet/metrics.py.
+
+Covers:
+  - _sigmoid / _flatten helpers
+  - _ndcg_at_k
+  - compute_metrics  (Hit@k, NDCG@k, MRR, ROC-AUC, Avg Precision)
+  - edge cases: all-padding, no positives, single sample, perfect ranking
 """
 
-import os
-import sys
-import unittest
-
 import numpy as np
+import pytest
 
-# Add the parent directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from evaluation.metrics import (
-    apply_sigmoid,
+from gliznet.metrics import (
+    _flatten,
+    _ndcg_at_k,
+    _sigmoid,
     compute_metrics,
-    find_best_threshold,
-    flatten_nested_lists,
-    hamming_score,
-    is_multilabel,
-    is_single_label_multiclass,
 )
 
 
-class TestBasicFunctions(unittest.TestCase):
-    """Test basic utility functions."""
-
-    def test_flatten_nested_lists(self):
-        """Test list flattening functionality."""
-        # Single level nesting
-        data = [[1, 2], [3, 4]]
-        result = flatten_nested_lists(data)
-        self.assertEqual(result, [1, 2, 3, 4])
-
-        # Already flat
-        data = [1, 2, 3, 4]
-        result = flatten_nested_lists(data)
-        self.assertEqual(result, [1, 2, 3, 4])
-
-        # Empty list
-        data = []
-        result = flatten_nested_lists(data)
-        self.assertEqual(result, [])
-
-    def test_apply_sigmoid(self):
-        """Test sigmoid activation function."""
-        # Test known values
-        logits = np.array([0, 1, -1])
-        result = apply_sigmoid(logits)
-
-        self.assertAlmostEqual(result[0], 0.5, places=6)  # sigmoid(0) = 0.5
-        self.assertGreater(result[1], 0.5)  # sigmoid(1) > 0.5
-        self.assertLess(result[2], 0.5)  # sigmoid(-1) < 0.5
-
-        # Test monotonicity
-        self.assertLess(result[2], result[0])
-        self.assertLess(result[0], result[1])
-
-    def test_is_multilabel(self):
-        """Test multilabel detection."""
-        # True multilabel (2D with multiple columns)
-        labels = np.array([[1, 0, 1], [0, 1, 1]])
-        self.assertTrue(is_multilabel(labels))
-
-        # Binary (1D)
-        labels = np.array([1, 0, 1, 0])
-        self.assertFalse(is_multilabel(labels))
-
-        # Single column 2D
-        labels = np.array([[1], [0], [1]])
-        self.assertFalse(is_multilabel(labels))
-
-    def test_is_single_label_multiclass(self):
-        """Test one-hot detection."""
-        # One-hot encoded (exactly one 1 per row)
-        labels = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
-        self.assertTrue(is_single_label_multiclass(labels))
-
-        # True multilabel (multiple 1s per row)
-        labels = np.array([[1, 1, 0], [0, 1, 1]])
-        self.assertFalse(is_single_label_multiclass(labels))
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 
-class TestCustomMetrics(unittest.TestCase):
-    """Test custom metric implementations."""
-
-    def test_hamming_score_perfect(self):
-        """Test Hamming score with perfect predictions."""
-        y_true = np.array([[1, 0, 1], [0, 1, 0]])
-        y_pred = np.array([[1, 0, 1], [0, 1, 0]])
-        score = hamming_score(y_true, y_pred)
-        self.assertEqual(score, 1.0)
-
-    def test_hamming_score_no_match(self):
-        """Test Hamming score with no matches."""
-        y_true = np.array([[1, 0, 1], [0, 1, 0]])
-        y_pred = np.array([[0, 1, 0], [1, 0, 1]])
-        score = hamming_score(y_true, y_pred)
-        self.assertEqual(score, 0.0)
-
-    def test_hamming_score_all_zeros(self):
-        """Test Hamming score with all zeros."""
-        y_true = np.array([[0, 0, 0], [0, 0, 0]])
-        y_pred = np.array([[0, 0, 0], [0, 0, 0]])
-        score = hamming_score(y_true, y_pred)
-        self.assertEqual(score, 1.0)
+def _make_eval_pred(scores_list, labels_list):
+    """Build a dense (N, max_labels) eval_pred tuple with -100 padding."""
+    max_k = max(len(s) for s in scores_list)
+    scores_arr = np.full((len(scores_list), max_k), -100.0)
+    labels_arr = np.full((len(labels_list), max_k), -100.0)
+    for i, (s, lab) in enumerate(zip(scores_list, labels_list)):
+        scores_arr[i, : len(s)] = s
+        labels_arr[i, : len(lab)] = lab
+    return scores_arr, labels_arr
 
 
-class TestComputeMetrics(unittest.TestCase):
-    """Test the main compute_metrics function."""
-
-    def test_binary_classification(self):
-        """Test binary classification workflow."""
-        # Simple binary case
-        logits = [np.array([0.8]), np.array([0.2]), np.array([0.7]), np.array([0.1])]
-        labels = [np.array([1]), np.array([0]), np.array([1]), np.array([0])]
-
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred, activated=False)
-
-        # Should have basic metrics
-        required_metrics = ["accuracy", "precision", "recall", "f1"]
-        for metric in required_metrics:
-            self.assertIn(metric, metrics)
-            self.assertGreaterEqual(metrics[metric], 0.0)
-            self.assertLessEqual(metrics[metric], 1.0)
-
-    def test_multilabel_classification(self):
-        """Test multilabel classification workflow."""
-        # Multilabel case
-        logits = [
-            np.array([0.8, 0.2, 0.6]),
-            np.array([0.1, 0.9, 0.3]),
-            np.array([0.7, 0.1, 0.8]),
-        ]
-        labels = [np.array([1, 0, 1]), np.array([0, 1, 0]), np.array([1, 0, 1])]
-
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred, activated=False)
-
-        # Should have multilabel-specific metrics
-        multilabel_metrics = ["jaccard", "hamming_loss"]
-        for metric in multilabel_metrics:
-            self.assertIn(metric, metrics)
-
-    def test_single_label_multiclass(self):
-        """Test one-hot encoded multiclass."""
-        # One-hot encoded
-        logits = [
-            np.array([0.1, 0.8, 0.1]),
-            np.array([0.7, 0.2, 0.1]),
-            np.array([0.2, 0.1, 0.7]),
-        ]
-        labels = [np.array([0, 1, 0]), np.array([1, 0, 0]), np.array([0, 0, 1])]
-
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred, activated=False)
-
-        # Should have match_accuracy
-        self.assertIn("accuracy", metrics)
-        self.assertGreaterEqual(metrics["accuracy"], 0.0)
-        self.assertLessEqual(metrics["accuracy"], 1.0)
-
-    def test_perfect_predictions(self):
-        """Test with perfect predictions."""
-        # Perfect binary predictions
-        logits = [np.array([0.9]), np.array([0.1]), np.array([0.8]), np.array([0.2])]
-        labels = [np.array([1]), np.array([0]), np.array([1]), np.array([0])]
-
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred, activated=True, threshold=0.5)
-
-        # Should get high accuracy with good predictions
-        self.assertGreaterEqual(metrics["accuracy"], 0.75)
+# ──────────────────────────────────────────────────────────────────────────────
+# _flatten
+# ──────────────────────────────────────────────────────────────────────────────
 
 
-class TestThresholdOptimization(unittest.TestCase):
-    """Test threshold optimization functions."""
+class TestFlatten:
+    def test_single_level(self):
+        assert _flatten([[1, 2], [3, 4]]) == [1, 2, 3, 4]
 
-    def test_find_best_threshold_basic(self):
-        """Test basic threshold optimization."""
-        # Separable data
-        logits = np.array([0.1, 0.2, 0.8, 0.9])
-        labels = np.array([0, 0, 1, 1])
+    def test_already_flat(self):
+        assert _flatten([1, 2, 3]) == [1, 2, 3]
 
-        best_threshold, best_score = find_best_threshold(logits, labels, metric="f1")
+    def test_empty(self):
+        assert _flatten([]) == []
 
-        # Should find a good threshold and score
-        self.assertGreater(best_threshold, 0.2)
-        self.assertLess(best_threshold, 0.8)
-        self.assertGreater(best_score, 0.8)  # Should be high for separable data
-
-    def test_find_best_threshold_perfect(self):
-        """Test threshold optimization with perfect separation."""
-        # Perfectly separable
-        logits = np.array([0.1, 0.2, 0.8, 0.9])
-        labels = np.array([0, 0, 1, 1])
-
-        best_threshold, best_score = find_best_threshold(
-            logits, labels, metric="accuracy"
-        )
-
-        # Should achieve perfect accuracy
-        self.assertEqual(best_score, 1.0)
-
-    def test_find_best_threshold_different_metrics(self):
-        """Test with different optimization metrics."""
-        logits = np.array([0.3, 0.7, 0.4, 0.6])
-        labels = np.array([0, 1, 0, 1])
-
-        for metric in ["f1", "accuracy", "precision", "recall"]:
-            threshold, score = find_best_threshold(logits, labels, metric=metric)
-            self.assertGreaterEqual(threshold, 0.0)
-            self.assertLessEqual(threshold, 1.0)
-            self.assertGreaterEqual(score, 0.0)
-            self.assertLessEqual(score, 1.0)
+    def test_double_level(self):
+        assert _flatten([[[1, 2]], [[3, 4]]]) == [1, 2, 3, 4]
 
 
-class TestEdgeCases(unittest.TestCase):
-    """Test edge cases and error handling."""
+# ──────────────────────────────────────────────────────────────────────────────
+# _sigmoid
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestSigmoid:
+    def test_zero_maps_to_half(self):
+        assert _sigmoid(np.array([0.0]))[0] == pytest.approx(0.5)
+
+    def test_large_positive_approaches_one(self):
+        assert _sigmoid(np.array([100.0]))[0] > 0.9999
+
+    def test_large_negative_approaches_zero(self):
+        assert _sigmoid(np.array([-100.0]))[0] < 1e-4
+
+    def test_monotone_increasing(self):
+        xs = np.linspace(-3, 3, 20)
+        ys = _sigmoid(xs)
+        assert (np.diff(ys) > 0).all()
+
+    def test_matches_formula(self):
+        xs = np.array([-2.0, 0.0, 1.5])
+        expected = 1.0 / (1.0 + np.exp(-xs))
+        np.testing.assert_allclose(_sigmoid(xs), expected)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _ndcg_at_k
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestNdcgAtK:
+    def test_perfect_ranking(self):
+        # First item is the only positive → ideal case
+        ranked = np.array([1, 0, 0, 0])
+        assert _ndcg_at_k(ranked, k=1) == pytest.approx(1.0)
+
+    def test_positive_not_in_top_k(self):
+        ranked = np.array([0, 0, 1])
+        assert _ndcg_at_k(ranked, k=1) == pytest.approx(0.0)
+
+    def test_all_positives_perfect(self):
+        ranked = np.array([1, 1, 1])
+        assert _ndcg_at_k(ranked, k=3) == pytest.approx(1.0)
+
+    def test_no_positives_returns_zero(self):
+        ranked = np.array([0, 0, 0])
+        assert _ndcg_at_k(ranked, k=3) == pytest.approx(0.0)
+
+    def test_k_larger_than_array(self):
+        ranked = np.array([1, 0])
+        # Should not raise; clips to len(ranked)
+        val = _ndcg_at_k(ranked, k=100)
+        assert 0.0 <= val <= 1.0
+
+    def test_partial_ranking(self):
+        # Second positive is rank-2 (0-indexed rank 1)
+        ranked = np.array([1, 1, 0, 0])
+        val = _ndcg_at_k(ranked, k=4)
+        assert 0.0 < val <= 1.0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# compute_metrics
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestComputeMetrics:
+    """Tests against the actual gliznet/metrics.py compute_metrics."""
+
+    def test_output_keys_present(self):
+        scores = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+        labels = [[1, 0, 0], [0, 1, 0]]
+        metrics = compute_metrics(_make_eval_pred(scores, labels))
+        for key in ("hit@1", "hit@3", "hit@5", "ndcg@1", "ndcg@3", "ndcg@5", "mrr"):
+            assert key in metrics, f"missing key: {key}"
+
+    def test_perfect_ranking(self):
+        """Positive always ranked first → Hit@1=MRR=NDCG@1=1."""
+        scores = [[5.0, -1.0, -2.0]] * 4
+        labels = [[1, 0, 0]] * 4
+        m = compute_metrics(_make_eval_pred(scores, labels))
+        assert m["hit@1"] == pytest.approx(1.0)
+        assert m["mrr"] == pytest.approx(1.0)
+        assert m["ndcg@1"] == pytest.approx(1.0)
+
+    def test_worst_ranking(self):
+        """Positive always ranked last → Hit@1=0, MRR minimal."""
+        scores = [[-2.0, -1.0, 5.0]] * 4
+        labels = [[1, 0, 0]] * 4
+        m = compute_metrics(_make_eval_pred(scores, labels))
+        assert m["hit@1"] == pytest.approx(0.0)
+        assert m["mrr"] == pytest.approx(1 / 3)  # positive at rank 3
+
+    def test_hit_at_k_increases_with_k(self):
+        scores = [[3.0, 2.0, 1.0, 0.0]]
+        labels = [[0, 0, 0, 1]]  # positive at rank 4
+        m = compute_metrics(_make_eval_pred(scores, labels), ks=(1, 3, 5))
+        assert m["hit@1"] == 0.0
+        assert m["hit@3"] == 0.0
+        assert m["hit@5"] == 1.0
+
+    def test_padding_ignored(self):
+        """Samples padded with -100 should be skipped without error."""
+        scores = np.array([[5.0, -1.0, -100.0], [5.0, -1.0, -100.0]])
+        labels = np.array([[1, 0, -100], [1, 0, -100]])
+        m = compute_metrics((scores, labels))
+        assert m["hit@1"] == pytest.approx(1.0)
+
+    def test_all_padding_skipped(self):
+        """A fully-padded sample contributes nothing."""
+        scores = np.array([[-100.0, -100.0]])
+        labels = np.array([[-100, -100]])
+        m = compute_metrics((scores, labels))
+        assert m["num_samples"] == 0
+
+    def test_no_positives_skipped(self):
+        """Samples without any positive label are skipped."""
+        scores = np.array([[1.0, 0.5]])
+        labels = np.array([[0, 0]])
+        m = compute_metrics((scores, labels))
+        assert m["num_samples"] == 0
+
+    def test_multiple_positives(self):
+        """Multiple positives per sample — MRR uses the first positive in ranked order."""
+        scores = [[3.0, 2.0, 1.0]]
+        labels = [[0, 1, 1]]  # two positives; top-1 is negative
+        m = compute_metrics(_make_eval_pred(scores, labels), ks=(1, 2, 3))
+        assert m["hit@1"] == 0.0
+        assert m["hit@2"] == pytest.approx(1.0)  # second rank is positive
+        assert m["mrr"] == pytest.approx(1 / 2)
+
+    def test_roc_auc_and_ap_bounded(self):
+        scores = [[2.0, 1.0, -1.0, -2.0]] * 10
+        labels = [[1, 1, 0, 0]] * 10
+        m = compute_metrics(_make_eval_pred(scores, labels))
+        assert 0.0 <= m["roc_auc"] <= 1.0
+        assert 0.0 <= m["avg_precision"] <= 1.0
 
     def test_single_sample(self):
-        """Test with single sample."""
-        logits = [np.array([0.8])]
-        labels = [np.array([1])]
+        scores = [[1.0, 0.0]]
+        labels = [[1, 0]]
+        m = compute_metrics(_make_eval_pred(scores, labels))
+        assert m["hit@1"] == pytest.approx(1.0)
 
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred)
+    def test_ndcg_perfect_vs_reversed(self):
+        """Perfect ranking should have higher NDCG than reversed."""
+        perfect_scores = [[3.0, 2.0, 1.0, 0.0]]
+        reversed_scores = [[0.0, 1.0, 2.0, 3.0]]
+        labels = [[1, 1, 0, 0]]
+        m_perfect = compute_metrics(
+            _make_eval_pred(perfect_scores, labels), ks=(1, 3, 4)
+        )
+        m_reversed = compute_metrics(
+            _make_eval_pred(reversed_scores, labels), ks=(1, 3, 4)
+        )
+        assert m_perfect["ndcg@4"] > m_reversed["ndcg@4"]
 
-        # Should handle single sample
-        self.assertIn("accuracy", metrics)
+    @pytest.mark.parametrize("k", [1, 3, 5])
+    def test_hit_at_k_bounds(self, k):
+        scores = [[2.0, 1.0, 0.0]] * 5
+        labels = [[1, 0, 0]] * 5
+        m = compute_metrics(_make_eval_pred(scores, labels), ks=(k,))
+        assert 0.0 <= m[f"hit@{k}"] <= 1.0
 
-    def test_all_same_predictions(self):
-        """Test when all predictions are the same."""
-        logits = [np.array([0.9]), np.array([0.9]), np.array([0.9])]
-        labels = [np.array([1]), np.array([0]), np.array([1])]
+    def test_ragged_batch_list(self):
+        """compute_metrics handles list of per-batch arrays with different max_labels (DDP case)."""
+        # Batch 1: 2 samples, 3 labels
+        b1_preds = np.array([[2.0, 1.0, -1.0], [-1.0, 2.0, 1.0]])
+        b1_labels = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        # Batch 2: 2 samples, 5 labels — different max_labels
+        b2_preds = np.array([[3.0, 1.0, -1.0, 0.5, 0.2], [0.5, -1.0, 2.0, 1.0, -0.5]])
+        b2_labels = np.array([[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]])
 
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred, activated=True, threshold=0.5)
+        m = compute_metrics(([b1_preds, b2_preds], [b1_labels, b2_labels]))
+        assert "hit@1" in m
+        assert m["num_samples"] == 4
+        assert m["hit@1"] == pytest.approx(1.0)
 
-        # Should handle gracefully
-        self.assertIn("accuracy", metrics)
+    def test_nested_per_rank_batch_list(self):
+        """compute_metrics handles eval_use_gather_object + DDP structure: list of per-batch
+        lists of per-rank arrays, with different max_labels across batches and ranks."""
+        # Simulates: [[rank0_batch0, rank1_batch0], [rank0_batch1, rank1_batch1]]
+        # rank0 batch0: 2 samples, 3 labels
+        r0b0_preds = np.array([[2.0, 1.0, -1.0], [-1.0, 2.0, 1.0]])
+        r0b0_labels = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+        # rank1 batch0: 2 samples, 5 labels (different max_labels)
+        r1b0_preds = np.array([[3.0, 1.0, -1.0, 0.5, 0.2], [0.5, -1.0, 2.0, 1.0, -0.5]])
+        r1b0_labels = np.array([[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0]])
+        # rank0 batch1: 2 samples, 4 labels
+        r0b1_preds = np.array([[1.0, 3.0, -1.0, 0.0], [2.0, 0.5, -0.5, 1.0]])
+        r0b1_labels = np.array([[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
 
-    def test_all_zero_labels(self):
-        """Test with all zero labels."""
-        logits = [np.array([0.3]), np.array([0.7]), np.array([0.4])]
-        labels = [np.array([0]), np.array([0]), np.array([0])]
+        nested_preds = [[r0b0_preds, r1b0_preds], [r0b1_preds]]
+        nested_labels = [[r0b0_labels, r1b0_labels], [r0b1_labels]]
 
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred)
+        m = compute_metrics((nested_preds, nested_labels))
+        assert "hit@1" in m
+        assert m["num_samples"] == 6
 
-        # Should handle all zero labels
-        self.assertIn("accuracy", metrics)
-
-
-def run_simple_validation():
-    """Run a simple validation check."""
-    print("\n" + "=" * 50)
-    print("SIMPLE VALIDATION CHECK")
-    print("=" * 50)
-
-    try:
-        # Test basic functionality
-        print("Testing basic functions...")
-
-        # Test sigmoid
-        result = apply_sigmoid(np.array([0]))
-        assert abs(result[0] - 0.5) < 1e-6
-        print("✅ Sigmoid function works")
-
-        # Test multilabel detection
-        labels = np.array([[1, 0, 1], [0, 1, 1]])
-        assert is_multilabel(labels)
-        print("✅ Multilabel detection works")
-
-        # Test compute_metrics
-        logits = [np.array([0.8]), np.array([0.2])]
-        labels = [np.array([1]), np.array([0])]
-        eval_pred = (logits, labels)
-        metrics = compute_metrics(eval_pred)
-        assert "accuracy" in metrics
-        print("✅ Compute metrics works")
-
-        print("\n🎉 All basic validations passed!")
-        return True
-
-    except Exception as e:
-        print(f"\n❌ Validation failed: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    print("ESSENTIAL METRICS UNITTEST SUITE")
-    print("=" * 50)
-
-    # Run simple validation first
-    if not run_simple_validation():
-        sys.exit(1)
-
-    # Run full unittest suite
-    print("\nRunning full unittest suite...")
-    unittest.main(verbosity=2)
+    @pytest.mark.parametrize("k", [1, 3, 5])
+    def test_ndcg_at_k_bounds(self, k):
+        scores = [[2.0, 1.0, 0.0]] * 5
+        labels = [[1, 0, 0]] * 5
+        m = compute_metrics(_make_eval_pred(scores, labels), ks=(k,))
+        assert 0.0 <= m[f"ndcg@{k}"] <= 1.0

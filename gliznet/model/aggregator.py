@@ -62,7 +62,7 @@ class LabelAggregator(nn.Module):
             all_batch_ids = batch_indices_all[lab_mask]
 
             lab_counts = lab_mask.sum(dim=1)
-            max_labels = int(lab_counts.max().item())
+            max_labels = self.config.max_labels
 
             batch_label_grid = (
                 torch.arange(batch_size, device=device)
@@ -98,7 +98,7 @@ class LabelAggregator(nn.Module):
             token_batch_ids = batch_indices_all[label_mask]
             token_label_ids = lmask[label_mask].long()
 
-            max_label_id = int(token_label_ids.max().item())
+            max_label_id = self.config.max_labels
             num_slots = batch_size * max_label_id
             flat_indices = token_batch_ids * max_label_id + (token_label_ids - 1)
 
@@ -146,6 +146,7 @@ class LabelAggregator(nn.Module):
         lmask: torch.Tensor,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
+        inference: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
         """Aggregate label representations and compute similarities using token-level attention.
 
@@ -160,7 +161,6 @@ class LabelAggregator(nn.Module):
             batch_indices: Batch index for each score (N,)
             label_ids: Label ID for each score (N,)
             label_embeddings: Aggregated label embeddings (N, D)
-            logit_scale: Current temperature scale
             text_aggregations: Label-specific text representations (N, D)
         """
         # Project ALL tokens (not just CLS)
@@ -179,42 +179,44 @@ class LabelAggregator(nn.Module):
 
         # Early return if no label spans were found (e.g. malformed tokenization).
         if aggregated_labels.shape[0] == 0:
-            logit_scale = self.similarity_head.logit_scale.clamp(-10, 10)
             empty_logits = torch.empty(0, 1, device=hidden_states.device)
             return (
                 empty_logits,
                 all_batch_ids,
                 all_label_ids,
                 aggregated_labels,
-                logit_scale,
                 aggregated_labels,
             )
 
-        # Token-level attention: for each label, attend over the text tokens of its sample.
-        text_tokens = projected_all[all_batch_ids]  # (N, L, D)
-        label_mask = text_mask[all_batch_ids]  # (N, L)
+        # Token-level attention: attend over the text tokens of each sample per label.
+        # Dense batched matmul avoids the (N, L, D) intermediate tensor (N = total label spans).
+        # Pack labels into (B, max_labels, D) and use two batched bmm ops instead.
+        B = hidden_states.shape[0]
+        D = aggregated_labels.shape[-1]
+        max_label_id = int(all_label_ids.max().item()) if inference else self.config.max_labels
+        scale = self.attention_temperature.abs().clamp(min=0.1) * (D ** 0.5)
 
-        scores = torch.bmm(
-            aggregated_labels.unsqueeze(1),
-            text_tokens.transpose(1, 2),
-        ).squeeze(1) / (
-            self.attention_temperature.abs().clamp(min=0.1)
-            * (aggregated_labels.shape[-1] ** 0.5)
-        )  # (N, L) — scaled dot-product attention (÷√D prevents bfloat16 exp overflow)
+        dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
+        dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels  # scatter
 
-        scores = scores.masked_fill(~label_mask, float("-inf"))
-        attn_weights = F.softmax(scores, dim=1)  # (N, L)
-        aggregated_text = torch.bmm(attn_weights.unsqueeze(1), text_tokens).squeeze(
-            1
-        )  # (N, D)
+        # (B, max_labels, D) @ (B, D, L) → (B, max_labels, L)
+        scores_dense = torch.bmm(dense_labels, projected_all.transpose(1, 2)) / scale
+        # Mask non-text positions: text_mask (B, L) broadcast to (B, 1, L)
+        scores_dense = scores_dense.masked_fill(~text_mask.unsqueeze(1), float("-inf"))
+        attn_weights_dense = F.softmax(scores_dense, dim=2)  # (B, max_labels, L)
 
-        logits, logit_scale = self.similarity_head(aggregated_text, aggregated_labels)
+        # (B, max_labels, L) @ (B, L, D) → (B, max_labels, D)
+        aggregated_text_dense = torch.bmm(attn_weights_dense, projected_all)
+
+        # Extract only the valid (N,) label slots
+        aggregated_text = aggregated_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
+
+        logits = self.similarity_head(aggregated_text, aggregated_labels)
 
         return (
             logits,
             all_batch_ids,
             all_label_ids,
             aggregated_labels,
-            logit_scale,
             aggregated_text,
         )
