@@ -330,9 +330,7 @@ class TestGliZNetLoss:
         empty_batch = torch.zeros(0, dtype=torch.long)
         empty_ids = torch.zeros(0, dtype=torch.long)
         empty_embs = torch.zeros(0, 8)
-        out = loss_fn(
-            empty_logits, empty_labels, empty_batch, empty_ids, empty_embs
-        )
+        out = loss_fn(empty_logits, empty_labels, empty_batch, empty_ids, empty_embs)
         assert self._total(out).item() == pytest.approx(0.0, abs=1e-6)
 
     def test_perfect_scores_lower_loss_than_random(self):

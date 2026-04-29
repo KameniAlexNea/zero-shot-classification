@@ -38,8 +38,11 @@ class GliZNetLoss(nn.Module):
             unweighted scalar loss.  The caller applies the configured weights
             and sums them.
         """
+
         def _zero() -> torch.Tensor:
-            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
+            return torch.tensor(
+                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
+            )
 
         if logits.numel() == 0:
             return {"softmax": _zero(), "repulsion": _zero(), "bce": _zero()}

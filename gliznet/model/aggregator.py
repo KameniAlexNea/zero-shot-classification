@@ -101,7 +101,9 @@ class LabelAggregator(nn.Module):
             )
 
         # Token-level attention: attend over text tokens per label.
-        max_label_id = int(all_label_ids.max().item()) if inference else self.config.max_labels
+        max_label_id = (
+            int(all_label_ids.max().item()) if inference else self.config.max_labels
+        )
         scale = D**0.5
 
         dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
@@ -116,7 +118,9 @@ class LabelAggregator(nn.Module):
         aggregated_text_dense = torch.bmm(attn_weights_dense, hidden_states)
 
         # Extract only the valid (N,) label slots
-        aggregated_text = aggregated_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
+        aggregated_text = aggregated_text_dense[
+            all_batch_ids, all_label_ids - 1
+        ]  # (N, D)
 
         logits = self.bilinear(aggregated_text, aggregated_labels)
 
