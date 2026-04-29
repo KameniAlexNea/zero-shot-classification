@@ -35,9 +35,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
 
     Architecture:
         - Backbone transformer (default: ModernBERT-base)
-        - Separate projectors for text tokens and label spans
         - Token-level cross-attention to build a label-specific text representation
-        - Similarity computation (cosine by default; dot/bilinear also available)
+        - Bilinear head for scoring text-label pairs
     """
 
     def __init__(self, config: GliZNetConfig):

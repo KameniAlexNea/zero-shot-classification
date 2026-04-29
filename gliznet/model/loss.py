@@ -27,12 +27,11 @@ class GliZNetLoss(nn.Module):
         """Compute individual loss components.
 
         Args:
-            logits: Predicted scores (N, 1) - already scaled by SimilarityHead
+            logits: Predicted scores (N, 1)
             labels: Ground truth labels (B, MaxLabels)
             batch_indices: Batch index for each logit (N,)
             label_ids: Label ID for each logit (N,)
-            label_embeddings: Projected label embeddings (N, D)
-            logit_scale: Current temperature scale from SimilarityHead
+            label_embeddings: Label embeddings (N, D)
 
         Returns:
             Dict with keys ``softmax``, ``repulsion``, ``bce`` — each an
