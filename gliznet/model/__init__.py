@@ -1,7 +1,7 @@
 from transformers import AutoConfig, AutoModel
 
 from gliznet.model.aggregator import LabelAggregator
-from gliznet.model.classification import (
+from gliznet.model.gliznet_modelling import (
     GliZNetForSequenceClassification,
     GliZNetPreTrainedModel,
 )
