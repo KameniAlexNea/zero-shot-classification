@@ -361,6 +361,20 @@ def load_bigbench_vitaminc_fact_verification(
     )
 
 
+def load_allenai_art(max_size: Optional[int] = None, seed: int = 42):
+    """Load AllenAI ART (Abductive Reasoning in narrative Text)."""
+
+    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
+        text = ensure_string(x["observation_1"]) + " " + ensure_string(x["observation_2"])
+        ltext = [ensure_string(x["hypothesis_1"]), ensure_string(x["hypothesis_2"])]
+        lint = [int(x["label"] == 1), int(x["label"] == 2)]
+        return {"text": text, LabelName.ltext: ltext, LabelName.lint: lint}
+
+    return load_dataset_with_validation(
+        "allenai/art", None, mapper_func=mapper, max_size=max_size, seed=seed
+    )
+
+
 # Registry of additional datasets to mix in during training.
 # Comment out or remove entries to disable specific sources.
 additional_datasets = {
@@ -377,4 +391,5 @@ additional_datasets = {
     "bigbench_contextual_parametric_knowledge_conflicts": load_bigbench_contextual_parametric_knowledge_conflicts,
     "bigbench_formal_fallacies_syllogisms_negation": load_bigbench_formal_fallacies_syllogisms_negation,
     "bigbench_vitaminc_fact_verification": load_bigbench_vitaminc_fact_verification,
+    "allenai_art": load_allenai_art,
 }
