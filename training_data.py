@@ -375,6 +375,31 @@ def load_allenai_art(max_size: Optional[int] = None, seed: int = 42):
     )
 
 
+def load_jvonrad_multilingual_mcq_consistency(
+    max_size: Optional[int] = None, seed: int = 42
+):
+    """Load jvonrad/multilingual-mcq-consistency, English only."""
+
+    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
+        en = (x.get("langs") or {}).get("en")
+        if not en:
+            return {"text": "", LabelName.ltext: [], LabelName.lint: []}
+        question = ensure_string(en.get("question", ""))
+        options = en.get("options") or []
+        answer = en.get("answer_text", "")
+        ltext = [ensure_string(o) for o in options]
+        lint = [int(ensure_string(o) == ensure_string(answer)) for o in options]
+        return {"text": question, LabelName.ltext: ltext, LabelName.lint: lint}
+
+    return load_dataset_with_validation(
+        "jvonrad/multilingual-mcq-consistency",
+        None,
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
+    )
+
+
 # Registry of additional datasets to mix in during training.
 # Comment out or remove entries to disable specific sources.
 additional_datasets = {
@@ -392,4 +417,5 @@ additional_datasets = {
     "bigbench_formal_fallacies_syllogisms_negation": load_bigbench_formal_fallacies_syllogisms_negation,
     "bigbench_vitaminc_fact_verification": load_bigbench_vitaminc_fact_verification,
     "allenai_art": load_allenai_art,
+    "jvonrad_multilingual_mcq_consistency": load_jvonrad_multilingual_mcq_consistency,
 }
