@@ -50,7 +50,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         self.backbone: PreTrainedModel = AutoModel.from_config(config.backbone_config)
 
         self.aggregator = LabelAggregator(config)
-        self.loss_fn = GliZNetLoss(config)
+        self.loss_fn = GliZNetLoss.from_config(config)
 
         self.post_init()
 
@@ -146,11 +146,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                 label_ids=label_ids,
                 label_embeddings=label_embeddings,
             )
-            loss = (
-                loss_dict["softmax"] * self.config.supcon_loss_weight
-                + loss_dict["repulsion"] * self.config.label_repulsion_weight
-                + loss_dict["bce"] * self.config.bce_loss_weight
-            )
+            loss = loss_dict["total"]
             # Reconstruct dense (B, max_labels) logits so the Trainer can all_gather
             # fixed-shape tensors in DDP eval. Unused positions filled with -100.0.
             if logits.numel() > 0:

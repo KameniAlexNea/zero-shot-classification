@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import List
 
 
 @dataclass
@@ -50,6 +51,10 @@ class ModelArgs:
     scoring_method: str = field(
         default="bilinear",
         metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
+    )
+    losses: List[str] = field(
+        default_factory=lambda: ["softmax", "repulsion", "bce"],
+        metadata={"help": "Active loss modules. Any subset of: softmax, repulsion, bce"},
     )
 
     # Data configuration

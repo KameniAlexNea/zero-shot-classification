@@ -63,6 +63,7 @@ def create_model_tokenizer(args: ModelArgs):
         repulsion_threshold=args.repulsion_threshold,
         supcon_margin=args.supcon_margin,
         scoring_method=args.scoring_method,
+        losses=args.losses,
         # label id
         lab_token_id=tokenizer.lab_token_id,
         max_labels=args.max_labels,
