@@ -2,7 +2,7 @@
 
 ## Abstract
 
-GliZNet (Generalized Label-Informed Zero-Shot Network) is a novel architecture for zero-shot text classification that leverages label semantics through a carefully designed sequence construction, dual projection spaces, and a multi-objective loss function combining supervised contrastive learning, label repulsion, and binary cross-entropy. This document provides a comprehensive mathematical formulation of the model, detailing how each component contributes to the overall effectiveness.
+GliZNet (Generalized Label-Informed Zero-Shot Network) is a novel architecture for zero-shot text classification that leverages label semantics through a carefully designed sequence construction, a label aggregator with cross-attention, and a multi-objective loss function combining one-vs-negatives softmax ranking, optional label repulsion, and binary cross-entropy. This document provides a comprehensive mathematical formulation of the model, detailing how each component contributes to the overall effectiveness.
 
 ---
 
@@ -78,37 +78,13 @@ where:
 
 ---
 
-## 4. Dual Projection Architecture
+## 4. Representation Space
 
-### 4.1 Motivation
+GliZNet uses backbone hidden states directly without an additional projection layer. All downstream operations — label extraction, cross-attention, and bilinear scoring — operate in the backbone's native hidden space $\mathbb{R}^{d_h}$:
 
-Raw hidden states from the backbone live in a space optimized for masked language modeling, not for discriminative similarity computation. GliZNet introduces separate projection spaces for text and labels to:
-- Create specialized representations for each modality
-- Enable learnable similarity metrics
-- Reduce dimensionality if needed (optional)
+$$\mathbf{z}_i = \mathbf{h}_i \in \mathbb{R}^{d_h}$$
 
-### 4.2 Text Projection
-
-$$\mathbf{z}_i^{\text{text}} = \mathcal{P}_{\text{text}}(\mathbf{h}_i) = \text{Dropout}(\mathbf{W}_{\text{text}} \mathbf{h}_i + \mathbf{b}_{\text{text}}) \in \mathbb{R}^{d_p}$$
-
-Optional LayerNorm:
-$$\mathbf{z}_i^{\text{text}} = \text{LayerNorm}(\mathbf{W}_{\text{text}} \mathbf{h}_i + \mathbf{b}_{\text{text}})$$
-
-where:
-- $\mathbf{W}_{\text{text}} \in \mathbb{R}^{d_p \times d_h}$ is the text projection matrix
-- $d_p$ is the projected dimension (can equal $d_h$ for identity projection)
-- Dropout rate $p \in [0, 1)$ for regularization
-
-### 4.3 Label Projection
-
-$$\mathbf{z}_i^{\text{label}} = \mathcal{P}_{\text{label}}(\mathbf{h}_i) = \text{Dropout}(\mathbf{W}_{\text{label}} \mathbf{h}_i + \mathbf{b}_{\text{label}}) \in \mathbb{R}^{d_p}$$
-
-**Why Separate Projections?**
-- Text and labels serve different semantic roles
-- Separate weight matrices $\mathbf{W}_{\text{text}} \neq \mathbf{W}_{\text{label}}$ allow the model to learn:
-  - Text representation: focus on content, context, and semantic meaning
-  - Label representation: focus on category definition, discriminative features
-- This dual-space design is inspired by CLIP and other contrastive learning methods
+A configurable dropout is applied within the `LabelAggregator` before extracting label token representations as a regulariser during training.
 
 ---
 
@@ -118,31 +94,29 @@ $$\mathbf{z}_i^{\text{label}} = \mathcal{P}_{\text{label}}(\mathbf{h}_i) = \text
 
 GliZNet supports two aggregation strategies:
 
-#### **Mode 1: Average Pooling (Default)**
+#### **Mode 1: [LAB] Token Embedding (Current)**
 
-For each label $l_j$, aggregate all its token embeddings:
+Use the hidden state of the $[\text{LAB}]$ separator token that terminates each label span:
 
-$$\mathbf{e}_j^{\text{label}} = \frac{1}{|\mathcal{T}_j|} \sum_{i \in \mathcal{T}_j} \mathbf{z}_i^{\text{label}}$$
+$$\mathbf{e}_j^{\text{label}} = \mathbf{h}_{i_j} \quad \text{where } i_j \text{ is the position of } [\text{LAB}] \text{ after label } j$$
+
+**Properties**:
+- Single token per label — no pooling overhead
+- The $[\text{LAB}]$ token has attended to all preceding label tokens via self-attention, compressing their semantics into one vector
+- Dropout applied before extraction as regularisation
+
+#### **Mode 2: Average Pooling (Alternative)**
+
+For each label $l_j$, aggregate all its token hidden states:
+
+$$\mathbf{e}_j^{\text{label}} = \frac{1}{|\mathcal{T}_j|} \sum_{i \in \mathcal{T}_j} \mathbf{h}_i$$
 
 where $\mathcal{T}_j = \{i \mid m_i = j\}$ is the set of positions belonging to label $j$.
 
-**Mathematical Properties**:
-- Permutation-invariant: order of tokens doesn't matter
-- Captures full label semantics: multi-word labels benefit from all tokens
-- Smooth gradients: all label tokens receive gradients
-
-#### **Mode 2: [LAB] Token Embedding**
-
-Use the special $[\text{LAB}]$ token embedding as the label representation:
-
-$$\mathbf{e}_j^{\text{label}} = \mathbf{z}_{i_j}^{\text{label}} \quad \text{where } i_j \text{ is the position of } [\text{LAB}] \text{ after label } j$$
-
-**Advantages**:
-- Faster inference: single token per label
-- Simplified computation: no pooling needed
-- The $[\text{LAB}]$ token has "seen" all preceding label tokens via self-attention
-
-**Trade-off**: Relies on the transformer's ability to compress label semantics into a single token position.
+**Properties**:
+- Permutation-invariant
+- Every label token contributes gradients
+- Higher memory cost for long labels
 
 ---
 
@@ -172,11 +146,9 @@ where:
 
 ### 6.3 Attention Weight Computation
 
-The attention scores are computed via dot-product similarity:
+The attention scores are computed via scaled dot-product similarity:
 
-$$s_{b,j,i} = \frac{\langle \mathbf{e}_{b,j}^{\text{label}}, \mathbf{z}_i^{\text{text}} \rangle}{\tau_{\text{attn}}}$$
-
-where $\tau_{\text{attn}} > 0$ is a learnable temperature parameter.
+$$s_{b,j,i} = \frac{\langle \mathbf{e}_{b,j}^{\text{label}}, \mathbf{h}_i \rangle}{\sqrt{d_h}}$$
 
 **Masking** to exclude non-text positions:
 
@@ -191,11 +163,11 @@ $$\alpha_{b,j,i} = \frac{\exp(\tilde{s}_{b,j,i})}{\sum_{i' \in \mathcal{T}_{\tex
 
 **Vectorized Implementation**: The code uses batched matrix multiplication for efficiency:
 
-$$\mathbf{E}^{\text{text}} = \text{softmax}\left(\frac{\mathbf{E}^{\text{label}} (\mathbf{Z}^{\text{text}})^T}{\tau_{\text{attn}}}\right) \mathbf{Z}^{\text{text}}$$
+$$\mathbf{E}^{\text{text}} = \text{softmax}\left(\frac{\mathbf{E}^{\text{label}} (\mathbf{H}^{\text{text}})^T}{\sqrt{d_h}}\right) \mathbf{H}^{\text{text}}$$
 
 where:
-- $\mathbf{E}^{\text{label}} \in \mathbb{R}^{N \times d_p}$ contains all label embeddings (N = total labels across batch)
-- $\mathbf{Z}^{\text{text}} \in \mathbb{R}^{N \times L \times d_p}$ contains text tokens (broadcasted per label)
+- $\mathbf{E}^{\text{label}} \in \mathbb{R}^{B \times K \times d_h}$ contains all label embeddings, dense across the batch
+- $\mathbf{H}^{\text{text}} \in \mathbb{R}^{B \times L \times d_h}$ contains text token hidden states
 
 **Intuition**: Each label "queries" the text tokens and attends to the most relevant parts, creating a label-conditioned text representation.
 
@@ -237,10 +209,12 @@ $$\text{sim}_{b,j} = (\mathbf{e}_{b,j}^{\text{text}})^T \mathbf{W}_{\text{biline
 
 where $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_p \times d_p}$ is a learned interaction matrix.
 
+**Current implementation**: GliZNet uses the **bilinear** scoring head (`nn.Bilinear(d_h, d_h, 1)`).
+
 **Trade-offs**:
-- **Cosine**: Robust, interpretable, fewer parameters
-- **Dot**: Fast, simple, sensitive to magnitude
-- **Bilinear**: Most expressive, but highest parameter count ($d_p^2$)
+- **Bilinear** *(current)*: Most expressive; learns a cross-space interaction matrix $\mathbf{W} \in \mathbb{R}^{d_h \times d_h}$; no normalisation required
+- **Cosine**: Robust, interpretable, fewer parameters; requires explicit $\ell_2$ normalisation
+- **Dot**: Fast, minimal parameters; sensitive to embedding magnitude
 
 ---
 
@@ -252,27 +226,31 @@ $$\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softm
 
 where $\lambda_{\text{softmax}}, \lambda_{\text{repulsion}}, \lambda_{\text{BCE}} \geq 0$ are hyperparameters.
 
-### 8.1 Multi-Label Softmax Loss (Primary Objective)
+### 8.1 One-vs-Negatives Softmax Loss (Primary Objective)
 
 #### **8.1.1 Formulation**
 
 For each sample $b$, let:
 - $\mathcal{P}_b = \{j \mid y_{b,j} = 1\}$ be the set of positive (ground truth) labels
-- $\mathcal{N}_b$ be all labels (including positives and negatives)
+- $\mathcal{N}_b = \{j \mid y_{b,j} = 0,\, \text{valid}\}$ be the valid negative labels
 
-The primary loss encourages the model to assign high log-softmax probability to each positive label, averaged over all positives in the sample. Only samples with at least one positive label contribute:
+For each positive $p \in \mathcal{P}_b$, the loss is the cross-entropy of that positive against all negatives, with an optional additive margin $m \geq 0$ on the negatives:
 
-$$\mathcal{L}_{\text{softmax}} = -\frac{1}{|\mathcal{B}^+|} \sum_{b \in \mathcal{B}^+} \frac{1}{|\mathcal{P}_b|} \sum_{j \in \mathcal{P}_b} \text{log\_softmax}(\text{sim}_{b,:})_j$$
+$$\ell_{b,p} = \log\!\left(\exp(\text{sim}_{b,p}) + \sum_{n \in \mathcal{N}_b} \exp(\text{sim}_{b,n} + m)\right) - \text{sim}_{b,p}$$
 
-where $\mathcal{B}^+ = \{b \mid |\mathcal{P}_b| > 0\}$ is the set of samples with at least one positive label.
+Positives **do not appear** in each other's denominator. The full loss averages over positives per sample, then over samples:
+
+$$\mathcal{L}_{\text{softmax}} = \frac{1}{|\mathcal{B}^+|} \sum_{b \in \mathcal{B}^+} \frac{1}{|\mathcal{P}_b|} \sum_{p \in \mathcal{P}_b} \ell_{b,p}$$
+
+where $\mathcal{B}^+ = \{b \mid |\mathcal{P}_b| > 0\}$.
 
 #### **8.1.2 Intuition**
 
-- **Ranking**: Encourages positive labels to have higher similarity than negatives — operates on classification logits, not on embedding views
-- **Multi-label Support**: Averaging over all positives handles multiple correct labels per sample
-- **Stability**: Invalid (padding) positions are masked to $-\infty$ before softmax
+- **No positive competition**: Under a global softmax, positive labels compete with each other because probabilities must sum to 1. Here each positive is evaluated solely against the negatives.
+- **Additive margin**: $+m$ on negative logits forces the model to maintain a gap of at least $m$ before the loss saturates, preventing lazy boundaries when the negative pool is small.
+- **Numerical stability**: Implemented as $\text{logsumexp}([\text{sim}_{b,p},\; \text{neg\_lse}]) - \text{sim}_{b,p}$, where $\text{neg\_lse} = \log \sum_{n} \exp(\text{sim}_{b,n} + m)$.
 
-> **Note**: This is *not* Supervised Contrastive Loss (SupCon/InfoNCE). It operates on per-sample classification logits over the candidate label set, with no contrastive pairs or anchor structure.
+> **Note**: This is *not* Supervised Contrastive Loss (SupCon/InfoNCE). It operates on per-sample classification logits, not on embedding views, and has no contrastive pairs or anchor structure.
 
 ### 8.2 Label Repulsion Loss
 
@@ -315,19 +293,14 @@ Repulsion within sample preserves this contextual sensitivity.
 
 #### **8.3.1 Formulation**
 
-Standard per-label BCE with **decoupled temperature**:
+Standard per-label BCE applied directly to the bilinear logits:
 
-$$\mathcal{L}_{\text{BCE}} = -\frac{1}{N} \sum_{b,j} \left[ y_{b,j} \log \sigma(\tilde{s}_{b,j}) + (1 - y_{b,j}) \log(1 - \sigma(\tilde{s}_{b,j})) \right]$$
+$$\mathcal{L}_{\text{BCE}} = -\frac{1}{N} \sum_{b,j} \left[ y_{b,j} \log \sigma(\text{sim}_{b,j}) + (1 - y_{b,j}) \log(1 - \sigma(\text{sim}_{b,j})) \right]$$
 
 where:
 - $y_{b,j} \in \{0, 1\}$ is the ground truth label
 - $\sigma(x) = \frac{1}{1 + e^{-x}}$ is the sigmoid function
-- $\tilde{s}_{b,j} = \frac{\text{sim}_{b,j}}{\tau} \cdot \tau_{\text{BCE}}$ is the rescaled logit
-
-**Decoupling**: 
-- $\text{sim}_{b,j}$ is scaled by $\tau$ from SupCon
-- We unscale by dividing by $\tau$, then apply BCE-specific scale $\tau_{\text{BCE}}$
-- This prevents SupCon temperature from dominating BCE gradients
+- Padding positions ($y_{b,j} = -100$) and non-finite logits are excluded before computing the loss
 
 #### **8.3.2 Why Add BCE?**
 
@@ -359,22 +332,17 @@ The composite loss creates a rich gradient landscape. For label embedding $\math
 $$\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{softmax}} \frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{BCE}} \frac{\partial \mathcal{L}_{\text{BCE}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}}$$
 
 **Three forces**:
-1. **Multi-label Softmax**: Pull positives toward text, push negatives away (relative ranking)
+1. **One-vs-negatives softmax**: For each positive, push its logit above all negative logits by at least margin $m$ (relative ranking)
 2. **Repulsion**: Push different labels apart within the same sample (geometric)
-3. **BCE**: Adjust per-label magnitude for calibrated probabilities (absolute threshold)
+3. **BCE**: Absolute per-label calibration signal independent of the ranking loss
 
 ### 9.2 Learnable Parameters
 
 The model learns:
-- $\mathbf{W}_{\text{text}}, \mathbf{b}_{\text{text}}$: Text projection (~$d_h \times d_p$ parameters)
-- $\mathbf{W}_{\text{label}}, \mathbf{b}_{\text{label}}$: Label projection (~$d_h \times d_p$ parameters)
-- $\tau$: SupCon temperature (1 parameter)
-- $\tau_{\text{attn}}$: Attention temperature (1 parameter)
-- $\tau_{\text{BCE}}$: BCE temperature (1 parameter)
-- Similarity head weights (depends on metric)
-- Backbone weights (fine-tuned)
+- $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_h \times d_h}$, $\mathbf{b}_{\text{bilinear}}$: Bilinear scoring head (~$d_h^2$ parameters)
+- Backbone weights (fine-tuned via AdamW)
 
-**Total new parameters**: ~$2 d_h d_p + d_p^2$ (for bilinear) or ~$2 d_h d_p$ (for cosine/dot)
+**Total new parameters (beyond backbone)**: $d_h^2 + d_h$ (bilinear head only)
 
 ### 9.3 Optimization Strategy
 
@@ -382,7 +350,7 @@ The model learns:
 - Optimizer: AdamW with weight decay
 - Learning rate: 1e-5 to 5e-5 (lower for backbone, higher for new parameters)
 - Warmup: 10% of total steps
-- Loss weights: $\lambda_{\text{SupCon}} = 1.0$, $\lambda_{\text{BCE}} = 1.0$, $\lambda_{\text{repulsion}} = 0.1$
+- Loss weights: $\lambda_{\text{softmax}} = 0.5$, $\lambda_{\text{BCE}} = 0.5$, $\lambda_{\text{repulsion}} = 0.05$; margin $m = 0.5$
 
 **Scheduler**: Linear decay after warmup to prevent overfitting
 
@@ -396,11 +364,10 @@ Given test sample $x$ and candidate labels $\mathcal{L} = \{l_1, \ldots, l_K\}$:
 
 1. **Tokenize**: Construct sequence with [CLS], text, [SEP], labels with [LAB] separators
 2. **Encode**: $\mathbf{H} = \mathcal{F}_{\text{backbone}}(\text{seq})$
-3. **Project**: Compute $\mathbf{z}_i^{\text{text}}$ and $\mathbf{z}_i^{\text{label}}$ for all positions
-4. **Aggregate labels**: Compute $\mathbf{e}_j^{\text{label}}$ for each label $j$
-5. **Attention**: Compute label-specific text representations $\mathbf{e}_j^{\text{text}}$ via attention
-6. **Similarity**: Compute $\text{sim}_j$ for each label
-7. **Probability**: Apply sigmoid: $p_j = \sigma(\text{sim}_j)$
+3. **Extract labels**: $\mathbf{e}_j^{\text{label}} = \mathbf{h}_{i_j}$ from each `[LAB]` token position
+4. **Cross-attend**: Compute label-specific text representations $\mathbf{e}_j^{\text{text}}$ by attending over text tokens with $\mathbf{e}_j^{\text{label}}$ as query
+5. **Score**: $\text{sim}_j = \text{Bilinear}(\mathbf{e}_j^{\text{text}}, \mathbf{e}_j^{\text{label}})$
+6. **Probability**: Apply sigmoid: $p_j = \sigma(\text{sim}_j)$
 
 ### 10.2 Decision Rule
 

@@ -10,11 +10,11 @@ graph TD
     subgraph "GliZNet Forward Pass"
         D --> E["Backbone Encoding<br/>Transformer layers"];
         E --> F["Hidden States<br/>contextual embeddings"];
-        F --> G["Representation Computing<br/>CLS & label projections"];
-        G --> H["Similarity Computing<br/>dot/bilinear/dot_learning"];
-        H --> I["Logits<br/>similarity scores"];
+        F --> G["Label Aggregator<br/>[LAB] tokens + cross-attention over text"];
+        G --> H["Bilinear Scoring<br/>logit = Bilinear(text_repr, label_repr)"];
+        H --> I["Logits<br/>per-label scores"];
         I --> J{"Training Mode?"};
-        J -->|Yes| K["Loss Computation<br/>MultiLabel-Softmax + BCE + Repulsion"];
+        J -->|Yes| K["Loss Computation<br/>One-vs-Negatives (+ margin) + BCE + Repulsion"];
         J -->|No| L["GliZNetOutput<br/>logits only"];
         K --> M["GliZNetOutput<br/>loss + logits"];
     end
@@ -26,10 +26,10 @@ graph TD
     end
 
     subgraph "Model Components"
-        Q["Backbone<br/>BERT/RoBERTa/etc"] --> E;
-        R["Projection Layer<br/>Linear/Identity"] --> G;
-        S["Similarity Function<br/>configurable metric"] --> H;
-        T["Loss Function<br/>MultiLabel-Softmax (primary)<br/>+ Auxiliary BCE (decoupled temp)<br/>+ Label Repulsion (optional)"] --> K;
+        Q["Backbone<br/>DeBERTa/ModernBERT/etc"] --> E;
+        R["Label Repr<br/>[LAB] token hidden state"] --> G;
+        S["Cross-Attention<br/>label queries over text tokens"] --> G;
+        T["Loss Function<br/>One-vs-negatives softmax (primary)<br/>+ Auxiliary BCE<br/>+ Label Repulsion (optional)"] --> K;
     end
 
     style A fill:#ffecb3
