@@ -47,6 +47,10 @@ class ModelArgs:
                     "by this value, forcing positives to exceed negatives by at least `m`."
         },
     )
+    scoring_method: str = field(
+        default="bilinear",
+        metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
+    )
 
     # Data configuration
     dataset_path: str = field(

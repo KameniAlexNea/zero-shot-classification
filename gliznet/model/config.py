@@ -37,6 +37,8 @@ class GliZNetConfig(PretrainedConfig):
         repulsion_threshold: float = 0.3,
         # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
         max_labels: int = 20,
+        # Scoring head: "bilinear" or "cosine"
+        scoring_method: str = "bilinear",
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -55,6 +57,7 @@ class GliZNetConfig(PretrainedConfig):
         self.supcon_margin = supcon_margin
         self.repulsion_threshold = repulsion_threshold
         self.max_labels = max_labels
+        self.scoring_method = scoring_method
 
         # Resolve backbone_config without any network I/O.
         # AutoConfig.from_pretrained() is intentionally NOT called here — config
