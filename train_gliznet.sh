@@ -15,16 +15,12 @@ nohup accelerate launch train_gliznet.py \
     `# Model Configuration` \
     --model_name microsoft/deberta-v3-base \
     --model_class DebertaV2PreTrainedModel \
-    --projected_dim 1024 \
-    --similarity_metric cosine \
     --dropout_rate 0.1 \
-    --use_projection_layernorm \
     \
     `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
     --bce_loss_weight 0.5 \
     --supcon_loss_weight 0.5 \
     --label_repulsion_weight 0.05 \
-    --logit_scale_init 1.0 \
     --repulsion_threshold 0.3 \
     --supcon_margin 0.5 \
     \
