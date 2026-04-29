@@ -1,5 +1,9 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "zero-shot-classification"
+name = "gliznet"
 version = "0.1.0"
 description = "GliZNet is a generalist and lightweight model for zero-shot sequence classification, inspired by GLiNER. It achieves efficient classification by encoding both text and labels in a single forward pass."
 readme = "README.md"

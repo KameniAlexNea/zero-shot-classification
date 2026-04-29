@@ -5,17 +5,11 @@ A zero-shot classification system inspired by the GLiNER paper, designed to clas
 into positive or negative labels using BERT-based embeddings and contrastive learning.
 
 Architecture:
-    - Custom tokenizer that formats input as: [CLS] text [SEP] label1 [LAB] label2 [LAB] ...
-    - BERT backbone for encoding text and labels
-    - Dual projection heads for text (CLS) and label embeddings
-    - Similarity computation (dot product, bilinear, or learned)
-    - Multi-component loss (BCE + contrastive + optional logit separation)
-
-Key Features:
-    - Two pooling strategies: separator token vs. mean pooling
-    - Configurable loss weights and hyperparameters
-    - Support for custom separator tokens
-    - Efficient batched computation with scatter operations
+    - Custom tokenizer that formats input as: [CLS] text [SEP] [LAB] label1 [LAB] label2 ...
+    - Backbone transformer for encoding text and labels jointly
+    - Token-level cross-attention to build label-specific text representations
+    - Bilinear head for scoring text-label pairs
+    - Multi-component loss (BCE + multi-label softmax + optional label repulsion)
 """
 
 from .data import (

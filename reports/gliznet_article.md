@@ -5,7 +5,7 @@
 
 ## Abstract
 
-Zero-shot text classification, crucial for dynamic and data-scarce environments, often struggles with computational inefficiency and limited inter-label reasoning, particularly for large label sets. We introduce GliZNet (Generalized Zero-Shot Network), a novel architecture that addresses these challenges through a joint text-label encoding mechanism, processing text and all candidate labels in a single transformer forward pass to achieve O(1) complexity. Enhanced by a multi-objective loss combining multi-label softmax cross-entropy, auxiliary binary cross-entropy with decoupled temperature, and optional label repulsion, GliZNet generates label-aware contextual embeddings, enabling fine-grained differentiation of semantically similar labels. Trained on a diverse synthetic dataset, GliZNet promises superior scalability and accuracy for multi-label and single-label classification tasks, with potential applications in real-time content moderation and beyond. This work sets a new benchmark for efficient and context-sensitive zero-shot learning in natural language processing.
+Zero-shot text classification, crucial for dynamic and data-scarce environments, often struggles with computational inefficiency and limited inter-label reasoning, particularly for large label sets. We introduce GliZNet (Generalized Zero-Shot Network), a novel architecture that addresses these challenges through a joint text-label encoding mechanism, processing text and all candidate labels in a single transformer forward pass to achieve O(1) complexity. Enhanced by a multi-objective loss combining one-vs-negatives softmax cross-entropy with an optional additive margin, auxiliary binary cross-entropy, and optional label repulsion, GliZNet generates label-aware contextual embeddings, enabling fine-grained differentiation of semantically similar labels. Trained on a diverse synthetic dataset, GliZNet promises superior scalability and accuracy for multi-label and single-label classification tasks, with potential applications in real-time content moderation and beyond. This work sets a new benchmark for efficient and context-sensitive zero-shot learning in natural language processing.
 
 ## 1. Introduction
 
@@ -87,10 +87,8 @@ The tokenizer, based on the DeBERTa-v3 SentencePiece vocabulary, supports a maxi
 ### 3.2 Label-Aware Contextual Embeddings
 
 The joint encoding produces label-aware embeddings in a single transformer pass:
-- **Text Representation**: The final hidden state of the [CLS] token serves as the contextualized text representation.
-- **Label Representations**: Each label's representation is computed as an attention-weighted average of its token's final hidden states, using attention scores from the transformer's last layer.
-
-An optional projection layer (linear, reducing from 768 to 256 dimensions) enhances computational efficiency. This approach enables dynamic inter-label reasoning, as all embeddings are computed within the same contextual window, unlike static embeddings in methods like Lbl2Vec.
+- **Label Representations**: The hidden state of the `[LAB]` separator token that terminates each label span serves as the label representation — a single contextual vector that has attended to all preceding label tokens via self-attention. A dropout layer is applied before extraction as a regulariser.
+- **Text Representation**: For each label, a dedicated text representation is computed by attending over all text token positions with the label's `[LAB]` embedding as the query (scaled dot-product attention, scale $\sqrt{d_h}$), producing a label-conditioned summary of the text.
 
 ### 3.3 Training Objective: Multi-Objective Loss
 
@@ -102,7 +100,7 @@ L_total = λ_softmax · L_softmax + λ_bce · L_bce + λ_repulsion · L_repulsio
 
 where λ_softmax = 1.0, λ_bce = 1.0, and λ_repulsion = 0.1 (disabled by default).
 
-- **Multi-Label Softmax Loss (L_softmax)**: For each sample, computes log-softmax over all label logits and maximises the mean log-probability of positive labels. This provides a relative ranking signal, encouraging positive labels to score higher than all negatives in one pass.
+- **One-vs-Negatives Softmax Loss (L_softmax)**: For each positive label in a sample, computes the cross-entropy of that positive against all valid negatives in the same sample. Positives do not compete with each other — the denominator for positive $p$ is $\exp(\text{logit}_p) + \sum_{n \in \text{neg}} \exp(\text{logit}_n + m)$, where $m \geq 0$ is a configurable additive margin (`supcon_margin`) that forces a minimum separation before the loss saturates. Implemented via `logsumexp` for numerical stability.
 
 - **Auxiliary BCE Loss (L_bce)**: Standard binary cross-entropy applied per label with a decoupled learnable temperature, providing an absolute per-label calibration signal independent of the softmax distribution.
 
@@ -118,10 +116,10 @@ GliZNet is trained on a synthetic dataset of 50,847 text-label pairs, generated 
 
 GliZNet comprises three components:
 - **Text Encoder**: A pre-trained transformer (`microsoft/deberta-v3-base`, ~184M parameters) processes the joint sequence.
-- **Projection Layer**: A linear layer projecting embeddings to 1024 dimensions, with optional LayerNorm.
-- **Similarity Computation**: Scores text-label alignment using cosine similarity (default) with a learnable temperature scale, with alternatives including dot-product and bilinear metrics.
+- **Label Aggregator**: Extracts each label's `[LAB]` token hidden state, then computes a label-specific text representation via cross-attention over text tokens.
+- **Scoring Head**: A bilinear layer (`nn.Bilinear(D, D, 1)`) jointly scores the label-specific text representation against the label representation.
 
-The architecture is optimised with AdamW (learning rate 1e-4, effective batch size 128) over up to 10 epochs with early stopping.
+The architecture is optimised with AdamW (learning rate 4e-5, effective batch size 64) over up to 10 epochs with early stopping.
 
 ### 3.6 Implementation Details
 

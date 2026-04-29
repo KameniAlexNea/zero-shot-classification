@@ -95,7 +95,9 @@ def compute_metrics(
         max_cols = max(a.shape[1] for a in flat)
         return np.concatenate(
             [
-                np.pad(a, ((0, 0), (0, max_cols - a.shape[1])), constant_values=pad_value)
+                np.pad(
+                    a, ((0, 0), (0, max_cols - a.shape[1])), constant_values=pad_value
+                )
                 for a in flat
             ],
             axis=0,

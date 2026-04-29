@@ -23,7 +23,7 @@ pipeline_tag: zero-shot-classification
 
 **GliZNet** (Generalized Zero-Shot Network) is a zero-shot text classification model that processes the input text and **all candidate labels jointly in a single forward pass**, achieving O(1) inference complexity regardless of the number of labels.
 
-Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, generates label-aware contextual embeddings, and scores each label via cosine similarity. A hybrid loss combining multi-label softmax cross-entropy (primary), auxiliary BCE with decoupled temperature, and optional label repulsion sharpens discrimination between semantically similar labels.
+Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with optional additive margin), auxiliary BCE, and optional label repulsion sharpens discrimination between semantically similar labels.
 
 > **Paper**: *GliZNet: A Novel Architecture for Zero-Shot Text Classification*  
 > Alex Kameni (Ivalua / Massy, France)
@@ -38,11 +38,10 @@ Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deb
 | Property | Value |
 |---|---|
 | Backbone | `microsoft/deberta-v3-base` (~184 M params) |
-| Projection dim | 1024 |
-| Similarity metric | Cosine |
-| Max sequence length | 1024 tokens |
+| Scoring head | Bilinear (`nn.Bilinear(D, D, 1)`) |
+| Max sequence length | 512 tokens |
 | Label separator token | `[LAB]` |
-| Label representation | Average of label token hidden states |
+| Label representation | `[LAB]` token hidden state |
 | Training precision | `bfloat16` |
 | Model type ID | `gliznet` |
 
@@ -52,13 +51,11 @@ Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deb
 flowchart TD
     A["Input sequence\n[CLS] &lt;text&gt; [SEP] &lt;label_1&gt; [LAB] &lt;label_2&gt; [LAB] … [PAD]"]
     A --> B["DeBERTa-v3-base\nContextual hidden states"]
-    B --> C["Text repr\nCLS hidden state"]
-    B --> D["Label reprs\nAvg pooling per label span"]
-    C --> E["Linear projection\ndim → 1024"]
+    B --> C["Label repr\n[LAB] token hidden state per label"]
+    B --> D["Label-specific text repr\nCross-attention: label queries text tokens"]
+    C --> E["Bilinear scoring head\nlogit = Bilinear(text_repr, label_repr)"]
     D --> E
-    E --> F["Cosine similarity\ntext · label_i"]
-    F --> G["Learnable temperature scale"]
-    G --> H["MultiLabel-Softmax loss\n+ auxiliary BCE\n+ label repulsion\n(training only)"]
+    E --> F["One-vs-negatives loss (+ optional margin)\n+ auxiliary BCE\n+ optional label repulsion\n(training only)"]
 ```
 
 ---
@@ -146,7 +143,7 @@ GLiClass variants are the closest published competitors; all encode text and lab
 | Precision | bf16 |
 | Distributed training | DeepSpeed ZeRO-2 via `accelerate launch` |
 | Hardware | 2 × NVIDIA GPU |
-| Loss | Multi-label softmax (weight 1.0) + auxiliary BCE (weight 1.0) + label repulsion (weight 0.1, disabled by default) |
+| Loss | One-vs-negatives softmax (weight 0.5, margin 0.5) + auxiliary BCE (weight 0.5) + label repulsion (weight 0.05) |
 | Max labels per sample | 20 |
 
 ---

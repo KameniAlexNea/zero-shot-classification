@@ -27,20 +27,22 @@ class GliZNetLoss(nn.Module):
         """Compute individual loss components.
 
         Args:
-            logits: Predicted scores (N, 1) - already scaled by SimilarityHead
+            logits: Predicted scores (N, 1)
             labels: Ground truth labels (B, MaxLabels)
             batch_indices: Batch index for each logit (N,)
             label_ids: Label ID for each logit (N,)
-            label_embeddings: Projected label embeddings (N, D)
-            logit_scale: Current temperature scale from SimilarityHead
+            label_embeddings: Label embeddings (N, D)
 
         Returns:
             Dict with keys ``softmax``, ``repulsion``, ``bce`` — each an
             unweighted scalar loss.  The caller applies the configured weights
             and sums them.
         """
+
         def _zero() -> torch.Tensor:
-            return torch.tensor(0.0, device=logits.device, dtype=logits.dtype, requires_grad=True)
+            return torch.tensor(
+                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
+            )
 
         if logits.numel() == 0:
             return {"softmax": _zero(), "repulsion": _zero(), "bce": _zero()}
@@ -110,66 +112,60 @@ class GliZNetLoss(nn.Module):
     def _multilabel_softmax_loss(
         self, logits: torch.Tensor, targets: torch.Tensor
     ) -> torch.Tensor:
-        """Multi-label softmax cross-entropy loss.
+        """One-vs-negatives softmax loss.
 
-        For each sample, computes log-softmax over all label logits and maximises
-        the mean log-probability of positive labels.  This is NOT Supervised
-        Contrastive Loss (SupCon/InfoNCE): it operates on classification logits,
-        not on embedding views, and has no contrastive pairs or anchor structure.
+        For each positive label in a sample, computes the cross-entropy of that
+        positive against all valid negative labels in the same sample.  Positives
+        do not compete with each other — the denominator for positive ``p`` is
+        ``exp(logit_p) + Σ_{n ∈ negatives} exp(logit_n)``.
         """
         mask_valid = targets != -100
         targets_clean = targets.clone()
         targets_clean[~mask_valid] = 0.0
 
-        has_positives = (targets_clean > 0.5).any(dim=1)
+        pos_mask = targets_clean > 0.5  # (B, max_labels)
+        has_positives = pos_mask.any(dim=1)
         if not has_positives.any():
             return torch.tensor(
                 0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
             )
 
         logits = logits[has_positives]
-        targets_clean = targets_clean[has_positives]
-        mask_valid_filtered = mask_valid[has_positives]
+        pos_mask = pos_mask[has_positives]
+        mask_valid = mask_valid[has_positives]
 
-        has_valid_labels = mask_valid_filtered.any(dim=1)
-        if not has_valid_labels.any():
+        neg_mask = mask_valid & ~pos_mask
+
+        # logsumexp over negatives per sample (−inf if a sample has no negatives).
+        # The margin shifts negative logits up, forcing the model to keep positives
+        # at least `margin` units above the negatives before the loss saturates.
+        neg_logits = logits.masked_fill(~neg_mask, float("-inf"))
+        if self.config.supcon_margin > 0.0:
+            neg_logits = neg_logits + self.config.supcon_margin
+        neg_lse = torch.logsumexp(neg_logits, dim=1)  # (B',)
+
+        # For each positive p:
+        #   loss_p = log(exp(logit_p) + Σ_neg exp(logit_n)) − logit_p
+        #          = logsumexp([logit_p, neg_lse]) − logit_p
+        # When neg_lse = −inf (no negatives): logsumexp([logit_p, −inf]) = logit_p → loss = 0
+        neg_lse_exp = neg_lse.unsqueeze(1).expand_as(logits)
+        denom_lse = torch.logsumexp(
+            torch.stack([logits, neg_lse_exp], dim=2), dim=2
+        )  # (B', max_labels)
+
+        per_pos_loss = denom_lse - logits  # (B', max_labels)
+
+        # Only aggregate over positive positions with finite logits
+        valid_pos = pos_mask & torch.isfinite(logits)
+        per_pos_loss = per_pos_loss.masked_fill(~valid_pos, 0.0)
+
+        if torch.isnan(per_pos_loss).any() or torch.isinf(per_pos_loss).any():
             return torch.tensor(
                 0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
             )
 
-        logits = logits[has_valid_labels]
-        targets_clean = targets_clean[has_valid_labels]
-        mask_valid_filtered = mask_valid_filtered[has_valid_labels]
-
-        logits_masked = logits.clone()
-        logits_masked[~mask_valid_filtered] = float("-inf")
-
-        all_inf = torch.isinf(logits_masked).all(dim=1)
-        if all_inf.any():
-            valid_samples = ~all_inf
-            if not valid_samples.any():
-                return torch.tensor(
-                    0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-                )
-            logits_masked = logits_masked[valid_samples]
-            targets_clean = targets_clean[valid_samples]
-
-        log_probs = F.log_softmax(logits_masked, dim=1)
-
-        if torch.isnan(log_probs).any() or torch.isinf(log_probs).all():
-            return torch.tensor(
-                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-            )
-
-        pos_mask = (targets_clean > 0.5).to(logits.dtype)
-        # Use torch.where instead of multiplication to avoid -inf * 0 = NaN,
-        # which occurs at padding positions where log_probs=-inf and pos_mask=0.
-        sum_log_prob_pos = torch.where(
-            pos_mask.bool(), log_probs, torch.zeros_like(log_probs)
-        ).sum(dim=1)
-        num_pos = pos_mask.sum(dim=1).clamp(min=1e-6)
-
-        return (-sum_log_prob_pos / num_pos).mean()
+        num_pos = valid_pos.sum(dim=1).float().clamp(min=1e-6)
+        return (per_pos_loss.sum(dim=1) / num_pos).mean()
 
     def _label_repulsion_loss(
         self,

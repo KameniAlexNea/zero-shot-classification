@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Literal, Optional
 
 
 @dataclass
@@ -17,20 +16,9 @@ class ModelArgs:
     )
 
     # Architecture parameters
-    projected_dim: Optional[int] = field(
-        default=None, metadata={"help": "Projection dimension (None = use hidden_size)"}
-    )
-    similarity_metric: Literal["dot", "bilinear", "cosine"] = field(
-        default="cosine",
-        metadata={"help": "Similarity metric: dot, bilinear, cosine"},
-    )
     dropout_rate: float = field(
         default=0.1,
         metadata={"help": "Dropout rate for model"},
-    )
-    use_projection_layernorm: bool = field(
-        default=True,
-        metadata={"help": "Whether to apply LayerNorm after projection"},
     )
 
     # Loss configuration
@@ -48,13 +36,16 @@ class ModelArgs:
             "help": "Weight for label repulsion loss (prevents embedding collapse)"
         },
     )
-    logit_scale_init: float = field(
-        default=2.0,
-        metadata={"help": "Initial value for learnable logit scale (exp(2) ≈ 7.4)"},
-    )
     repulsion_threshold: float = field(
         default=0.3,
         metadata={"help": "Cosine similarity threshold for repulsion penalty"},
+    )
+    supcon_margin: float = field(
+        default=0.0,
+        metadata={
+            "help": "Additive margin for one-vs-negatives loss: negative logits are shifted up "
+                    "by this value, forcing positives to exceed negatives by at least `m`."
+        },
     )
 
     # Data configuration
@@ -111,12 +102,6 @@ class ModelArgs:
     early_stopping_patience: int = field(
         default=3,
         metadata={"help": "Early stopping patience"},
-    )
-
-    # Whether to use [LAB] token for label separation
-    use_lab_token_for_labels: bool = field(
-        default=False,
-        metadata={"help": "Whether to use [LAB] token for label separation"},
     )
 
     # Whether to augment the training set with additional datasets

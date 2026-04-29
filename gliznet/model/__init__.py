@@ -1,14 +1,13 @@
 from transformers import AutoConfig, AutoModel
 
 from gliznet.model.aggregator import LabelAggregator
-from gliznet.model.classification import (
+from gliznet.model.gliznet_modelling import (
     GliZNetForSequenceClassification,
     GliZNetPreTrainedModel,
 )
 from gliznet.model.config import GliZNetConfig
 from gliznet.model.loss import GliZNetLoss
 from gliznet.model.outputs import GliZNetOutput
-from gliznet.model.similarity import SimilarityHead
 
 # Register with HuggingFace Auto* classes so that
 #   AutoConfig.from_pretrained(path)  →  GliZNetConfig
@@ -20,7 +19,6 @@ AutoModel.register(GliZNetConfig, GliZNetForSequenceClassification)
 __all__ = [
     "GliZNetConfig",
     "GliZNetOutput",
-    "SimilarityHead",
     "LabelAggregator",
     "GliZNetLoss",
     "GliZNetPreTrainedModel",

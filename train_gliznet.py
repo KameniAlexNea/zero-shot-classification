@@ -55,19 +55,15 @@ def create_model_tokenizer(args: ModelArgs):
     # Create GliZNet configuration
     config = GliZNetConfig(
         backbone_model=args.model_name,
-        projected_dim=args.projected_dim,
-        similarity_metric=args.similarity_metric,
         dropout_rate=args.dropout_rate,
-        use_projection_layernorm=args.use_projection_layernorm,
         # Loss configuration
         bce_loss_weight=args.bce_loss_weight,
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
-        logit_scale_init=args.logit_scale_init,
         repulsion_threshold=args.repulsion_threshold,
+        supcon_margin=args.supcon_margin,
         # label id
         lab_token_id=tokenizer.lab_token_id,
-        use_lab_token_for_labels=args.use_lab_token_for_labels,
         max_labels=args.max_labels,
     )
     model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
@@ -124,7 +120,6 @@ def main():
     # Validate configuration
     logger.info("Validating configuration...")
     logger.info(f"Model: {model_args.model_name}")
-    logger.info(f"Similarity metric: {model_args.similarity_metric}")
     logger.info(f"Label separator token: {model_args.lab_cls_token}")
     logger.info(f"Max sequence length: {model_args.model_max_length}")
 

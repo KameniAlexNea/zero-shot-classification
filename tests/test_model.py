@@ -1,5 +1,5 @@
 """
-Pytest tests for gliznet model: forward pass, similarity metrics, and GliZNetLoss.
+Pytest tests for gliznet model: forward pass and GliZNetLoss.
 """
 
 import pytest
@@ -10,6 +10,7 @@ import torch.nn as nn
 from transformers import AutoModel
 
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
+from gliznet.model.aggregator import LabelAggregator
 from gliznet.model.loss import GliZNetLoss
 
 
@@ -61,92 +62,24 @@ class DummyEncoder(nn.Module):
 
 
 HIDDEN = 8
-INPUT_IDS = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1001, 0]])
+INPUT_IDS = torch.tensor([[101, 1012, 1013, 1014], [101, 1016, 1013, 0]])
 ATTN = torch.where(INPUT_IDS > 0, 1, 0)
 LMASK = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
 LABELS = torch.tensor([[1.0, -100], [0.0, -100]])
 
+# Use a lab_token_id that appears in INPUT_IDS for the [LAB] token mode
+LAB_TOKEN_ID = 1013
 
-def _make_model(similarity_metric="cosine"):
+
+def _make_model():
     model = GliZNetForSequenceClassification.from_pretrained(
         "bert-base-uncased",
-        projected_dim=HIDDEN,
-        similarity_metric=similarity_metric,
+        lab_token_id=LAB_TOKEN_ID,
     )
     model.backbone = DummyEncoder(HIDDEN)
-    model.config.hidden_size = HIDDEN
-    model.hidden_size = HIDDEN
-    model.aggregator.text_projector = nn.Identity()
-    model.aggregator.label_projector = nn.Identity()
+    model.config.backbone_config = namedtuple("cfg", ("hidden_size",))(HIDDEN)
+    model.aggregator = LabelAggregator(model.config)
     return model
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Similarity metrics
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-class TestSimilarityMetric:
-    def test_dot_config(self):
-        model = _make_model("dot")
-        assert model.config.similarity_metric == "dot"
-
-    def test_bilinear_config(self):
-        model = _make_model("bilinear")
-        assert model.config.similarity_metric == "bilinear"
-        assert hasattr(model.aggregator.similarity_head, "classifier")
-        assert isinstance(model.aggregator.similarity_head.classifier, nn.Bilinear)
-
-    def test_dot_no_classifier(self):
-        model = _make_model("dot")
-        assert not hasattr(model.aggregator.similarity_head, "classifier")
-
-    @pytest.mark.parametrize("metric", ["dot", "bilinear", "cosine"])
-    def test_forward_shape_no_labels(self, metric):
-        out = _make_model(metric)(
-            input_ids=INPUT_IDS, attention_mask=ATTN, lmask=LMASK, labels=None
-        )
-        assert "logits" in out
-        assert out["logits"].shape == (2, 1)
-
-    @pytest.mark.parametrize("metric", ["dot", "bilinear", "cosine"])
-    def test_forward_with_labels_has_loss(self, metric):
-        out = _make_model(metric)(
-            input_ids=INPUT_IDS, attention_mask=ATTN, lmask=LMASK, labels=LABELS
-        )
-        assert "loss" in out
-        assert isinstance(out["loss"], torch.Tensor)
-        assert out["loss"].item() >= 0.0
-        # With labels, model reconstructs dense (B, max_labels) logits
-        assert out["logits"].shape == (2, 2)
-
-    @pytest.mark.parametrize("metric", ["dot", "bilinear", "cosine"])
-    def test_logits_finite(self, metric):
-        out = _make_model(metric)(
-            input_ids=INPUT_IDS, attention_mask=ATTN, lmask=LMASK, labels=None
-        )
-        assert out["logits"].isfinite().all()
-
-    def test_invalid_metric_raises(self):
-        with pytest.raises((ValueError, KeyError)):
-            GliZNetForSequenceClassification.from_pretrained(
-                "bert-base-uncased",
-                projected_dim=HIDDEN,
-                similarity_metric="invalid_metric",
-            )
-
-    def test_deterministic_same_weights(self):
-        fixed_ids = torch.tensor([[101, 1000, 2000, 3000], [101, 4000, 5000, 0]])
-        fixed_attn = torch.where(fixed_ids > 0, 1, 0)
-        fixed_lmask = torch.tensor([[0, 0, 1, 0], [0, 0, 1, 0]])
-
-        m1 = _make_model("cosine")
-        m2 = _make_model("cosine")
-        m2.load_state_dict(m1.state_dict())
-
-        o1 = m1(input_ids=fixed_ids, attention_mask=fixed_attn, lmask=fixed_lmask)
-        o2 = m2(input_ids=fixed_ids, attention_mask=fixed_attn, lmask=fixed_lmask)
-        assert torch.allclose(o1["logits"], o2["logits"], atol=1e-6)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -190,16 +123,17 @@ class TestCustomTokens:
 
     def _make(self, tokenizer, **kwargs):
         model = GliZNetForSequenceClassification.from_pretrained(
-            "bert-base-uncased", projected_dim=HIDDEN, **kwargs
+            "bert-base-uncased",
+            lab_token_id=tokenizer.lab_token_id,
+            **kwargs,
         )
         model.resize_token_embeddings(len(tokenizer))
         return model
 
     def _swap(self, model):
         model.backbone = DummyEncoder(HIDDEN)
-        model.config.hidden_size = HIDDEN
-        model.aggregator.text_projector = nn.Identity()
-        model.aggregator.label_projector = nn.Identity()
+        model.config.backbone_config = namedtuple("cfg", ("hidden_size",))(HIDDEN)
+        model.aggregator = LabelAggregator(model.config)
         return model
 
     def test_resize_token_embeddings(self):
@@ -210,27 +144,15 @@ class TestCustomTokens:
         assert model.config.backbone_config.vocab_size == new_size
         assert model.backbone.get_input_embeddings().num_embeddings == new_size
 
-    def test_use_lab_token_default_false(self):
-        model = GliZNetForSequenceClassification.from_pretrained("bert-base-uncased")
-        assert model.config.use_lab_token_for_labels is False
-
-    def test_use_lab_token_custom_true(self, tokenizer):
+    def test_lab_token_id_set(self, tokenizer):
         model = GliZNetForSequenceClassification.from_pretrained(
             "bert-base-uncased",
-            use_lab_token_for_labels=True,
             lab_token_id=tokenizer.lab_token_id,
         )
-        assert model.config.use_lab_token_for_labels is True
         assert model.config.lab_token_id == tokenizer.lab_token_id
 
     def test_forward_lab_token_mode(self, tokenizer):
-        model = self._swap(
-            self._make(
-                tokenizer,
-                use_lab_token_for_labels=True,
-                lab_token_id=tokenizer.lab_token_id,
-            )
-        )
+        model = self._swap(self._make(tokenizer))
         batch = tokenizer.tokenize("Test text", ["positive", "negative"])
         with torch.no_grad():
             out = model(
@@ -256,19 +178,6 @@ class TestCustomTokens:
         assert scores.numel() > 0
         assert (scores >= 0.0).all()
         assert (scores <= 1.0).all()
-
-    @pytest.mark.parametrize("metric", ["dot", "bilinear", "cosine"])
-    def test_similarity_metric_with_lab_tokens(self, tokenizer, metric):
-        model = self._swap(self._make(tokenizer, similarity_metric=metric))
-        batch = tokenizer.tokenize("Test text", ["positive", "negative"])
-        with torch.no_grad():
-            out = model(
-                input_ids=batch["input_ids"].unsqueeze(0),
-                attention_mask=batch["attention_mask"].unsqueeze(0),
-                lmask=batch["lmask"].unsqueeze(0),
-            )
-        assert out.logits is not None
-        assert model.config.similarity_metric == metric
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -421,9 +330,7 @@ class TestGliZNetLoss:
         empty_batch = torch.zeros(0, dtype=torch.long)
         empty_ids = torch.zeros(0, dtype=torch.long)
         empty_embs = torch.zeros(0, 8)
-        out = loss_fn(
-            empty_logits, empty_labels, empty_batch, empty_ids, empty_embs
-        )
+        out = loss_fn(empty_logits, empty_labels, empty_batch, empty_ids, empty_embs)
         assert self._total(out).item() == pytest.approx(0.0, abs=1e-6)
 
     def test_perfect_scores_lower_loss_than_random(self):
