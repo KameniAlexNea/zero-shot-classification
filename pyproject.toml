@@ -26,6 +26,11 @@ dependencies = [
     "wandb>=0.25.1",
 ]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:importlib",
+]
+
 [tool.setuptools.packages.find]
 include = ["gliznet*"]
 

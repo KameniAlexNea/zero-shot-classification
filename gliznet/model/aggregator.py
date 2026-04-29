@@ -50,7 +50,7 @@ class LabelAggregator(nn.Module):
         input_ids: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
-        batch_size, seq_len, _ = hidden_states.shape
+        batch_size, _, _ = hidden_states.shape
         device = hidden_states.device
 
         lab_mask = input_ids == self.config.lab_token_id
