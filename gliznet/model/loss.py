@@ -136,10 +136,13 @@ class GliZNetLoss(nn.Module):
 
         neg_mask = mask_valid & ~pos_mask
 
-        # logsumexp over negatives per sample (−inf if a sample has no negatives)
-        neg_lse = torch.logsumexp(
-            logits.masked_fill(~neg_mask, float("-inf")), dim=1
-        )  # (B',)
+        # logsumexp over negatives per sample (−inf if a sample has no negatives).
+        # The margin shifts negative logits up, forcing the model to keep positives
+        # at least `margin` units above the negatives before the loss saturates.
+        neg_logits = logits.masked_fill(~neg_mask, float("-inf"))
+        if self.config.supcon_margin > 0.0:
+            neg_logits = neg_logits + self.config.supcon_margin
+        neg_lse = torch.logsumexp(neg_logits, dim=1)  # (B',)
 
         # For each positive p:
         #   loss_p = log(exp(logit_p) + Σ_neg exp(logit_n)) − logit_p

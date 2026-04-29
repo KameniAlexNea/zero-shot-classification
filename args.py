@@ -40,6 +40,13 @@ class ModelArgs:
         default=0.3,
         metadata={"help": "Cosine similarity threshold for repulsion penalty"},
     )
+    supcon_margin: float = field(
+        default=0.0,
+        metadata={
+            "help": "Additive margin for one-vs-negatives loss: negative logits are shifted up "
+                    "by this value, forcing positives to exceed negatives by at least `m`."
+        },
+    )
 
     # Data configuration
     dataset_path: str = field(

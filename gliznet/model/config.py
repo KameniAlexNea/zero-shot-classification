@@ -30,6 +30,9 @@ class GliZNetConfig(PretrainedConfig):
         bce_loss_weight: float = 1.0,
         supcon_loss_weight: float = 1.0,
         label_repulsion_weight: float = 0.0,
+        # One-vs-negatives margin: negatives are shifted up by this value before logsumexp,
+        # forcing the model to maintain a gap of at least `m` between positive and negative logits.
+        supcon_margin: float = 0.0,
         # Repulsion settings
         repulsion_threshold: float = 0.3,
         # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
@@ -49,6 +52,7 @@ class GliZNetConfig(PretrainedConfig):
         self.bce_loss_weight = bce_loss_weight
         self.supcon_loss_weight = supcon_loss_weight
         self.label_repulsion_weight = label_repulsion_weight
+        self.supcon_margin = supcon_margin
         self.repulsion_threshold = repulsion_threshold
         self.max_labels = max_labels
 

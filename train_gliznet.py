@@ -61,6 +61,7 @@ def create_model_tokenizer(args: ModelArgs):
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
         repulsion_threshold=args.repulsion_threshold,
+        supcon_margin=args.supcon_margin,
         # label id
         lab_token_id=tokenizer.lab_token_id,
         max_labels=args.max_labels,

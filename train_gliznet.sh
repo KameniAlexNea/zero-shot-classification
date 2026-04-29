@@ -26,6 +26,7 @@ nohup accelerate launch train_gliznet.py \
     --label_repulsion_weight 0.05 \
     --logit_scale_init 1.0 \
     --repulsion_threshold 0.3 \
+    --supcon_margin 0.5 \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
