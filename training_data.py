@@ -240,6 +240,127 @@ def load_biomike_formal_logic_reasoning(max_size: Optional[int] = None, seed: in
     )
 
 
+def _make_bigbench_mapper(
+    strip_prefix: Optional[str] = None,
+    strip_suffix: Optional[str] = None,
+) -> Callable:
+    """Shared mapper for tasksource/bigbench subsets.
+
+    Args:
+        strip_prefix: If provided, strip this leading prompt from the inputs field.
+        strip_suffix: If provided, strip this trailing prompt from the inputs field.
+    """
+
+    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
+        text = x["inputs"]
+        if strip_prefix and isinstance(text, str) and text.startswith(strip_prefix):
+            text = text[len(strip_prefix):]
+        if strip_suffix and isinstance(text, str) and text.endswith(strip_suffix):
+            text = text[: -len(strip_suffix)]
+        return {
+            "text": ensure_string(text),
+            LabelName.ltext: [ensure_string(t) for t in x["multiple_choice_targets"]],
+            LabelName.lint: list(x["multiple_choice_scores"]),
+        }
+
+    return mapper
+
+
+_ABSTRACT_NARRATIVE_PREFIX = "In what follows, we provide short narratives, each of which illustrates a common proverb.\nNarrative: "
+_ABSTRACT_NARRATIVE_SUFFIX = "\nThis narrative is a good illustration of the following proverb:"
+
+
+def load_bigbench_abstract_narrative_understanding(
+    max_size: Optional[int] = None, seed: int = 42
+):
+    """Load BIG-Bench abstract_narrative_understanding (proverb matching)."""
+    return load_dataset_with_validation(
+        "tasksource/bigbench",
+        "abstract_narrative_understanding",
+        mapper_func=_make_bigbench_mapper(
+            strip_prefix=_ABSTRACT_NARRATIVE_PREFIX,
+            strip_suffix=_ABSTRACT_NARRATIVE_SUFFIX,
+        ),
+        max_size=max_size,
+        seed=seed,
+    )
+
+
+_ELEMENTARY_MATH_SUFFIX = "\nA:"
+
+
+def load_bigbench_elementary_math_qa(max_size: Optional[int] = None, seed: int = 42):
+    """Load BIG-Bench elementary_math_qa."""
+    return load_dataset_with_validation(
+        "tasksource/bigbench",
+        "elementary_math_qa",
+        mapper_func=_make_bigbench_mapper(strip_suffix=_ELEMENTARY_MATH_SUFFIX),
+        max_size=max_size,
+        seed=seed,
+    )
+
+
+_CONTEXTUAL_PARAMETRIC_PREFIX = "What is the answer to the question, assuming the context is true.\n\n\n"
+_CONTEXTUAL_PARAMETRIC_SUFFIX = "\nAnswer:"
+
+
+def load_bigbench_contextual_parametric_knowledge_conflicts(
+    max_size: Optional[int] = None, seed: int = 42
+):
+    """Load BIG-Bench contextual_parametric_knowledge_conflicts."""
+    return load_dataset_with_validation(
+        "tasksource/bigbench",
+        "contextual_parametric_knowledge_conflicts",
+        mapper_func=_make_bigbench_mapper(
+            strip_prefix=_CONTEXTUAL_PARAMETRIC_PREFIX,
+            strip_suffix=_CONTEXTUAL_PARAMETRIC_SUFFIX,
+        ),
+        max_size=max_size,
+        seed=seed,
+    )
+
+
+_FORMAL_FALLACIES_PREFIX = "Q: "
+_FORMAL_FALLACIES_SUFFIX = "\nIs the argument, given the explicitly stated premises, deductively valid or invalid?\nA:"
+
+
+def load_bigbench_formal_fallacies_syllogisms_negation(
+    max_size: Optional[int] = None, seed: int = 42
+):
+    """Load BIG-Bench formal_fallacies_syllogisms_negation."""
+    return load_dataset_with_validation(
+        "tasksource/bigbench",
+        "formal_fallacies_syllogisms_negation",
+        mapper_func=_make_bigbench_mapper(
+            strip_prefix=_FORMAL_FALLACIES_PREFIX,
+            strip_suffix=_FORMAL_FALLACIES_SUFFIX,
+        ),
+        max_size=max_size,
+        seed=seed,
+    )
+
+
+_VITAMINC_PREFIX = (
+    "Based only on the information contained in a brief quote from Wikipedia, "
+    "answer whether the related claim is True, False or Neither. "
+    "Use Neither when the Wikipedia quote does not provide the necessary "
+    "information to resolve the question."
+)
+
+
+def load_bigbench_vitaminc_fact_verification(
+    max_size: Optional[int] = None, seed: int = 42
+):
+    """Load BIG-Bench vitaminc_fact_verification."""
+    return load_dataset_with_validation(
+        "tasksource/bigbench",
+        "vitaminc_fact_verification",
+        mapper_func=_make_bigbench_mapper(strip_prefix=_VITAMINC_PREFIX),
+        max_size=max_size,
+        seed=seed,
+    )
+
+
 # Registry of additional datasets to mix in during training.
 # Comment out or remove entries to disable specific sources.
 additional_datasets = {
@@ -251,4 +372,9 @@ additional_datasets = {
     "onionmonster_dream": load_onionmonster_dream,
     "knowledgator_gliclass_v3_logic": load_knowledgator_gliclass_v3_logic,
     "biomike_formal_logic_reasoning": load_biomike_formal_logic_reasoning,
+    "bigbench_abstract_narrative_understanding": load_bigbench_abstract_narrative_understanding,
+    "bigbench_elementary_math_qa": load_bigbench_elementary_math_qa,
+    "bigbench_contextual_parametric_knowledge_conflicts": load_bigbench_contextual_parametric_knowledge_conflicts,
+    "bigbench_formal_fallacies_syllogisms_negation": load_bigbench_formal_fallacies_syllogisms_negation,
+    "bigbench_vitaminc_fact_verification": load_bigbench_vitaminc_fact_verification,
 }
