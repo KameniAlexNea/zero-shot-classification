@@ -49,6 +49,10 @@ class ModelArgs:
         default="bilinear",
         metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
     )
+    use_cls_label_attention: bool = field(
+        default=False,
+        metadata={"help": "Use CLSLabelAttentionAggregator: single-head self-attention over [CLS, LAB_1..LAB_K] before scoring."},
+    )
     losses: List[str] = field(
         default_factory=lambda: ["softmax", "repulsion", "bce"],
         metadata={

@@ -45,6 +45,30 @@ class LabelAggregator(nn.Module):
             self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
 
+    def _text_repr(
+        self,
+        dense_labels: torch.Tensor,
+        aggregated_labels: torch.Tensor,
+        hidden_states: torch.Tensor,
+        text_mask: torch.Tensor,
+        all_batch_ids: torch.Tensor,
+        all_label_ids: torch.Tensor,
+        max_label_id: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Cross-attention of each label over text tokens.
+
+        Returns:
+            aggregated_text: (N, D) label-specific text representations.
+            aggregated_labels: (N, D) label embeddings (unchanged in base class).
+        """
+        D = hidden_states.shape[-1]
+        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) / (D ** 0.5)
+        scores = scores.masked_fill(~text_mask.unsqueeze(1), float("-inf"))
+        attn = F.softmax(scores, dim=2)
+        agg_text_dense = torch.bmm(attn, hidden_states)  # (B, max_label_id, D)
+        aggregated_text = agg_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
+        return aggregated_text, aggregated_labels
+
     def aggregate_labels(
         self,
         input_ids: torch.Tensor,
@@ -129,23 +153,14 @@ class LabelAggregator(nn.Module):
         max_label_id = (
             int(all_label_ids.max().item()) if inference else self.config.max_labels
         )
-        scale = D**0.5
 
         dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
         dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels
 
-        # (B, max_labels, D) @ (B, D, L) → (B, max_labels, L)
-        scores_dense = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) / scale
-        scores_dense = scores_dense.masked_fill(~text_mask.unsqueeze(1), float("-inf"))
-        attn_weights_dense = F.softmax(scores_dense, dim=2)  # (B, max_labels, L)
-
-        # (B, max_labels, L) @ (B, L, D) → (B, max_labels, D)
-        aggregated_text_dense = torch.bmm(attn_weights_dense, hidden_states)
-
-        # Extract only the valid (N,) label slots
-        aggregated_text = aggregated_text_dense[
-            all_batch_ids, all_label_ids - 1
-        ]  # (N, D)
+        aggregated_text, aggregated_labels = self._text_repr(
+            dense_labels, aggregated_labels, hidden_states, text_mask,
+            all_batch_ids, all_label_ids, max_label_id,
+        )
 
         logits = self.scoring(aggregated_text, aggregated_labels)
 
@@ -156,3 +171,75 @@ class LabelAggregator(nn.Module):
             aggregated_labels,
             aggregated_text,
         )
+
+
+class CLSLabelAttentionAggregator(LabelAggregator):
+    """Extends LabelAggregator with a single-head self-attention layer over the
+    [CLS, LAB_1, …, LAB_K] tokens.
+
+    After the backbone the CLS and LAB tokens have never explicitly interacted
+    as a group.  This lightweight module lets each LAB token attend to the CLS
+    summary (and to the other labels) and refines CLS with all label context,
+    pulling them into a shared subspace before scoring — especially helpful for
+    cosine similarity.
+
+    Architecture (per sample):
+        tokens  = [CLS_h, LAB_1_h, …, LAB_K_h]   shape (1+K, D)
+        tokens' = tokens + SelfAttn(LayerNorm(tokens))
+        text_repr   = tokens'[:, 0]   (refined CLS)
+        label_repr  = tokens'[:, 1:]  (refined LAB embeddings)
+    """
+
+    def __init__(self, config: GliZNetConfig):
+        super().__init__(config)
+        D = config.backbone_config.hidden_size
+        self.cls_lab_attn = nn.MultiheadAttention(
+            embed_dim=D, num_heads=1, batch_first=True, dropout=config.dropout_rate
+        )
+        self.norm = nn.LayerNorm(D)
+
+    def _text_repr(
+        self,
+        dense_labels: torch.Tensor,
+        aggregated_labels: torch.Tensor,
+        hidden_states: torch.Tensor,
+        text_mask: torch.Tensor,
+        all_batch_ids: torch.Tensor,
+        all_label_ids: torch.Tensor,
+        max_label_id: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Single-head self-attention over [CLS, LAB_1…LAB_K] per sample.
+
+        Returns:
+            aggregated_text: (N, D) — refined CLS per label slot.
+            aggregated_labels: (N, D) — refined LAB embeddings.
+        """
+        B, _, D = hidden_states.shape
+
+        # CLS token: position 0
+        cls_h = hidden_states[:, 0:1, :]                          # (B, 1, D)
+        lab_h = dense_labels                                       # (B, K, D)
+
+        # Sequence: [CLS, LAB_1, …, LAB_K]  →  shape (B, 1+K, D)
+        seq = torch.cat([cls_h, lab_h], dim=1)
+
+        # Key/value padding mask: True = ignore.
+        # Slot i+1 (0-indexed) is padding if no label occupies it.
+        lab_counts = (dense_labels.abs().sum(-1) != 0)            # (B, K) bool — True = valid
+        cls_valid = torch.ones(B, 1, dtype=torch.bool, device=hidden_states.device)
+        key_padding_mask = ~torch.cat([cls_valid, lab_counts], dim=1)  # (B, 1+K)
+
+        normed = self.norm(seq)
+        attn_out, _ = self.cls_lab_attn(normed, normed, normed, key_padding_mask=key_padding_mask)
+        seq = seq + attn_out                                       # residual
+
+        # Refined CLS and LABs
+        cls_refined = seq[:, 0, :]                                 # (B, D)
+        lab_refined = seq[:, 1:, :]                                # (B, K, D)
+
+        # Broadcast refined CLS to every valid label slot of that sample
+        aggregated_text = cls_refined[all_batch_ids]               # (N, D)
+        aggregated_labels_out = lab_refined[all_batch_ids, all_label_ids - 1]  # (N, D)
+
+        return aggregated_text, aggregated_labels_out
+

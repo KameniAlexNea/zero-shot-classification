@@ -66,6 +66,7 @@ def create_model_tokenizer(args: ModelArgs):
         label_repulsion_weight=args.label_repulsion_weight,
         supcon_margin=args.supcon_margin,
         scoring_method=args.scoring_method,
+        use_cls_label_attention=args.use_cls_label_attention,
         losses=args.losses,
         # label id
         lab_token_id=tokenizer.lab_token_id,

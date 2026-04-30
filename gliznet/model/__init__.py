@@ -1,6 +1,6 @@
 from transformers import AutoConfig, AutoModel
 
-from gliznet.model.aggregator import LabelAggregator
+from gliznet.model.aggregator import CLSLabelAttentionAggregator, LabelAggregator
 from gliznet.model.gliznet_modelling import (
     GliZNetForSequenceClassification,
     GliZNetPreTrainedModel,
@@ -19,6 +19,7 @@ AutoModel.register(GliZNetConfig, GliZNetForSequenceClassification)
 __all__ = [
     "GliZNetConfig",
     "GliZNetOutput",
+    "CLSLabelAttentionAggregator",
     "LabelAggregator",
     "GliZNetLoss",
     "GliZNetPreTrainedModel",
