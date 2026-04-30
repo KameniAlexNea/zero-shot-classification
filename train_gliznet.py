@@ -60,7 +60,6 @@ def create_model_tokenizer(args: ModelArgs):
         bce_loss_weight=args.bce_loss_weight,
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
-        repulsion_threshold=args.repulsion_threshold,
         supcon_margin=args.supcon_margin,
         scoring_method=args.scoring_method,
         losses=args.losses,

@@ -37,10 +37,7 @@ class ModelArgs:
             "help": "Weight for label repulsion loss (prevents embedding collapse)"
         },
     )
-    repulsion_threshold: float = field(
-        default=0.3,
-        metadata={"help": "Cosine similarity threshold for repulsion penalty"},
-    )
+
     supcon_margin: float = field(
         default=0.0,
         metadata={

@@ -64,20 +64,30 @@ class SoftmaxLoss(nn.Module):
 
 
 class RepulsionLoss(nn.Module):
-    """Penalize high cosine similarity between different labels in the same sample."""
+    """VICReg-style regularization to prevent label embedding collapse.
+
+    Combines two terms:
+    - Variance: ensures each embedding dimension maintains std >= 1 across
+      the batch, preventing collapse to a single point.
+    - Covariance: decorrelates embedding dimensions, preventing collapse to a
+      low-rank subspace.
+
+    Reference: Bardes et al., "VICReg: Variance-Invariance-Covariance Regularization
+    for Self-Supervised Learning", ICLR 2022.
+    """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.threshold = config.repulsion_threshold
+        self.variance_target = 1.0
+        self.eps = 1e-4
+        self.covariance_weight = 0.04
 
     def forward(
         self,
         label_embeddings: torch.Tensor,
-        label_ids: torch.Tensor,
-        batch_indices: torch.Tensor,
         **_,
     ) -> torch.Tensor:
-        if label_embeddings.numel() == 0:
+        if label_embeddings.numel() == 0 or label_embeddings.shape[0] < 2:
             return torch.tensor(
                 0.0,
                 device=label_embeddings.device,
@@ -85,23 +95,22 @@ class RepulsionLoss(nn.Module):
                 requires_grad=True,
             )
 
-        embeddings_norm = F.normalize(label_embeddings, p=2, dim=-1)
-        sim_matrix = torch.matmul(embeddings_norm, embeddings_norm.T)
+        D = label_embeddings.shape[1]
 
-        diff_label_mask = label_ids.unsqueeze(0) != label_ids.unsqueeze(1)
-        same_batch_mask = batch_indices.unsqueeze(0) == batch_indices.unsqueeze(1)
-        final_mask = diff_label_mask & same_batch_mask
+        # Variance term: penalize dimensions with std below target
+        # Using sqrt(var + eps) as in VICReg for smooth gradients near zero
+        std_per_dim = torch.sqrt(label_embeddings.var(dim=0) + self.eps)
+        variance_loss = F.relu(self.variance_target - std_per_dim).mean()
 
-        if not final_mask.any():
-            return torch.tensor(
-                0.0,
-                device=label_embeddings.device,
-                dtype=label_embeddings.dtype,
-                requires_grad=True,
-            )
+        # Covariance term: decorrelate dimensions (off-diagonal penalty)
+        centered = label_embeddings - label_embeddings.mean(dim=0)
+        n = centered.shape[0]
+        cov = (centered.T @ centered) / (n - 1)
+        # Zero diagonal in-place, penalize only off-diagonal
+        cov_off = cov - torch.diag(cov.diag())
+        covariance_loss = cov_off.pow(2).sum() / D
 
-        penalties = F.relu(sim_matrix[final_mask] - self.threshold)
-        return penalties.mean()
+        return variance_loss + self.covariance_weight * covariance_loss
 
 
 class BCELoss(nn.Module):

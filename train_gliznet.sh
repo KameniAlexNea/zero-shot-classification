@@ -17,11 +17,10 @@ nohup accelerate launch train_gliznet.py \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     \
-    `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
+    `# Loss Configuration (SupCon + VICReg + BCE)` \
     --bce_loss_weight 0.5 \
     --supcon_loss_weight 0.5 \
     --label_repulsion_weight 0.05 \
-    --repulsion_threshold 0.3 \
     --supcon_margin 0.5 \
     --scoring_method bilinear \
     \
