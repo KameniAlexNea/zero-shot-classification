@@ -78,6 +78,21 @@ results = pipeline("I love this movie!", ["positive", "negative", "neutral"])
 [CLS] text tokens [SEP] label1 [LAB] label2 [LAB] label3 [SEP]
 ```
 
+## 📈 Performance
+
+Evaluated on the **GLiClass benchmark** — 10 standard text-classification datasets, reported as **macro F1**.
+
+| Model | Avg macro F1 |
+|---|---|
+| GLiClass-large-v3.0 | 0.7417 |
+| GLiClass-base-v3.0 | 0.7056 |
+| GLiClass-modern-base-v3.0 | 0.6170 |
+| **GliZNet-deberta-v3-base — bilinear, VICReg + custom data (ours)** | **0.6473** |
+| GliZNet-deberta-v3-base — bilinear, full data (ours) | 0.6301 |
+| GliZNet-deberta-v3-base — cosine, full data (ours) | 0.6214 |
+
+GliZNet-base outperforms GLiClass-modern-base (+0.0303) and is within **0.06 macro F1 of GLiClass-base** while using the same backbone size. See [`reports/model_card.md`](reports/model_card.md) for the full per-dataset breakdown.
+
 ## 🎯 Use Cases
 
 - **Sentiment Analysis**: Classify text as positive/negative/neutral

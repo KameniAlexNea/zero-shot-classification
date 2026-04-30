@@ -30,8 +30,8 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 20000 \
-    --use_additional_datasets \
+    `# --max_extended_ds_size 20000` \
+    `# --use_additional_datasets` \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
@@ -70,7 +70,7 @@ nohup accelerate launch train_gliznet.py \
     --dataloader_prefetch_factor 2 \
     --eval_use_gather_object \
     --ddp_find_unused_parameters False \
-    --torch_compile \
+    `# --torch_compile` \
     --bf16 \
     \
     `# Logging & Monitoring` \

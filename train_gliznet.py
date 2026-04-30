@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
 import os
+import warnings
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+warnings.filterwarnings("ignore", message=".*torch._prims_common.check.*")
+
 import random
 
 import datasets
