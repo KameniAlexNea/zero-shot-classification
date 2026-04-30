@@ -62,7 +62,7 @@ class LabelAggregator(nn.Module):
             aggregated_labels: (N, D) label embeddings (unchanged in base class).
         """
         D = hidden_states.shape[-1]
-        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) / (D ** 0.5)
+        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) / (D**0.5)
         scores = scores.masked_fill(~text_mask.unsqueeze(1), float("-inf"))
         attn = F.softmax(scores, dim=2)
         agg_text_dense = torch.bmm(attn, hidden_states)  # (B, max_label_id, D)
@@ -158,8 +158,13 @@ class LabelAggregator(nn.Module):
         dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels
 
         aggregated_text, aggregated_labels = self._text_repr(
-            dense_labels, aggregated_labels, hidden_states, text_mask,
-            all_batch_ids, all_label_ids, max_label_id,
+            dense_labels,
+            aggregated_labels,
+            hidden_states,
+            text_mask,
+            all_batch_ids,
+            all_label_ids,
+            max_label_id,
         )
 
         logits = self.scoring(aggregated_text, aggregated_labels)
@@ -217,29 +222,30 @@ class CLSLabelAttentionAggregator(LabelAggregator):
         B, _, D = hidden_states.shape
 
         # CLS token: position 0
-        cls_h = hidden_states[:, 0:1, :]                          # (B, 1, D)
-        lab_h = dense_labels                                       # (B, K, D)
+        cls_h = hidden_states[:, 0:1, :]  # (B, 1, D)
+        lab_h = dense_labels  # (B, K, D)
 
         # Sequence: [CLS, LAB_1, …, LAB_K]  →  shape (B, 1+K, D)
         seq = torch.cat([cls_h, lab_h], dim=1)
 
         # Key/value padding mask: True = ignore.
         # Slot i+1 (0-indexed) is padding if no label occupies it.
-        lab_counts = (dense_labels.abs().sum(-1) != 0)            # (B, K) bool — True = valid
+        lab_counts = dense_labels.abs().sum(-1) != 0  # (B, K) bool — True = valid
         cls_valid = torch.ones(B, 1, dtype=torch.bool, device=hidden_states.device)
         key_padding_mask = ~torch.cat([cls_valid, lab_counts], dim=1)  # (B, 1+K)
 
         normed = self.norm(seq)
-        attn_out, _ = self.cls_lab_attn(normed, normed, normed, key_padding_mask=key_padding_mask)
-        seq = seq + attn_out                                       # residual
+        attn_out, _ = self.cls_lab_attn(
+            normed, normed, normed, key_padding_mask=key_padding_mask
+        )
+        seq = seq + attn_out  # residual
 
         # Refined CLS and LABs
-        cls_refined = seq[:, 0, :]                                 # (B, D)
-        lab_refined = seq[:, 1:, :]                                # (B, K, D)
+        cls_refined = seq[:, 0, :]  # (B, D)
+        lab_refined = seq[:, 1:, :]  # (B, K, D)
 
         # Broadcast refined CLS to every valid label slot of that sample
-        aggregated_text = cls_refined[all_batch_ids]               # (N, D)
+        aggregated_text = cls_refined[all_batch_ids]  # (N, D)
         aggregated_labels_out = lab_refined[all_batch_ids, all_label_ids - 1]  # (N, D)
 
         return aggregated_text, aggregated_labels_out
-

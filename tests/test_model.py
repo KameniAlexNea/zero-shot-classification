@@ -378,9 +378,11 @@ class TestGliZNetLoss:
         assert torch.isfinite(self._total(out, cfg))
         assert self._total(out, cfg).item() >= 0.0
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CLSLabelAttentionAggregator
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _make_cls_agg_config(scoring="bilinear"):
     cfg = GliZNetConfig(
@@ -423,7 +425,6 @@ def _make_cls_agg_inputs(batch=2, seq_len=8, hidden=HIDDEN, n_labels=2):
 
 
 class TestCLSLabelAttentionAggregator:
-
     def test_output_shapes(self):
         cfg = _make_cls_agg_config()
         agg = CLSLabelAttentionAggregator(cfg)

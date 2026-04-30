@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 
 import os
-import warnings
-
-os.environ["WANDB_PROJECT"] = "gliznet"
-os.environ["WANDB_WATCH"] = "none"
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
-warnings.filterwarnings("ignore", message=".*torch._prims_common.check.*")
-
 import random
+import warnings
 
 import datasets
 import torch
@@ -29,6 +21,13 @@ from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
 from training_data import additional_datasets
+
+os.environ["WANDB_PROJECT"] = "gliznet"
+os.environ["WANDB_WATCH"] = "none"
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+warnings.filterwarnings("ignore", message=".*torch._prims_common.check.*")
 
 
 def create_model_tokenizer(args: ModelArgs):
