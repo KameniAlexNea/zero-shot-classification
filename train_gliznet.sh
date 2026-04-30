@@ -23,7 +23,7 @@ nohup accelerate launch train_gliznet.py \
     --label_repulsion_weight 0.05 \
     --supcon_margin 0.5 \
     --scoring_method bilinear \
-    `# --use_cls_label_attention` \
+    --use_cls_label_attention \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
@@ -31,8 +31,8 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    `# --max_extended_ds_size 20000` \
-    `# --use_additional_datasets` \
+    --max_extended_ds_size 20000 \
+    --use_additional_datasets \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \

@@ -21,18 +21,12 @@ class SoftmaxLoss(nn.Module):
         self, dense_logits: torch.Tensor, labels: torch.Tensor, **_
     ) -> torch.Tensor:
         mask_valid = labels != -100
-        targets_clean = labels.clone()
-        targets_clean[~mask_valid] = 0.0
+        targets_clean = torch.where(mask_valid, labels, torch.zeros_like(labels))
 
         pos_mask = targets_clean > 0.5
         has_positives = pos_mask.any(dim=1)
         if not has_positives.any():
-            return torch.tensor(
-                0.0,
-                device=dense_logits.device,
-                dtype=dense_logits.dtype,
-                requires_grad=True,
-            )
+            return dense_logits.new_zeros(1, requires_grad=True).squeeze()
 
         logits = dense_logits[has_positives]
         pos_mask = pos_mask[has_positives]
@@ -50,14 +44,6 @@ class SoftmaxLoss(nn.Module):
 
         valid_pos = pos_mask & torch.isfinite(logits)
         per_pos_loss = per_pos_loss.masked_fill(~valid_pos, 0.0)
-
-        if torch.isnan(per_pos_loss).any() or torch.isinf(per_pos_loss).any():
-            return torch.tensor(
-                0.0,
-                device=dense_logits.device,
-                dtype=dense_logits.dtype,
-                requires_grad=True,
-            )
 
         num_pos = valid_pos.sum(dim=1).float().clamp(min=1e-6)
         return (per_pos_loss.sum(dim=1) / num_pos).mean()
@@ -88,17 +74,11 @@ class RepulsionLoss(nn.Module):
         **_,
     ) -> torch.Tensor:
         if label_embeddings.numel() == 0 or label_embeddings.shape[0] < 2:
-            return torch.tensor(
-                0.0,
-                device=label_embeddings.device,
-                dtype=label_embeddings.dtype,
-                requires_grad=True,
-            )
+            return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
 
         D = label_embeddings.shape[1]
 
         # Variance term: penalize dimensions with std below target
-        # Using sqrt(var + eps) as in VICReg for smooth gradients near zero
         std_per_dim = torch.sqrt(label_embeddings.var(dim=0) + self.eps)
         variance_loss = F.relu(self.variance_target - std_per_dim).mean()
 
@@ -107,8 +87,8 @@ class RepulsionLoss(nn.Module):
         n = centered.shape[0]
         cov = (centered.T @ centered) / (n - 1)
         # Zero diagonal in-place, penalize only off-diagonal
-        cov_off = cov - torch.diag(cov.diag())
-        covariance_loss = cov_off.pow(2).sum() / D
+        cov.fill_diagonal_(0.0)
+        covariance_loss = cov.pow(2).sum() / D
 
         return variance_loss + self.covariance_weight * covariance_loss
 
@@ -124,26 +104,13 @@ class BCELoss(nn.Module):
     ) -> torch.Tensor:
         mask = labels != -100
         if not mask.any():
-            return torch.tensor(
-                0.0,
-                device=dense_logits.device,
-                dtype=dense_logits.dtype,
-                requires_grad=True,
-            )
+            return dense_logits.new_zeros(1, requires_grad=True).squeeze()
 
         valid_logits = dense_logits[mask]
         valid_targets = labels[mask]
-        finite_mask = torch.isfinite(valid_logits)
-        if not finite_mask.any():
-            return torch.tensor(
-                0.0,
-                device=dense_logits.device,
-                dtype=dense_logits.dtype,
-                requires_grad=True,
-            )
 
         return F.binary_cross_entropy_with_logits(
-            valid_logits[finite_mask], valid_targets[finite_mask], reduction="mean"
+            valid_logits, valid_targets, reduction="mean"
         )
 
 
@@ -199,15 +166,13 @@ class GliZNetLoss(nn.Module):
         label_ids: torch.Tensor,
         label_embeddings: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
-        def _zero() -> torch.Tensor:
-            return torch.tensor(
-                0.0, device=logits.device, dtype=logits.dtype, requires_grad=True
-            )
-
-        result: Dict[str, torch.Tensor] = {name: _zero() for name in self.losses}
+        result: Dict[str, torch.Tensor] = {}
 
         if logits.numel() == 0:
-            result["total"] = _zero()
+            zero = logits.new_zeros(1, requires_grad=True).squeeze()
+            for name in self.losses:
+                result[name] = zero
+            result["total"] = zero
             return result
 
         batch_size = labels.size(0)
@@ -241,18 +206,14 @@ class GliZNetLoss(nn.Module):
             "batch_indices": batch_indices,
         }
 
+        total = logits.new_zeros(1).squeeze()
         for name, module in self.losses.items():
             computed = module(**context)
-            if torch.isnan(computed) or torch.isinf(computed):
-                logger.warning(
-                    f"NaN/Inf in {name} loss; zeroing for training stability."
-                )
-            else:
-                result[name] = computed
+            # Use nan_to_num (no GPU sync) instead of isnan/isinf checks
+            computed = torch.nan_to_num(computed, nan=0.0, posinf=0.0, neginf=0.0)
+            result[name] = computed
+            total = total + computed * self.weights.get(name, 1.0)
 
-        total = _zero()
-        for name, loss_val in result.items():
-            total = total + loss_val * self.weights.get(name, 1.0)
         result["total"] = total
 
         return result
