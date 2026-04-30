@@ -50,7 +50,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         self.backbone: PreTrainedModel = AutoModel.from_config(config.backbone_config)
 
         self.aggregator = LabelAggregator(config)
-        self.loss_fn = GliZNetLoss(config)
+        self.loss_fn = GliZNetLoss.from_config(config)
 
         self.post_init()
 
@@ -136,6 +136,8 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
         ) = self.aggregator(hidden_states, lmask, input_ids, attention_mask)
 
         loss = None
+        output_logits = logits  # sparse (N_spans, 1) for inference
+
         if labels is not None:
             loss_dict = self.loss_fn(
                 logits=logits,
@@ -144,31 +146,20 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                 label_ids=label_ids,
                 label_embeddings=label_embeddings,
             )
-            loss = (
-                loss_dict["softmax"] * self.config.supcon_loss_weight
-                + loss_dict["repulsion"] * self.config.label_repulsion_weight
-                + loss_dict["bce"] * self.config.bce_loss_weight
-            )
-
-        if not return_dict:
-            return (loss, logits, batch_indices, label_ids)
-
-        # When labels are present, reconstruct dense (batch_size, max_labels) logits so
-        # the Trainer can all_gather fixed-shape tensors in DDP eval and _prepare in
-        # compute_metrics can align logits with labels via the labels != -100 mask.
-        # label_ids are 1-indexed (from lmask), so col_idx = label_ids - 1.
-        # Unused positions are filled with -100.0, matching the label padding convention.
-        output_logits = logits  # sparse (N_spans, 1) for inference without labels
-        if labels is not None and logits.numel() > 0:
-            batch_size = labels.shape[0]
-            max_labels = labels.shape[1]
-            output_logits = logits.new_full((batch_size, max_labels), -100.0)
-            col_idx = label_ids - 1  # convert 1-indexed → 0-indexed
-            in_range = col_idx < max_labels
-            if in_range.any():
+            loss = loss_dict["total"]
+            # Reconstruct dense (B, max_labels) logits so the Trainer can all_gather
+            # fixed-shape tensors in DDP eval. Unused positions filled with -100.0.
+            if logits.numel() > 0:
+                batch_size, max_labels = labels.shape
+                output_logits = logits.new_full((batch_size, max_labels), -100.0)
+                col_idx = label_ids - 1  # 1-indexed → 0-indexed
+                in_range = col_idx < max_labels
                 output_logits[batch_indices[in_range], col_idx[in_range]] = (
                     logits.squeeze(-1)[in_range]
                 )
+
+        if not return_dict:
+            return (loss, output_logits, batch_indices, label_ids)
 
         return GliZNetOutput(
             loss=loss,

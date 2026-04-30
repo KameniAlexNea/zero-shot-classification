@@ -14,8 +14,7 @@ class GliZNetConfig(PretrainedConfig):
         lab_token_id: Token ID of the [LAB] separator token (set automatically from tokenizer)
         bce_loss_weight: Weight for binary cross-entropy loss
         supcon_loss_weight: Weight for multi-label softmax loss (legacy name; not true SupCon)
-        label_repulsion_weight: Weight for label repulsion loss (default 0.0 — disabled).
-        repulsion_threshold: Cosine similarity threshold for repulsion penalty
+        label_repulsion_weight: Weight for VICReg collapse-prevention loss (default 0.0 — disabled).
     """
 
     model_type = "gliznet"
@@ -33,10 +32,12 @@ class GliZNetConfig(PretrainedConfig):
         # One-vs-negatives margin: negatives are shifted up by this value before logsumexp,
         # forcing the model to maintain a gap of at least `m` between positive and negative logits.
         supcon_margin: float = 0.0,
-        # Repulsion settings
-        repulsion_threshold: float = 0.3,
         # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
         max_labels: int = 20,
+        # Scoring head: "bilinear" or "cosine"
+        scoring_method: str = "bilinear",
+        # Active loss modules — any subset of LOSS_REGISTRY keys
+        losses: list = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -53,8 +54,11 @@ class GliZNetConfig(PretrainedConfig):
         self.supcon_loss_weight = supcon_loss_weight
         self.label_repulsion_weight = label_repulsion_weight
         self.supcon_margin = supcon_margin
-        self.repulsion_threshold = repulsion_threshold
         self.max_labels = max_labels
+        self.scoring_method = scoring_method
+        self.losses = (
+            list(losses) if losses is not None else ["softmax", "repulsion", "bce"]
+        )
 
         # Resolve backbone_config without any network I/O.
         # AutoConfig.from_pretrained() is intentionally NOT called here — config

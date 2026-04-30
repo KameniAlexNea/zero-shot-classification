@@ -1,3 +1,4 @@
+import math
 from typing import Tuple
 
 import torch
@@ -5,6 +6,27 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from gliznet.model.config import GliZNetConfig
+
+
+class BilinearScoring(nn.Module):
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.bilinear = nn.Bilinear(hidden_size, hidden_size, 1)
+
+    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        return self.bilinear(text, labels)
+
+
+class CosineScoring(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.logit_scale = nn.Parameter(torch.tensor(math.log(1 / 0.07)))
+
+    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        text_norm = F.normalize(text, p=2, dim=-1)
+        label_norm = F.normalize(labels, p=2, dim=-1)
+        scale = torch.clamp(self.logit_scale.exp(), max=100.0)
+        return (text_norm * label_norm).sum(dim=-1, keepdim=True) * scale
 
 
 class LabelAggregator(nn.Module):
@@ -17,7 +39,10 @@ class LabelAggregator(nn.Module):
         hidden_size = config.backbone_config.hidden_size
         self.hidden_size = hidden_size
 
-        self.bilinear = nn.Bilinear(hidden_size, hidden_size, 1)
+        if config.scoring_method == "cosine":
+            self.scoring = CosineScoring()
+        else:
+            self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
 
     def aggregate_labels(
@@ -25,7 +50,7 @@ class LabelAggregator(nn.Module):
         input_ids: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
-        batch_size, seq_len, _ = hidden_states.shape
+        batch_size, _, _ = hidden_states.shape
         device = hidden_states.device
 
         lab_mask = input_ids == self.config.lab_token_id
@@ -122,7 +147,7 @@ class LabelAggregator(nn.Module):
             all_batch_ids, all_label_ids - 1
         ]  # (N, D)
 
-        logits = self.bilinear(aggregated_text, aggregated_labels)
+        logits = self.scoring(aggregated_text, aggregated_labels)
 
         return (
             logits,

@@ -17,12 +17,12 @@ nohup accelerate launch train_gliznet.py \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     \
-    `# Loss Configuration (SupCon + Label Repulsion + BCE)` \
+    `# Loss Configuration (SupCon + VICReg + BCE)` \
     --bce_loss_weight 0.5 \
     --supcon_loss_weight 0.5 \
     --label_repulsion_weight 0.05 \
-    --repulsion_threshold 0.3 \
     --supcon_margin 0.5 \
+    --scoring_method bilinear \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
@@ -30,8 +30,8 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 20000 \
-    --use_additional_datasets \
+    `# --max_extended_ds_size 20000` \
+    `# --use_additional_datasets` \
     \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
@@ -45,8 +45,8 @@ nohup accelerate launch train_gliznet.py \
     --run_name "gliznet_training_${TIMESTAMP}" \
     --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
     --num_train_epochs 10 \
-    --per_device_train_batch_size 16 \
-    --per_device_eval_batch_size 16 \
+    --per_device_train_batch_size 32 \
+    --per_device_eval_batch_size 32 \
     --gradient_accumulation_steps 2 \
     --learning_rate 4e-5 \
     --warmup_steps 0.05 \
@@ -70,7 +70,7 @@ nohup accelerate launch train_gliznet.py \
     --dataloader_prefetch_factor 2 \
     --eval_use_gather_object \
     --ddp_find_unused_parameters False \
-    --torch_compile \
+    `# --torch_compile` \
     --bf16 \
     \
     `# Logging & Monitoring` \

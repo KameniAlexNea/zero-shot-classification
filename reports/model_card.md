@@ -23,7 +23,7 @@ pipeline_tag: zero-shot-classification
 
 **GliZNet** (Generalized Zero-Shot Network) is a zero-shot text classification model that processes the input text and **all candidate labels jointly in a single forward pass**, achieving O(1) inference complexity regardless of the number of labels.
 
-Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with optional additive margin), auxiliary BCE, and optional label repulsion sharpens discrimination between semantically similar labels.
+Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with optional additive margin), auxiliary BCE, and a partial VICReg regularizer (variance + covariance terms only — the invariance term is dropped, leaving a pure label-repulsion objective) sharpens discrimination between semantically similar labels.
 
 > **Paper**: *GliZNet: A Novel Architecture for Zero-Shot Text Classification*  
 > Alex Kameni (Ivalua / Massy, France)
@@ -111,19 +111,19 @@ GLiClass variants are the closest published competitors; all encode text and lab
 
 | Dataset | GliZNet (ours) | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-large | GLiClass-modern-base | GLiClass-edge |
 |---|---|---|---|---|---|---|
-| CR | 0.8148 | 0.9398 | 0.9127 | 0.8952 | 0.8902 | 0.8215 |
-| SST-2 | 0.8566 | 0.9192 | 0.8959 | 0.9330 | 0.8959 | 0.8199 |
-| SST-5 | 0.2737 | 0.4606 | 0.3376 | 0.4619 | 0.2756 | 0.2823 |
-| IMDb | 0.8807 | 0.9366 | 0.9251 | 0.9402 | 0.9158 | 0.8485 |
-| 20-Newsgroups | 0.3269 | 0.5958 | 0.4759 | 0.3905 | 0.3433 | 0.2217 |
-| Enron Spam | 0.5995 | 0.7584 | 0.6760 | 0.5813 | 0.6398 | 0.5623 |
-| Financial PhraseBank | 0.4370 | 0.9000 | 0.8971 | 0.5929 | 0.4200 | 0.5004 |
-| AG News | 0.6849 | 0.7181 | 0.7279 | 0.7269 | 0.6663 | 0.6645 |
-| Emotion | 0.3990 | 0.4506 | 0.4447 | 0.4517 | 0.4254 | 0.3851 |
-| Rotten Tomatoes | 0.7917 | 0.8411 | 0.7943 | 0.7664 | 0.7070 | 0.7024 |
-| **AVERAGE** | **0.6065** | **0.7520** | **0.7087** | **0.6740** | **0.6179** | **0.5809** |
+| CR | 0.8752 | 0.9398 | 0.9127 | 0.8952 | 0.8902 | 0.8215 |
+| SST-2 | 0.8839 | 0.9192 | 0.8959 | 0.9330 | 0.8959 | 0.8199 |
+| SST-5 | 0.3969 | 0.4606 | 0.3376 | 0.4619 | 0.2756 | 0.2823 |
+| IMDb | 0.8855 | 0.9366 | 0.9251 | 0.9402 | 0.9158 | 0.8485 |
+| 20-Newsgroups | 0.3877 | 0.5958 | 0.4759 | 0.3905 | 0.3433 | 0.2217 |
+| Enron Spam | 0.5164 | 0.7584 | 0.6760 | 0.5813 | 0.6398 | 0.5623 |
+| Financial PhraseBank | 0.5945 | 0.9000 | 0.8971 | 0.5929 | 0.4200 | 0.5004 |
+| AG News | 0.7332 | 0.7181 | 0.7279 | 0.7269 | 0.6663 | 0.6645 |
+| Emotion | 0.3991 | 0.4506 | 0.4447 | 0.4517 | 0.4254 | 0.3851 |
+| Rotten Tomatoes | 0.8009 | 0.8411 | 0.7943 | 0.7664 | 0.7070 | 0.7024 |
+| **AVERAGE** | **0.6473** | **0.7520** | **0.7087** | **0.6740** | **0.6179** | **0.5809** |
 
-**Δ GliZNet vs GLiClass-large**: −0.1455 · **Δ vs GLiClass-base**: −0.1022 · **Δ vs GLiClass-modern-large**: −0.0675 · **Δ vs GLiClass-edge**: +0.0256
+**Δ GliZNet vs GLiClass-large**: −0.1047 · **Δ vs GLiClass-base**: −0.0614 · **Δ vs GLiClass-modern-large**: −0.0267 · **Δ vs GLiClass-modern-base**: +0.0294 · **Δ vs GLiClass-edge**: +0.0664
 
 *GliZNet is a DeBERTa-v3-**base** model trained on synthetic data only; GLiClass-large uses a significantly bigger backbone.*
 
@@ -143,7 +143,7 @@ GLiClass variants are the closest published competitors; all encode text and lab
 | Precision | bf16 |
 | Distributed training | DeepSpeed ZeRO-2 via `accelerate launch` |
 | Hardware | 2 × NVIDIA GPU |
-| Loss | One-vs-negatives softmax (weight 0.5, margin 0.5) + auxiliary BCE (weight 0.5) + label repulsion (weight 0.05) |
+| Loss | One-vs-negatives softmax (weight 0.5, margin 0.5) + auxiliary BCE (weight 0.5) + partial VICReg label repulsion — variance & covariance only, no invariance term (weight 0.05) |
 | Max labels per sample | 20 |
 
 ---

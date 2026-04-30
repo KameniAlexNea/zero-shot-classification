@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 
 import os
+import warnings
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+warnings.filterwarnings("ignore", message=".*torch._prims_common.check.*")
+
 import random
 
 import datasets
@@ -60,8 +64,9 @@ def create_model_tokenizer(args: ModelArgs):
         bce_loss_weight=args.bce_loss_weight,
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
-        repulsion_threshold=args.repulsion_threshold,
         supcon_margin=args.supcon_margin,
+        scoring_method=args.scoring_method,
+        losses=args.losses,
         # label id
         lab_token_id=tokenizer.lab_token_id,
         max_labels=args.max_labels,
@@ -160,7 +165,9 @@ def main():
         )
     added_size = len(dataset) - size_before
 
-    splits = dataset.train_test_split(test_size=0.05, seed=training_args.data_seed)
+    splits = dataset.train_test_split(
+        test_size=model_args.eval_size, seed=training_args.data_seed
+    )
     train_data = splits["train"]
     val_data = splits["test"]
 
