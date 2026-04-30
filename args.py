@@ -54,10 +54,16 @@ class ModelArgs:
     )
     losses: List[str] = field(
         default_factory=lambda: ["softmax", "repulsion", "bce"],
-        metadata={"help": "Active loss modules. Any subset of: softmax, repulsion, bce"},
+        metadata={
+            "help": "Active loss modules. Any subset of: softmax, repulsion, bce"
+        },
     )
 
     # Data configuration
+    eval_size: float = field(
+        default=0.05,
+        metadata={"help": "Proportion of training data to use for evaluation"},
+    )
     dataset_path: str = field(
         default="alexneakameni/synthetic-classification-dataset",
         metadata={"help": "HuggingFace dataset path"},

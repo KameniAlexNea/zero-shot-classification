@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 class SoftmaxLoss(nn.Module):
     """One-vs-negatives softmax loss with optional additive margin."""
 
-    def __init__(self, margin: float = 0.0):
+    def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.margin = margin
+        self.margin = config.supcon_margin
 
     def forward(
         self, dense_logits: torch.Tensor, labels: torch.Tensor, **_
@@ -28,7 +28,10 @@ class SoftmaxLoss(nn.Module):
         has_positives = pos_mask.any(dim=1)
         if not has_positives.any():
             return torch.tensor(
-                0.0, device=dense_logits.device, dtype=dense_logits.dtype, requires_grad=True
+                0.0,
+                device=dense_logits.device,
+                dtype=dense_logits.dtype,
+                requires_grad=True,
             )
 
         logits = dense_logits[has_positives]
@@ -42,9 +45,7 @@ class SoftmaxLoss(nn.Module):
         neg_lse = torch.logsumexp(neg_logits, dim=1)
 
         neg_lse_exp = neg_lse.unsqueeze(1).expand_as(logits)
-        denom_lse = torch.logsumexp(
-            torch.stack([logits, neg_lse_exp], dim=2), dim=2
-        )
+        denom_lse = torch.logsumexp(torch.stack([logits, neg_lse_exp], dim=2), dim=2)
         per_pos_loss = denom_lse - logits
 
         valid_pos = pos_mask & torch.isfinite(logits)
@@ -52,7 +53,10 @@ class SoftmaxLoss(nn.Module):
 
         if torch.isnan(per_pos_loss).any() or torch.isinf(per_pos_loss).any():
             return torch.tensor(
-                0.0, device=dense_logits.device, dtype=dense_logits.dtype, requires_grad=True
+                0.0,
+                device=dense_logits.device,
+                dtype=dense_logits.dtype,
+                requires_grad=True,
             )
 
         num_pos = valid_pos.sum(dim=1).float().clamp(min=1e-6)
@@ -62,9 +66,9 @@ class SoftmaxLoss(nn.Module):
 class RepulsionLoss(nn.Module):
     """Penalize high cosine similarity between different labels in the same sample."""
 
-    def __init__(self, threshold: float = 0.3):
+    def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.threshold = threshold
+        self.threshold = config.repulsion_threshold
 
     def forward(
         self,
@@ -103,13 +107,19 @@ class RepulsionLoss(nn.Module):
 class BCELoss(nn.Module):
     """Binary cross-entropy loss."""
 
+    def __init__(self, config: GliZNetConfig):
+        super().__init__()
+
     def forward(
         self, dense_logits: torch.Tensor, labels: torch.Tensor, **_
     ) -> torch.Tensor:
         mask = labels != -100
         if not mask.any():
             return torch.tensor(
-                0.0, device=dense_logits.device, dtype=dense_logits.dtype, requires_grad=True
+                0.0,
+                device=dense_logits.device,
+                dtype=dense_logits.dtype,
+                requires_grad=True,
             )
 
         valid_logits = dense_logits[mask]
@@ -117,7 +127,10 @@ class BCELoss(nn.Module):
         finite_mask = torch.isfinite(valid_logits)
         if not finite_mask.any():
             return torch.tensor(
-                0.0, device=dense_logits.device, dtype=dense_logits.dtype, requires_grad=True
+                0.0,
+                device=dense_logits.device,
+                dtype=dense_logits.dtype,
+                requires_grad=True,
             )
 
         return F.binary_cross_entropy_with_logits(
@@ -165,12 +178,7 @@ class GliZNetLoss(nn.Module):
                 raise ValueError(
                     f"Unknown loss '{name}'. Available: {list(LOSS_REGISTRY)}"
                 )
-            if name == "softmax":
-                modules[name] = SoftmaxLoss(margin=config.supcon_margin)
-            elif name == "repulsion":
-                modules[name] = RepulsionLoss(threshold=config.repulsion_threshold)
-            else:
-                modules[name] = LOSS_REGISTRY[name]()
+            modules[name] = LOSS_REGISTRY[name](config)
         weights = {name: weight_map.get(name, 1.0) for name in modules}
         return cls(nn.ModuleDict(modules), weights, max_labels=config.max_labels)
 

@@ -162,7 +162,9 @@ def main():
         )
     added_size = len(dataset) - size_before
 
-    splits = dataset.train_test_split(test_size=0.05, seed=training_args.data_seed)
+    splits = dataset.train_test_split(
+        test_size=model_args.eval_size, seed=training_args.data_seed
+    )
     train_data = splits["train"]
     val_data = splits["test"]
 

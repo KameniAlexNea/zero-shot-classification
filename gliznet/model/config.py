@@ -60,7 +60,9 @@ class GliZNetConfig(PretrainedConfig):
         self.repulsion_threshold = repulsion_threshold
         self.max_labels = max_labels
         self.scoring_method = scoring_method
-        self.losses = list(losses) if losses is not None else ["softmax", "repulsion", "bce"]
+        self.losses = (
+            list(losses) if losses is not None else ["softmax", "repulsion", "bce"]
+        )
 
         # Resolve backbone_config without any network I/O.
         # AutoConfig.from_pretrained() is intentionally NOT called here — config

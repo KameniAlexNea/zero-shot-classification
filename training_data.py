@@ -254,7 +254,7 @@ def _make_bigbench_mapper(
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
         text = x["inputs"]
         if strip_prefix and isinstance(text, str) and text.startswith(strip_prefix):
-            text = text[len(strip_prefix):]
+            text = text[len(strip_prefix) :]
         if strip_suffix and isinstance(text, str) and text.endswith(strip_suffix):
             text = text[: -len(strip_suffix)]
         return {
@@ -267,7 +267,9 @@ def _make_bigbench_mapper(
 
 
 _ABSTRACT_NARRATIVE_PREFIX = "In what follows, we provide short narratives, each of which illustrates a common proverb.\nNarrative: "
-_ABSTRACT_NARRATIVE_SUFFIX = "\nThis narrative is a good illustration of the following proverb:"
+_ABSTRACT_NARRATIVE_SUFFIX = (
+    "\nThis narrative is a good illustration of the following proverb:"
+)
 
 
 def load_bigbench_abstract_narrative_understanding(
@@ -300,7 +302,9 @@ def load_bigbench_elementary_math_qa(max_size: Optional[int] = None, seed: int =
     )
 
 
-_CONTEXTUAL_PARAMETRIC_PREFIX = "What is the answer to the question, assuming the context is true.\n\n\n"
+_CONTEXTUAL_PARAMETRIC_PREFIX = (
+    "What is the answer to the question, assuming the context is true.\n\n\n"
+)
 _CONTEXTUAL_PARAMETRIC_SUFFIX = "\nAnswer:"
 
 
@@ -365,7 +369,9 @@ def load_allenai_art(max_size: Optional[int] = None, seed: int = 42):
     """Load AllenAI ART (Abductive Reasoning in narrative Text)."""
 
     def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
-        text = ensure_string(x["observation_1"]) + " " + ensure_string(x["observation_2"])
+        text = (
+            ensure_string(x["observation_1"]) + " " + ensure_string(x["observation_2"])
+        )
         ltext = [ensure_string(x["hypothesis_1"]), ensure_string(x["hypothesis_2"])]
         lint = [int(x["label"] == 1), int(x["label"] == 2)]
         return {"text": text, LabelName.ltext: ltext, LabelName.lint: lint}
