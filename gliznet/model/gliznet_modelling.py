@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel, PreTrainedModel
 
-from gliznet.model.aggregator import CLSLabelAttentionAggregator, LabelAggregator
+from gliznet.model.aggregator import LabelAggregator
 from gliznet.model.config import GliZNetConfig
 from gliznet.model.loss import GliZNetLoss
 from gliznet.model.outputs import GliZNetOutput
@@ -49,12 +49,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
             config.backbone_config = AutoConfig.from_pretrained(config.backbone_model)
         self.backbone: PreTrainedModel = AutoModel.from_config(config.backbone_config)
 
-        aggregator_cls = (
-            CLSLabelAttentionAggregator
-            if config.use_cls_label_attention
-            else LabelAggregator
-        )
-        self.aggregator = aggregator_cls(config)
+        self.aggregator = LabelAggregator(config)
         self.loss_fn = GliZNetLoss.from_config(config)
 
         self.post_init()

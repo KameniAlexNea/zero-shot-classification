@@ -10,7 +10,7 @@ import torch.nn as nn
 from transformers import AutoModel
 
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
-from gliznet.model.aggregator import LabelAggregator, CLSLabelAttentionAggregator
+from gliznet.model.aggregator import LabelAggregator
 from gliznet.model.loss import GliZNetLoss
 
 
@@ -377,83 +377,3 @@ class TestGliZNetLoss:
         out = loss_fn(*_make_loss_inputs(batch=batch_size, n_labels=3))
         assert torch.isfinite(self._total(out, cfg))
         assert self._total(out, cfg).item() >= 0.0
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# CLSLabelAttentionAggregator
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def _make_cls_agg_config(scoring="bilinear"):
-    cfg = GliZNetConfig(
-        backbone_model="bert-base-uncased",
-        scoring_method=scoring,
-        use_cls_label_attention=True,
-        max_labels=4,
-        dropout_rate=0.0,
-    )
-    cfg.backbone_config = namedtuple("cfg", ("hidden_size",))(HIDDEN)
-    cfg.lab_token_id = LAB_TOKEN_ID
-    return cfg
-
-
-def _make_cls_agg_inputs(batch=2, seq_len=8, hidden=HIDDEN, n_labels=2):
-    """Build (hidden_states, lmask, input_ids, attention_mask) for the aggregator.
-
-    Layout per sample: [CLS, text..., LAB, text..., LAB, pad...]
-    LAB tokens are placed at fixed positions to make the mask deterministic.
-    """
-    torch.manual_seed(0)
-    hidden_states = torch.randn(batch, seq_len, hidden)
-
-    # Two LAB tokens per sample at positions 3 and 5
-    lab_positions = [3, 5]
-    input_ids = torch.zeros(batch, seq_len, dtype=torch.long)
-    for pos in lab_positions:
-        input_ids[:, pos] = LAB_TOKEN_ID
-
-    attention_mask = torch.ones(batch, seq_len, dtype=torch.long)
-    # last token is padding
-    attention_mask[:, -1] = 0
-
-    # lmask: 0 for text, positive ints for label tokens
-    lmask = torch.zeros(batch, seq_len, dtype=torch.long)
-    for i, pos in enumerate(lab_positions, start=1):
-        lmask[:, pos] = i
-
-    return hidden_states, lmask, input_ids, attention_mask
-
-
-class TestCLSLabelAttentionAggregator:
-    def test_output_shapes(self):
-        cfg = _make_cls_agg_config()
-        agg = CLSLabelAttentionAggregator(cfg)
-        hs, lmask, ids, attn = _make_cls_agg_inputs()
-        logits, batch_ids, label_ids, label_emb, text_emb = agg(hs, lmask, ids, attn)
-        N = label_ids.shape[0]
-        assert logits.shape == (N, 1)
-        assert label_emb.shape == (N, HIDDEN)
-        assert text_emb.shape == (N, HIDDEN)
-
-    def test_output_finite(self):
-        cfg = _make_cls_agg_config()
-        agg = CLSLabelAttentionAggregator(cfg)
-        hs, lmask, ids, attn = _make_cls_agg_inputs()
-        logits, _, _, label_emb, text_emb = agg(hs, lmask, ids, attn)
-        assert torch.isfinite(logits).all()
-        assert torch.isfinite(label_emb).all()
-        assert torch.isfinite(text_emb).all()
-
-    def test_text_repr_differs_from_base(self):
-        """Refined CLS from CLSLabelAttentionAggregator should differ from the
-        label-cross-attention text repr produced by the base LabelAggregator."""
-        cfg = _make_cls_agg_config()
-        base = LabelAggregator(cfg)
-        extended = CLSLabelAttentionAggregator(cfg)
-        hs, lmask, ids, attn = _make_cls_agg_inputs()
-        with torch.no_grad():
-            _, _, _, _, text_base = base(hs, lmask, ids, attn)
-            _, _, _, _, text_ext = extended(hs, lmask, ids, attn)
-        assert not torch.allclose(text_base, text_ext), (
-            "CLSLabelAttentionAggregator text repr must differ from base cross-attention repr"
-        )
