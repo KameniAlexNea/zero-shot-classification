@@ -30,7 +30,7 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 20000 \
+    --max_extended_ds_size 1000 \
     --use_additional_datasets \
     \
     `# Tokenizer Configuration` \

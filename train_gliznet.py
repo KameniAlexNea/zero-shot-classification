@@ -163,10 +163,8 @@ def main():
             dataset, model_args.max_extended_ds_size, training_args.data_seed
         )
     added_size = len(dataset) - size_before
-
-    splits = dataset.train_test_split(
-        test_size=model_args.eval_size, seed=training_args.data_seed
-    )
+    eval_size = min(model_args.eval_size * len(dataset), 2000)
+    splits = dataset.train_test_split(test_size=eval_size, seed=training_args.data_seed)
     train_data = splits["train"]
     val_data = splits["test"]
 

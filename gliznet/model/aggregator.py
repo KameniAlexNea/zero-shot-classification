@@ -48,18 +48,6 @@ class LabelAggregator(nn.Module):
             self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
 
-        # Pre-register grid buffers (created once, never recomputed)
-        self.register_buffer(
-            "_label_id_grid",
-            torch.arange(1, config.max_labels + 1).unsqueeze(0),
-            persistent=False,
-        )
-        self.register_buffer(
-            "_batch_label_grid_template",
-            torch.zeros(1, config.max_labels, dtype=torch.long),
-            persistent=False,
-        )
-
     def _text_repr(
         self,
         dense_labels: torch.Tensor,
@@ -103,8 +91,9 @@ class LabelAggregator(nn.Module):
 
         lab_counts = lab_mask.sum(dim=1)
 
-        # Use pre-registered grids (expand is free — no copy)
-        label_id_grid = self._label_id_grid.expand(batch_size, -1)
+        label_id_grid = torch.arange(
+            1, self.max_labels + 1, device=device
+        ).unsqueeze(0).expand(batch_size, -1)
         batch_label_grid = (
             torch.arange(batch_size, device=device)
             .unsqueeze(1)
