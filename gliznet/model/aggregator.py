@@ -187,4 +187,3 @@ class LabelAggregator(nn.Module):
             aggregated_labels,
             aggregated_text,
         )
-

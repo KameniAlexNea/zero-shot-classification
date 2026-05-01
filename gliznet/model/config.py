@@ -36,7 +36,6 @@ class GliZNetConfig(PretrainedConfig):
         max_labels: int = 20,
         # Scoring head: "bilinear" or "cosine"
         scoring_method: str = "bilinear",
-
         # Active loss modules — any subset of LOSS_REGISTRY keys
         losses: list = None,
         **kwargs,
@@ -60,7 +59,6 @@ class GliZNetConfig(PretrainedConfig):
         self.losses = (
             list(losses) if losses is not None else ["softmax", "repulsion", "bce"]
         )
-
 
         # Resolve backbone_config without any network I/O.
         # AutoConfig.from_pretrained() is intentionally NOT called here — config
