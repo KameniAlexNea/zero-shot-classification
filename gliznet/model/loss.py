@@ -82,13 +82,16 @@ class RepulsionLoss(nn.Module):
         std_per_dim = torch.sqrt(label_embeddings.var(dim=0) + self.eps)
         variance_loss = F.relu(self.variance_target - std_per_dim).mean()
 
-        # Covariance term: decorrelate dimensions (off-diagonal penalty)
+        # Covariance term: decorrelate dimensions using correlation matrix
+        # (standardizing first bounds entries to [-1,1] and prevents gradient explosion
+        # from large DeBERTa embedding magnitudes)
         centered = label_embeddings - label_embeddings.mean(dim=0)
-        n = centered.shape[0]
-        cov = (centered.T @ centered) / (n - 1)
-        # Zero diagonal in-place, penalize only off-diagonal
-        cov.fill_diagonal_(0.0)
-        covariance_loss = cov.pow(2).sum() / D
+        std_safe = std_per_dim.clamp(min=0.01)
+        standardized = centered / std_safe
+        n = standardized.shape[0]
+        corr = (standardized.T @ standardized) / (n - 1)
+        corr.fill_diagonal_(0.0)
+        covariance_loss = corr.pow(2).sum() / D
 
         return variance_loss + self.covariance_weight * covariance_loss
 
