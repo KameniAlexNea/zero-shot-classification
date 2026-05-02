@@ -91,7 +91,8 @@ class RepulsionLoss(nn.Module):
         n = standardized.shape[0]
         corr = (standardized.T @ standardized) / (n - 1)
         corr.fill_diagonal_(0.0)
-        covariance_loss = corr.pow(2).sum() / D
+        # Divide by D*(D-1) = number of off-diagonal entries for scale-invariant penalty
+        covariance_loss = corr.pow(2).sum() / (D * (D - 1))
 
         return variance_loss + self.covariance_weight * covariance_loss
 

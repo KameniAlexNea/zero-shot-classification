@@ -21,7 +21,7 @@ nohup accelerate launch train_gliznet.py \
     --focal_loss_weight 0.6 \
     --focal_gamma 2.0 \
     --supcon_loss_weight 0.9 \
-    --label_repulsion_weight 0.05 \
+    --label_repulsion_weight 1.0 \
     --supcon_margin 0.5 \
     --scoring_method bilinear \
     \
