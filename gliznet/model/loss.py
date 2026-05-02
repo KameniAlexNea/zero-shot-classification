@@ -93,11 +93,12 @@ class RepulsionLoss(nn.Module):
         return variance_loss + self.covariance_weight * covariance_loss
 
 
-class BCELoss(nn.Module):
-    """Binary cross-entropy loss."""
+class FocalLoss(nn.Module):
+    """Focal loss — down-weights easy examples to focus on hard ones."""
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
+        self.gamma = config.focal_gamma
 
     def forward(
         self, dense_logits: torch.Tensor, labels: torch.Tensor, **_
@@ -109,15 +110,18 @@ class BCELoss(nn.Module):
         valid_logits = dense_logits[mask]
         valid_targets = labels[mask]
 
-        return F.binary_cross_entropy_with_logits(
-            valid_logits, valid_targets, reduction="mean"
+        bce = F.binary_cross_entropy_with_logits(
+            valid_logits, valid_targets, reduction="none"
         )
+        p_t = torch.exp(-bce)
+        focal_weight = (1.0 - p_t) ** self.gamma
+        return (focal_weight * bce).mean()
 
 
 LOSS_REGISTRY: Dict[str, type] = {
     "softmax": SoftmaxLoss,
     "repulsion": RepulsionLoss,
-    "bce": BCELoss,
+    "focal": FocalLoss,
 }
 
 
@@ -146,7 +150,7 @@ class GliZNetLoss(nn.Module):
         weight_map = {
             "softmax": config.supcon_loss_weight,
             "repulsion": config.label_repulsion_weight,
-            "bce": config.bce_loss_weight,
+            "focal": config.focal_loss_weight,
         }
         modules: Dict[str, nn.Module] = {}
         for name in config.losses:

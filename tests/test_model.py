@@ -224,7 +224,7 @@ class TestBackboneWeightIntegrity:
 def _default_config(**overrides):
     cfg = GliZNetConfig(
         backbone_model="bert-base-uncased",
-        bce_loss_weight=1.0,
+        focal_loss_weight=1.0,
         supcon_loss_weight=1.0,
         label_repulsion_weight=0.0,
     )
@@ -260,7 +260,7 @@ class TestGliZNetLoss:
         args = _make_loss_inputs()
         out = loss_fn(*args)
         assert isinstance(out, dict)
-        assert {"softmax", "repulsion", "bce", "total"}.issubset(out.keys())
+        assert {"softmax", "repulsion", "focal", "total"}.issubset(out.keys())
         for v in out.values():
             assert v.dim() == 0
         assert self._total(out).item() >= 0.0
@@ -278,14 +278,14 @@ class TestGliZNetLoss:
         assert torch.isfinite(self._total(out))
 
     def test_softmax_only(self):
-        cfg = _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
+        cfg = _default_config(focal_loss_weight=0.0, supcon_loss_weight=1.0)
         loss_fn = GliZNetLoss.from_config(cfg)
         out = loss_fn(*_make_loss_inputs())
         assert torch.isfinite(self._total(out, cfg))
         assert self._total(out, cfg).item() >= 0.0
 
-    def test_bce_only(self):
-        cfg = _default_config(bce_loss_weight=1.0, supcon_loss_weight=0.0)
+    def test_focal_only(self):
+        cfg = _default_config(focal_loss_weight=1.0, supcon_loss_weight=0.0)
         loss_fn = GliZNetLoss.from_config(cfg)
         out = loss_fn(*_make_loss_inputs())
         assert torch.isfinite(self._total(out, cfg))
@@ -300,7 +300,7 @@ class TestGliZNetLoss:
 
     def test_all_losses_disabled_returns_zero(self):
         cfg = _default_config(
-            bce_loss_weight=0.0,
+            focal_loss_weight=0.0,
             supcon_loss_weight=0.0,
             label_repulsion_weight=0.0,
         )
@@ -310,7 +310,7 @@ class TestGliZNetLoss:
 
     def test_no_positives_returns_zero_supcon(self):
         """Samples with no positive labels → softmax loss should be 0 (skipped)."""
-        cfg = _default_config(bce_loss_weight=0.0, supcon_loss_weight=1.0)
+        cfg = _default_config(focal_loss_weight=0.0, supcon_loss_weight=1.0)
         loss_fn = GliZNetLoss.from_config(cfg)
         logits, labels, batch_indices, label_ids, embs = _make_loss_inputs()
         labels_no_pos = torch.zeros_like(labels)

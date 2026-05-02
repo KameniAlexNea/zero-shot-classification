@@ -23,9 +23,13 @@ class ModelArgs:
     )
 
     # Loss configuration
-    bce_loss_weight: float = field(
+    focal_loss_weight: float = field(
         default=1.0,
-        metadata={"help": "Weight for binary cross-entropy loss"},
+        metadata={"help": "Weight for focal loss"},
+    )
+    focal_gamma: float = field(
+        default=2.0,
+        metadata={"help": "Focusing parameter for focal loss (higher = more focus on hard examples)"},
     )
     supcon_loss_weight: float = field(
         default=1.0,
@@ -51,9 +55,9 @@ class ModelArgs:
     )
 
     losses: List[str] = field(
-        default_factory=lambda: ["softmax", "repulsion", "bce"],
+        default_factory=lambda: ["softmax", "repulsion", "focal"],
         metadata={
-            "help": "Active loss modules. Any subset of: softmax, repulsion, bce"
+            "help": "Active loss modules. Any subset of: softmax, repulsion, focal"
         },
     )
 

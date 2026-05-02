@@ -60,7 +60,8 @@ def create_model_tokenizer(args: ModelArgs):
         backbone_model=args.model_name,
         dropout_rate=args.dropout_rate,
         # Loss configuration
-        bce_loss_weight=args.bce_loss_weight,
+        focal_loss_weight=args.focal_loss_weight,
+        focal_gamma=args.focal_gamma,
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
         supcon_margin=args.supcon_margin,
