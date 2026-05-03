@@ -14,14 +14,14 @@ from transformers import (
     TrainingArguments,
 )
 
-from args import ModelArgs
+from config.args import ModelArgs
 from gliznet.augmentation import load_augmentation_pipeline
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
-from training_data import additional_datasets
+from config.training_data import additional_datasets
 
 os.environ["WANDB_PROJECT"] = "gliznet"
 os.environ["WANDB_WATCH"] = "none"

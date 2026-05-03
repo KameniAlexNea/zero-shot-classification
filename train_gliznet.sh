@@ -34,7 +34,7 @@ nohup accelerate launch train_gliznet.py \
     --max_extended_ds_size 1000 \
     --use_additional_datasets \
     --text_augmentation True \
-    --augmentation_config augmentation_config.yaml \
+    --augmentation_config config/augmentation_config.yaml \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
     --model_max_length 512 \
