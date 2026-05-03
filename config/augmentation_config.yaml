@@ -1,7 +1,7 @@
 # Default text augmentation pipeline for GliZNet training.
 # Each entry: [probability_of_applying, augmentation_name, {params}]
 #
-# Available augmentations:
+# Available text augmentations:
 #   SuffixTruncation  - "running" -> "runnin" (informal spelling)
 #   CharSwap          - "point" -> "poitn" (adjacent char swap)
 #   CharDrop          - "running" -> "runing" (dropped character)
@@ -9,6 +9,10 @@
 #   KeyboardTypo      - QWERTY adjacent key replacement
 #   WordDrop          - removes random words
 #   RandomCaseChange  - lowercases capitalized words
+#
+# Available label augmentations:
+#   NegativeRatioEnforcement - enforces realistic pos/neg ratio (1:3 to 1:10)
+#   LabelLimit               - limits total labels & shuffles
 
 augmentations:
   - name: SuffixTruncation
@@ -45,3 +49,18 @@ augmentations:
     prob: 0.2
     params:
       word_prob: 0.05
+
+# Label augmentations are applied sequentially to (labels_text, labels_int)
+label_augmentations:
+  - name: NegativeRatioEnforcement
+    params:
+      min_positives: 1
+      max_positives: 3
+      neg_ratio_min: 3
+      neg_ratio_max: 10
+
+  - name: LabelLimit
+    params:
+      max_labels: 20
+      shuffle_labels: true
+      remove_underscores: 0.9

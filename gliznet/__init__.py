@@ -12,10 +12,17 @@ Architecture:
     - Multi-component loss (BCE + multi-label softmax + optional label repulsion)
 """
 
+from .augmentation import (
+    AugmentationPipeline,
+    LabelAugmentationPipeline,
+    LabelLimit,
+    NegativeRatioEnforcement,
+    load_augmentation_pipeline,
+    load_label_augmentation_pipeline,
+)
 from .data import (
     add_tokenized_function,
     collate_fn,
-    limit_labels,
     load_dataset,
 )
 from .model import GliZNetForSequenceClassification, GliZNetOutput
@@ -32,6 +39,11 @@ __all__ = [
     "load_dataset",
     "add_tokenized_function",
     "collate_fn",
-    "limit_labels",
+    "LabelLimit",
+    "NegativeRatioEnforcement",
+    "LabelAugmentationPipeline",
+    "AugmentationPipeline",
+    "load_augmentation_pipeline",
+    "load_label_augmentation_pipeline",
     "LabelName",
 ]

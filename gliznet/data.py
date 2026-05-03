@@ -13,7 +13,7 @@ import datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from .augmentation import AugmentationPipeline
+from .augmentation import AugmentationPipeline, LabelAugmentationPipeline, LabelLimit
 from .tokenizer import GliZNETTokenizer
 from .training_config import LabelName
 
@@ -78,52 +78,6 @@ def load_dataset(
     return ds.select_columns(["text", LabelName.ltext, LabelName.lint])
 
 
-def limit_labels(
-    labels_text: List[str],
-    labels_int: List[int],
-    shuffle_labels: bool,
-    max_labels: int,
-    remove_underscores: float = 0.9,
-):
-    """Limit the number of labels while maintaining natural proportion.
-
-    Args:
-        labels_text: List of label text strings
-        labels_int: List of label integers (1 for positive, 0 for negative)
-        shuffle_labels: Whether to shuffle labels randomly
-        max_labels: Maximum number of labels to keep
-
-    Returns:
-        Tuple of (limited_labels_text, limited_labels_int)
-
-    Strategy:
-        1. Randomly shuffle all labels if requested
-        2. Take first max_labels samples
-        3. This naturally maintains the original proportion of positive/negative labels
-    """
-    labels_text = [
-        i.replace("_", " ") if random.random() < remove_underscores else i
-        for i in labels_text
-    ]
-
-    # Combine labels into pairs
-    combined = list(zip(labels_text, labels_int))
-
-    if shuffle_labels and combined:
-        random.shuffle(combined)
-        # Randomly select between 1 and max_labels
-        num_labels = random.randint(1, min(max_labels, len(combined)))
-        selected_pairs = combined[:num_labels]
-    else:
-        selected_pairs = combined[:max_labels]
-
-    if not selected_pairs:
-        return [], []
-
-    labels_text, labels_int = zip(*selected_pairs)
-    return list(labels_text), list(labels_int)
-
-
 def add_tokenized_function(
     hf_dataset: datasets.Dataset,
     tokenizer: GliZNETTokenizer,
@@ -134,6 +88,7 @@ def add_tokenized_function(
     shuffle_labels: bool = True,
     as_transform: bool = True,
     augmentation_pipeline: Optional[AugmentationPipeline] = None,
+    label_augmentation_pipeline: Optional[LabelAugmentationPipeline] = None,
 ) -> datasets.Dataset:
     """Tokenize the HuggingFace dataset using the GliZNETTokenizer.
 
@@ -147,10 +102,16 @@ def add_tokenized_function(
         shuffle_labels: Whether to shuffle labels (positives are always preserved)
         as_transform: If True, apply as lazy transform; if False, map eagerly
         augmentation_pipeline: Optional AugmentationPipeline to apply to text (training only)
+        label_augmentation_pipeline: Optional LabelAugmentationPipeline to apply to labels
 
     Returns:
         Tokenized dataset
     """
+    # Default label augmentation: just LabelLimit (same behavior as before)
+    if label_augmentation_pipeline is None:
+        label_augmentation_pipeline = LabelAugmentationPipeline(
+            [LabelLimit(max_labels=max_labels, shuffle_labels=shuffle_labels)]
+        )
 
     def tokenize_function(examples):
         # Handle batched input format
@@ -167,9 +128,9 @@ def add_tokenized_function(
             if augmentation_pipeline is not None:
                 text = augmentation_pipeline(text)
 
-            # Process labels for this example
-            label_texts, label_ints = limit_labels(
-                raw_texts, raw_ints, shuffle_labels, max_labels
+            # Apply label augmentation pipeline
+            label_texts, label_ints = label_augmentation_pipeline(
+                raw_texts, raw_ints
             )
 
             tokenizer_inputs.append((text, label_texts))

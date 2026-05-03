@@ -15,7 +15,10 @@ from transformers import (
 )
 
 from config.args import ModelArgs
-from gliznet.augmentation import load_augmentation_pipeline
+from gliznet.augmentation import (
+    load_augmentation_pipeline,
+    load_label_augmentation_pipeline,
+)
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
@@ -177,11 +180,19 @@ def main():
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
     logger.info("Tokenizing datasets...")
 
-    # Load augmentation pipeline if enabled
+    # Load text augmentation pipeline if enabled
     aug_pipeline = None
     if model_args.text_augmentation:
         aug_pipeline = load_augmentation_pipeline(model_args.augmentation_config)
         logger.info(f"Text augmentation enabled: {aug_pipeline!r}")
+
+    # Load label augmentation pipeline from config
+    train_label_pipeline = load_label_augmentation_pipeline(
+        config_path=model_args.augmentation_config,
+        max_labels=data_config.max_labels,
+        shuffle_labels=data_config.shuffle_labels,
+    )
+    logger.info(f"Train label augmentation: {train_label_pipeline!r}")
 
     train_dataset = add_tokenized_function(
         hf_dataset=train_data,
@@ -190,6 +201,7 @@ def main():
         shuffle_labels=data_config.shuffle_labels,
         as_transform=True,
         augmentation_pipeline=aug_pipeline,
+        label_augmentation_pipeline=train_label_pipeline,
     )
 
     val_dataset = add_tokenized_function(

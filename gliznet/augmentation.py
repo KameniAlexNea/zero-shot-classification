@@ -333,6 +333,157 @@ class AugmentationPipeline(TextAugmentation):
         return f"AugmentationPipeline([{items}])"
 
 
+# ─── Label-level augmentations ────────────────────────────────────────────────
+
+
+class LabelAugmentation(ABC):
+    """Base class for label-level augmentations.
+
+    Operates on (labels_text, labels_int) pairs and returns modified pairs.
+    """
+
+    @abstractmethod
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        """Apply augmentation to labels."""
+        ...
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"
+
+
+class LabelLimit(LabelAugmentation):
+    """Limit and shuffle labels, randomly selecting a subset.
+
+    Controls the total number of labels per sample. When shuffle_labels=True,
+    randomly selects between 1 and max_labels labels to vary context size
+    across training epochs.
+    """
+
+    def __init__(
+        self,
+        max_labels: int = 20,
+        shuffle_labels: bool = True,
+        remove_underscores: float = 0.9,
+    ):
+        self.max_labels = max_labels
+        self.shuffle_labels = shuffle_labels
+        self.remove_underscores = remove_underscores
+
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        # Replace underscores with spaces stochastically
+        labels_text = [
+            i.replace("_", " ") if random.random() < self.remove_underscores else i
+            for i in labels_text
+        ]
+
+        combined = list(zip(labels_text, labels_int))
+
+        if self.shuffle_labels and combined:
+            random.shuffle(combined)
+            num_labels = random.randint(1, min(self.max_labels, len(combined)))
+            selected_pairs = combined[:num_labels]
+        else:
+            selected_pairs = combined[: self.max_labels]
+
+        if not selected_pairs:
+            return [], []
+
+        labels_text, labels_int = zip(*selected_pairs)
+        return list(labels_text), list(labels_int)
+
+
+class NegativeRatioEnforcement(LabelAugmentation):
+    """Enforce a realistic positive-to-negative ratio.
+
+    In real-world classification (tweets, user text, etc.), typically there is
+    1 positive label for every 5-10 negatives. Synthetic data often has a more
+    balanced ratio. This augmentation stochastically drops positives or adds
+    emphasis to negatives to simulate realistic distributions.
+
+    Strategy:
+        1. Keep at least `min_positives` positive labels
+        2. Target a ratio of `neg_ratio_min` to `neg_ratio_max` negatives per positive
+        3. If more positives exist than the target allows, randomly drop some
+    """
+
+    def __init__(
+        self,
+        min_positives: int = 1,
+        max_positives: int = 3,
+        neg_ratio_min: int = 3,
+        neg_ratio_max: int = 10,
+    ):
+        self.min_positives = min_positives
+        self.max_positives = max_positives
+        self.neg_ratio_min = neg_ratio_min
+        self.neg_ratio_max = neg_ratio_max
+
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        if not labels_text:
+            return labels_text, labels_int
+
+        # Separate positives and negatives
+        positives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 1]
+        negatives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 0]
+
+        if not positives:
+            # No positives — return as-is (all-negative sample)
+            return labels_text, labels_int
+
+        # Decide how many positives to keep (simulate real-world: usually 1-3)
+        num_pos = random.randint(
+            self.min_positives, min(self.max_positives, len(positives))
+        )
+        random.shuffle(positives)
+        selected_positives = positives[:num_pos]
+
+        # Target number of negatives based on ratio
+        target_neg = num_pos * random.randint(self.neg_ratio_min, self.neg_ratio_max)
+        if negatives:
+            random.shuffle(negatives)
+            selected_negatives = negatives[: min(target_neg, len(negatives))]
+        else:
+            selected_negatives = []
+
+        # Combine and shuffle
+        combined = selected_positives + selected_negatives
+        random.shuffle(combined)
+
+        labels_text, labels_int = zip(*combined)
+        return list(labels_text), list(labels_int)
+
+
+class LabelAugmentationPipeline:
+    """Compose multiple label augmentations applied sequentially.
+
+    Example:
+        >>> pipeline = LabelAugmentationPipeline([
+        ...     LabelLimit(max_labels=20, shuffle_labels=True),
+        ...     NegativeRatioEnforcement(min_positives=1, neg_ratio_min=3, neg_ratio_max=10),
+        ... ])
+    """
+
+    def __init__(self, augmentations: list[LabelAugmentation]):
+        self.augmentations = augmentations
+
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        for aug in self.augmentations:
+            labels_text, labels_int = aug(labels_text, labels_int)
+        return labels_text, labels_int
+
+    def __repr__(self) -> str:
+        items = ", ".join(repr(aug) for aug in self.augmentations)
+        return f"LabelAugmentationPipeline([{items}])"
+
+
 # Registry of all available augmentation classes by name
 AUGMENTATION_REGISTRY: dict[str, type[TextAugmentation]] = {
     "SuffixTruncation": SuffixTruncation,
@@ -342,6 +493,11 @@ AUGMENTATION_REGISTRY: dict[str, type[TextAugmentation]] = {
     "KeyboardTypo": KeyboardTypo,
     "WordDrop": WordDrop,
     "RandomCaseChange": RandomCaseChange,
+}
+
+LABEL_AUGMENTATION_REGISTRY: dict[str, type[LabelAugmentation]] = {
+    "LabelLimit": LabelLimit,
+    "NegativeRatioEnforcement": NegativeRatioEnforcement,
 }
 
 
@@ -395,6 +551,72 @@ def load_augmentation_pipeline(
         augmentations.append((prob, aug_cls(**params)))
 
     return AugmentationPipeline(augmentations)
+
+
+def load_label_augmentation_pipeline(
+    config_path: Optional[str] = None,
+    max_labels: int = 20,
+    shuffle_labels: bool = True,
+) -> LabelAugmentationPipeline:
+    """Load a label augmentation pipeline from a YAML config file.
+
+    YAML format::
+
+        label_augmentations:
+          - name: NegativeRatioEnforcement
+            params:
+              min_positives: 1
+              max_positives: 3
+              neg_ratio_min: 3
+              neg_ratio_max: 10
+          - name: LabelLimit
+            params:
+              max_labels: 20
+              shuffle_labels: true
+
+    Args:
+        config_path: Path to YAML config. If None, returns a default pipeline
+            with just LabelLimit using the provided max_labels/shuffle_labels.
+        max_labels: Fallback max_labels when no config is provided.
+        shuffle_labels: Fallback shuffle_labels when no config is provided.
+
+    Returns:
+        Configured LabelAugmentationPipeline
+    """
+    if config_path is None:
+        return LabelAugmentationPipeline(
+            [LabelLimit(max_labels=max_labels, shuffle_labels=shuffle_labels)]
+        )
+
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Augmentation config not found: {config_path}")
+
+    with open(path) as f:
+        config = yaml.safe_load(f)
+
+    entries = config.get("label_augmentations", [])
+    if not entries:
+        # No label_augmentations section — fall back to default
+        return LabelAugmentationPipeline(
+            [LabelLimit(max_labels=max_labels, shuffle_labels=shuffle_labels)]
+        )
+
+    augmentations = []
+    for entry in entries:
+        name = entry["name"]
+        params = entry.get("params", {})
+
+        if name not in LABEL_AUGMENTATION_REGISTRY:
+            raise ValueError(
+                f"Unknown label augmentation '{name}'. "
+                f"Available: {list(LABEL_AUGMENTATION_REGISTRY.keys())}"
+            )
+
+        aug_cls = LABEL_AUGMENTATION_REGISTRY[name]
+        augmentations.append(aug_cls(**params))
+
+    return LabelAugmentationPipeline(augmentations)
 
 
 def default_augmentation_pipeline() -> AugmentationPipeline:
