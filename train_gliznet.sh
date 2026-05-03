@@ -17,11 +17,11 @@ nohup accelerate launch train_gliznet.py \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     \
-    `# Loss Configuration (SupCon + VICReg + Focal)` \
-    --focal_loss_weight 0.6 \
-    --focal_gamma 2.0 \
-    --supcon_loss_weight 0.9 \
-    --label_repulsion_weight 1.0 \
+    `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
+    --focal_loss_weight 0.5 \
+    --focal_gamma 1.8 \
+    --supcon_loss_weight 0.5 \
+    --label_repulsion_weight 5.0 \
     --supcon_margin 0.5 \
     --scoring_method bilinear \
     \
@@ -33,7 +33,8 @@ nohup accelerate launch train_gliznet.py \
     --data_seed 42 \
     --max_extended_ds_size 1000 \
     --use_additional_datasets \
-    \
+    --text_augmentation True \
+    --augmentation_config augmentation_config.yaml \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
     --model_max_length 512 \

@@ -1,0 +1,47 @@
+# Default text augmentation pipeline for GliZNet training.
+# Each entry: [probability_of_applying, augmentation_name, {params}]
+#
+# Available augmentations:
+#   SuffixTruncation  - "running" -> "runnin" (informal spelling)
+#   CharSwap          - "point" -> "poitn" (adjacent char swap)
+#   CharDrop          - "running" -> "runing" (dropped character)
+#   CharDuplicate     - "hello" -> "helllo" (repeated keystroke)
+#   KeyboardTypo      - QWERTY adjacent key replacement
+#   WordDrop          - removes random words
+#   RandomCaseChange  - lowercases capitalized words
+
+augmentations:
+  - name: SuffixTruncation
+    prob: 0.4
+    params:
+      word_prob: 0.15
+
+  - name: CharSwap
+    prob: 0.4
+    params:
+      word_prob: 0.10
+
+  - name: CharDrop
+    prob: 0.3
+    params:
+      word_prob: 0.10
+
+  - name: CharDuplicate
+    prob: 0.2
+    params:
+      word_prob: 0.05
+
+  - name: KeyboardTypo
+    prob: 0.3
+    params:
+      word_prob: 0.08
+
+  - name: WordDrop
+    prob: 0.2
+    params:
+      word_prob: 0.05
+
+  - name: RandomCaseChange
+    prob: 0.2
+    params:
+      word_prob: 0.05

@@ -128,3 +128,18 @@ class ModelArgs:
             "help": "Whether to augment the training set with additional datasets defined in training_data.py"
         },
     )
+
+    # Text augmentation (noise injection for robustness)
+    text_augmentation: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to apply text augmentation to simulate real-world noisy text (typos, missing words, etc.)"
+        },
+    )
+    augmentation_config: str = field(
+        default=None,
+        metadata={
+            "help": "Path to YAML file configuring the augmentation pipeline. "
+            "If not provided, uses the default pipeline."
+        },
+    )

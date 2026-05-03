@@ -7,12 +7,13 @@ compared to the original HuggingFace datasets approach.
 
 import os
 import random
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 import datasets
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
+from .augmentation import AugmentationPipeline
 from .tokenizer import GliZNETTokenizer
 from .training_config import LabelName
 
@@ -132,6 +133,7 @@ def add_tokenized_function(
     max_labels=50,
     shuffle_labels: bool = True,
     as_transform: bool = True,
+    augmentation_pipeline: Optional[AugmentationPipeline] = None,
 ) -> datasets.Dataset:
     """Tokenize the HuggingFace dataset using the GliZNETTokenizer.
 
@@ -144,6 +146,7 @@ def add_tokenized_function(
         max_labels: Maximum number of labels to keep per sample
         shuffle_labels: Whether to shuffle labels (positives are always preserved)
         as_transform: If True, apply as lazy transform; if False, map eagerly
+        augmentation_pipeline: Optional AugmentationPipeline to apply to text (training only)
 
     Returns:
         Tokenized dataset
@@ -160,6 +163,10 @@ def add_tokenized_function(
         labels_batch = []
 
         for text, raw_texts, raw_ints in zip(texts, raw_texts_batch, raw_ints_batch):
+            # Apply text augmentation pipeline if provided
+            if augmentation_pipeline is not None:
+                text = augmentation_pipeline(text)
+
             # Process labels for this example
             label_texts, label_ints = limit_labels(
                 raw_texts, raw_ints, shuffle_labels, max_labels
