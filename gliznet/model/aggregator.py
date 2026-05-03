@@ -91,9 +91,11 @@ class LabelAggregator(nn.Module):
 
         lab_counts = lab_mask.sum(dim=1)
 
-        label_id_grid = torch.arange(
-            1, self.max_labels + 1, device=device
-        ).unsqueeze(0).expand(batch_size, -1)
+        label_id_grid = (
+            torch.arange(1, self.max_labels + 1, device=device)
+            .unsqueeze(0)
+            .expand(batch_size, -1)
+        )
         batch_label_grid = (
             torch.arange(batch_size, device=device)
             .unsqueeze(1)

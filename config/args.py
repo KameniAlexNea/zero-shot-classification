@@ -29,7 +29,9 @@ class ModelArgs:
     )
     focal_gamma: float = field(
         default=2.0,
-        metadata={"help": "Focusing parameter for focal loss (higher = more focus on hard examples)"},
+        metadata={
+            "help": "Focusing parameter for focal loss (higher = more focus on hard examples)"
+        },
     )
     supcon_loss_weight: float = field(
         default=1.0,

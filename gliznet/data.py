@@ -7,7 +7,7 @@ compared to the original HuggingFace datasets approach.
 
 import os
 import random
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import datasets
 import torch
