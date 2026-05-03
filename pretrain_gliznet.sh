@@ -49,7 +49,7 @@ nohup accelerate launch pretrain_gliznet.py \
     --per_device_eval_batch_size 64 \
     --gradient_accumulation_steps 2 \
     --learning_rate 5e-5 \
-    --warmup_ratio 0.05 \
+    --warmup_steps 0.05 \
     --weight_decay 1e-2 \
     --lr_scheduler_type cosine \
     --max_grad_norm 1.0 \

@@ -19,7 +19,8 @@ from transformers import (
 )
 
 from config.args import ModelArgs
-from gliznet.data import add_tokenized_function, collate_fn
+from gliznet.augmentation import LabelAugmentationPipeline, LabelLimit
+from gliznet.data import collate_fn
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
@@ -73,6 +74,7 @@ def load_cold_dataset(seed: int = 42) -> datasets.Dataset:
     label=0 → choice1 is correct, label=1 → choice2 is correct.
 
     Loads all subsets: bus, cake, shopping, train, tree.
+    Mapping is done on-the-fly via set_transform (no eager iteration).
     """
     logger.info("Loading Exploration-Lab/COLD dataset (all subsets)...")
     subsets = ["bus", "cake", "shopping", "train", "tree"]
@@ -83,43 +85,38 @@ def load_cold_dataset(seed: int = 42) -> datasets.Dataset:
         parts.append(part)
     ds = datasets.concatenate_datasets(parts)
     logger.info(f"Raw COLD dataset size (all subsets): {len(ds)}")
+    ds = ds.shuffle(seed=seed)
+    logger.info(f"COLD dataset ready: {len(ds)} examples (transform applied on-the-fly)")
+    return ds
 
+
+def cold_transform(examples):
+    """On-the-fly transform: maps COLD columns to GliZNet format."""
     question_prefix = {
         "cause": "What is the cause? ",
         "effect": "What is the effect? ",
     }
+    texts = []
+    ltexts = []
+    lints = []
+    for premise, question, choice1, choice2, label in zip(
+        examples["premise"],
+        examples["question"],
+        examples["choice1"],
+        examples["choice2"],
+        examples["label"],
+    ):
+        prefix = question_prefix.get((question or "").strip().lower(), "")
+        texts.append(prefix + (premise or "").strip())
+        ltexts.append([(choice1 or "").strip(), (choice2 or "").strip()])
+        label = int(label)
+        lints.append([1 - label, label])
 
-    def mapper(example):
-        premise = (example["premise"] or "").strip()
-        question = (example["question"] or "").strip().lower()
-        choice1 = (example["choice1"] or "").strip()
-        choice2 = (example["choice2"] or "").strip()
-        label = int(example["label"])
-
-        # Prepend the question type to give the model reasoning context
-        prefix = question_prefix.get(question, "")
-        text = prefix + premise
-
-        ltext = [choice1, choice2]
-        lint = [1 - label, label]  # label=0 → choice1 correct, label=1 → choice2 correct
-
-        return {
-            "text": text,
-            LabelName.ltext: ltext,
-            LabelName.lint: lint,
-        }
-
-    ds = ds.map(mapper, remove_columns=ds.column_names)
-
-    # Filter out empty entries
-    ds = ds.filter(
-        lambda x: len(x["text"].strip()) > 0
-        and len(x[LabelName.ltext]) == 2
-        and all(len(l.strip()) > 0 for l in x[LabelName.ltext])
-    )
-    ds = ds.shuffle(seed=seed)
-    logger.info(f"COLD dataset after processing: {len(ds)} examples")
-    return ds
+    return {
+        "text": texts,
+        LabelName.ltext: ltexts,
+        LabelName.lint: lints,
+    }
 
 
 def seed_everything(seed: int = 42):
@@ -168,24 +165,47 @@ def main():
     val_data = splits["test"]
     logger.info(f"Train: {len(train_data)}, Val: {len(val_data)}")
 
-    # Tokenize
-    logger.info("Tokenizing datasets...")
-    train_dataset = add_tokenized_function(
-        hf_dataset=train_data,
-        tokenizer=tokenizer,
-        max_labels=data_config.max_labels,
-        shuffle_labels=data_config.shuffle_labels,
-        as_transform=True,
-    )
+    # Apply COLD column mapping as a lazy transform, then tokenize on top.
+    # We compose both into a single set_transform to avoid overwriting.
+    logger.info("Setting up on-the-fly tokenization...")
 
-    val_dataset = add_tokenized_function(
-        hf_dataset=val_data,
-        tokenizer=tokenizer,
-        shuffle_labels=False,
-        max_labels=data_config.max_labels,
-        as_transform=True,
-    )
-    logger.info("Datasets tokenized successfully")
+    def make_composed_transform(shuffle_labels: bool):
+        """Create a transform that maps COLD → GliZNet format → tokenized."""
+        label_pipeline = LabelAugmentationPipeline(
+            [LabelLimit(max_labels=data_config.max_labels, shuffle_labels=shuffle_labels)]
+        )
+
+        def composed(examples):
+            # Step 1: COLD → text/ltext/lint
+            mapped = cold_transform(examples)
+            # Step 2: tokenize
+            tokenizer_inputs = []
+            labels_batch = []
+            for text, label_texts, label_ints in zip(
+                mapped["text"], mapped[LabelName.ltext], mapped[LabelName.lint]
+            ):
+                label_texts, label_ints = label_pipeline(label_texts, label_ints)
+                tokenizer_inputs.append((text, label_texts))
+                labels_batch.append(torch.tensor(label_ints, dtype=torch.float32))
+
+            tokenized = tokenizer(tokenizer_inputs, return_tensors="pt")
+            truncated_labels = []
+            for lmask_row, label_tensor in zip(tokenized["lmask"], labels_batch):
+                num_fitted = int(lmask_row.max().item()) if lmask_row.any() else 0
+                truncated_labels.append(label_tensor[:num_fitted])
+
+            return {
+                "input_ids": tokenized["input_ids"],
+                "attention_mask": tokenized["attention_mask"],
+                "lmask": tokenized["lmask"],
+                "labels": truncated_labels,
+            }
+
+        return composed
+
+    train_dataset = train_data.with_transform(make_composed_transform(shuffle_labels=data_config.shuffle_labels))
+    val_dataset = val_data.with_transform(make_composed_transform(shuffle_labels=False))
+    logger.info("Datasets ready (on-the-fly transform)")
 
     # Output directory
     os.makedirs(training_args.output_dir, exist_ok=True)
