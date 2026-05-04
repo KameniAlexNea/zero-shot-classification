@@ -7,7 +7,7 @@
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-MODEL_PATH="results/pretrain_mcqa_20260504_070340/checkpoint-1000"
+MODEL_PATH="microsoft/deberta-v3-base"
 
 # Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
 # auto-detects GPUs, and ensures torch.autocast propagates correctly per process.
@@ -20,11 +20,11 @@ nohup accelerate launch train_gliznet.py \
     --dropout_rate 0.1 \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
-    --focal_loss_weight 0.5 \
-    --focal_gamma 1.8 \
-    --supcon_loss_weight 0.5 \
-    --label_repulsion_weight 5.0 \
-    --supcon_margin 0.5 \
+    --focal_loss_weight 0.3 \
+    --focal_gamma 1.2 \
+    --supcon_loss_weight 1.0 \
+    --label_repulsion_weight 0.1 \
+    --supcon_margin 0.1 \
     --scoring_method bilinear \
     \
     `# Data Configuration` \
@@ -56,7 +56,7 @@ nohup accelerate launch train_gliznet.py \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
-    --max_grad_norm 2.0 \
+    --max_grad_norm 1.0 \
     \
     `# Evaluation & Checkpointing` \
     --eval_strategy epoch \

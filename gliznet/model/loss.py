@@ -33,16 +33,26 @@ class SoftmaxLoss(nn.Module):
         mask_valid = mask_valid[has_positives]
         neg_mask = mask_valid & ~pos_mask
 
-        neg_logits = logits.masked_fill(~neg_mask, float("-inf"))
+        neg_logits = logits.masked_fill(~neg_mask, -1e9)
         if self.margin > 0.0:
             neg_logits = neg_logits + self.margin
+
+        # Skip samples with no negatives — logsumexp over all -1e9 adds fake negative
+        # mass and distorts the denominator even if numerically small.
+        has_negatives = neg_mask.any(dim=1)
+        if not has_negatives.any():
+            return dense_logits.new_zeros(1, requires_grad=True).squeeze()
+        logits = logits[has_negatives]
+        pos_mask = pos_mask[has_negatives]
+        neg_logits = neg_logits[has_negatives]
+
         neg_lse = torch.logsumexp(neg_logits, dim=1)
 
         neg_lse_exp = neg_lse.unsqueeze(1).expand_as(logits)
         denom_lse = torch.logsumexp(torch.stack([logits, neg_lse_exp], dim=2), dim=2)
         per_pos_loss = denom_lse - logits
 
-        valid_pos = pos_mask & torch.isfinite(logits)
+        valid_pos = pos_mask
         per_pos_loss = per_pos_loss.masked_fill(~valid_pos, 0.0)
 
         num_pos = valid_pos.sum(dim=1).float().clamp(min=1e-6)
@@ -64,7 +74,7 @@ class RepulsionLoss(nn.Module):
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.variance_target = 1.0
+        self.variance_target = 0.2  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
         self.eps = 1e-4
         self.covariance_weight = 0.04
 
@@ -76,23 +86,24 @@ class RepulsionLoss(nn.Module):
         if label_embeddings.numel() == 0 or label_embeddings.shape[0] < 2:
             return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
 
-        D = label_embeddings.shape[1]
+        N, D = label_embeddings.shape
 
-        # Variance term: penalize dimensions with std below target
-        std_per_dim = torch.sqrt(label_embeddings.var(dim=0) + self.eps)
+        # Normalize to unit sphere (detached scale) so both variance and covariance
+        # operate in the same directional space. Detaching the norm prevents covariance
+        # gradients from acting on magnitude, keeping the two terms consistent.
+        per_sample_norm = label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
+        normalized = label_embeddings / per_sample_norm
+
+        # Variance term: penalize dimensions with std below target (VICReg eq. 2)
+        std_per_dim = torch.sqrt(normalized.var(dim=0) + self.eps)
         variance_loss = F.relu(self.variance_target - std_per_dim).mean()
 
-        # Covariance term: decorrelate dimensions using correlation matrix
-        # (standardizing first bounds entries to [-1,1] and prevents gradient explosion
-        # from large DeBERTa embedding magnitudes)
-        centered = label_embeddings - label_embeddings.mean(dim=0)
-        std_safe = std_per_dim.clamp(min=0.01)
-        standardized = centered / std_safe
-        n = standardized.shape[0]
-        corr = (standardized.T @ standardized) / (n - 1)
-        corr.fill_diagonal_(0.0)
-        # Divide by D*(D-1) = number of off-diagonal entries for scale-invariant penalty
-        covariance_loss = corr.pow(2).sum() / (D * (D - 1))
+        # Covariance term: exact VICReg (Bardes et al. eq. 3).
+        centered = normalized - normalized.mean(dim=0)
+        cov = (centered.T @ centered) / (N - 1)
+        # Avoid in-place op on autograd graph; subtract diagonal explicitly.
+        cov = cov - torch.diag(torch.diagonal(cov))
+        covariance_loss = cov.pow(2).sum() / D
 
         return variance_loss + self.covariance_weight * covariance_loss
 
@@ -114,11 +125,15 @@ class FocalLoss(nn.Module):
         valid_logits = dense_logits[mask]
         valid_targets = labels[mask]
 
+        # p_t via sigmoid is numerically stable; torch.exp(-bce) underflows when
+        # BCE is large (confident wrong prediction), zeroing the focal weight.
+        probs = torch.sigmoid(valid_logits)
+        p_t = probs * valid_targets + (1 - probs) * (1 - valid_targets)
+        focal_weight = (1.0 - p_t) ** self.gamma
+
         bce = F.binary_cross_entropy_with_logits(
             valid_logits, valid_targets, reduction="none"
         )
-        p_t = torch.exp(-bce)
-        focal_weight = (1.0 - p_t) ** self.gamma
         return (focal_weight * bce).mean()
 
 
@@ -188,7 +203,7 @@ class GliZNetLoss(nn.Module):
         # Build dense logits matrix (B, max_labels) — fixed shape for torch.compile
         dense_logits = torch.full(
             (batch_size, self.max_labels),
-            float("-inf"),
+            -1e9,
             device=logits.device,
             dtype=logits.dtype,
         )
