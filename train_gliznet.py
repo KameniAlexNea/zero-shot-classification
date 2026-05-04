@@ -54,9 +54,25 @@ def create_model_tokenizer(args: ModelArgs):
         fix_mistral_regex=True,
     )
 
-    # Initialize model with pretrained backbone and resize embeddings for custom tokens
-    if args.model_name.startswith("alexneakameni/"):
-        model = GliZNetForSequenceClassification.from_pretrained(args.model_name)
+    # Load full model (including bilinear head) if resuming from a saved checkpoint
+    if os.path.isdir(args.model_name) or args.model_name.startswith("alexneakameni/"):
+        config = GliZNetConfig.from_pretrained(
+            args.model_name,
+            dropout_rate=args.dropout_rate,
+            focal_loss_weight=args.focal_loss_weight,
+            focal_gamma=args.focal_gamma,
+            supcon_loss_weight=args.supcon_loss_weight,
+            label_repulsion_weight=args.label_repulsion_weight,
+            supcon_margin=args.supcon_margin,
+            scoring_method=args.scoring_method,
+            losses=args.losses,
+            lab_token_id=tokenizer.lab_token_id,
+            max_labels=args.max_labels,
+        )
+        model = GliZNetForSequenceClassification.from_pretrained(
+            args.model_name, config=config
+        )
+        logger.info(f"Loaded full model from {args.model_name}")
         return model, tokenizer
 
     # Create GliZNet configuration
