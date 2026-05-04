@@ -74,7 +74,7 @@ class RepulsionLoss(nn.Module):
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.variance_target = 0.2  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
+        self.variance_target = 0.05  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
         self.eps = 1e-4
         self.covariance_weight = 0.04
 

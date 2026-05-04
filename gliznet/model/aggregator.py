@@ -47,7 +47,6 @@ class LabelAggregator(nn.Module):
         else:
             self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
-        self.hidden_norm = nn.LayerNorm(hidden_size)
 
     def _text_repr(
         self,
@@ -134,9 +133,7 @@ class LabelAggregator(nn.Module):
         """
         B, L, D = hidden_states.shape
 
-        # Normalize hidden states before any aggregation to stabilize
-        # both label token extraction and cross-attention key/value magnitudes
-        hidden_states = self.hidden_norm(hidden_states)
+        hidden_states = F.normalize(hidden_states, p=2, dim=-1)
 
         # Identify text token positions (exclude label/special tokens)
         lab_token_mask = input_ids == self.lab_token_id
