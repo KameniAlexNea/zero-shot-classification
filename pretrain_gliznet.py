@@ -44,10 +44,28 @@ def create_model_tokenizer(args: ModelArgs):
         fix_mistral_regex=True,
     )
 
-    if args.model_name.startswith("alexneakameni/"):
-        model = GliZNetForSequenceClassification.from_pretrained(args.model_name)
+    # Load full model (including bilinear head) if resuming from a saved checkpoint
+    if os.path.isdir(args.model_name) or args.model_name.startswith("alexneakameni/"):
+        config = GliZNetConfig.from_pretrained(
+            args.model_name,
+            dropout_rate=args.dropout_rate,
+            focal_loss_weight=args.focal_loss_weight,
+            focal_gamma=args.focal_gamma,
+            supcon_loss_weight=args.supcon_loss_weight,
+            label_repulsion_weight=args.label_repulsion_weight,
+            supcon_margin=args.supcon_margin,
+            scoring_method=args.scoring_method,
+            losses=args.losses,
+            lab_token_id=tokenizer.lab_token_id,
+            max_labels=args.max_labels,
+        )
+        model = GliZNetForSequenceClassification.from_pretrained(
+            args.model_name, config=config
+        )
+        logger.info(f"Loaded full model from {args.model_name}")
         return model, tokenizer
 
+    # Cold start from a raw backbone (e.g. microsoft/deberta-v3-base)
     config = GliZNetConfig(
         backbone_model=args.model_name,
         dropout_rate=args.dropout_rate,
@@ -62,9 +80,24 @@ def create_model_tokenizer(args: ModelArgs):
         max_labels=args.max_labels,
     )
     model = GliZNetForSequenceClassification.from_backbone_pretrained(config, tokenizer)
+    logger.info(f"Initialized new model from backbone: {args.model_name}")
     logger.info(f"Model configuration: {config.to_dict()}")
 
     return model, tokenizer
+
+
+def load_pretrain_dataset(
+    dataset_path: str, dataset_name: str = None, seed: int = 42
+) -> datasets.Dataset:
+    """Load a pretraining dataset. Handles multi-subset datasets like COLD."""
+    if dataset_path == "Exploration-Lab/COLD":
+        return load_cold_dataset(seed=seed)
+
+    logger.info(f"Loading dataset: {dataset_path} (name={dataset_name})...")
+    ds = datasets.load_dataset(dataset_path, dataset_name, split="train")
+    ds = ds.shuffle(seed=seed)
+    logger.info(f"Dataset loaded: {len(ds)} examples")
+    return ds
 
 
 def load_cold_dataset(seed: int = 42) -> datasets.Dataset:
@@ -86,7 +119,9 @@ def load_cold_dataset(seed: int = 42) -> datasets.Dataset:
     ds = datasets.concatenate_datasets(parts)
     logger.info(f"Raw COLD dataset size (all subsets): {len(ds)}")
     ds = ds.shuffle(seed=seed)
-    logger.info(f"COLD dataset ready: {len(ds)} examples (transform applied on-the-fly)")
+    logger.info(
+        f"COLD dataset ready: {len(ds)} examples (transform applied on-the-fly)"
+    )
     return ds
 
 
@@ -117,6 +152,54 @@ def cold_transform(examples):
         LabelName.ltext: ltexts,
         LabelName.lint: lints,
     }
+
+
+def mcqa_transform(examples):
+    """On-the-fly transform: maps unified-mcqa-all columns to GliZNet format.
+
+    Columns: context, question, choices (list[str]), label (int index).
+    """
+    texts = []
+    ltexts = []
+    lints = []
+    for context, question, choices, label in zip(
+        examples["context"],
+        examples["question"],
+        examples["choices"],
+        examples["label"],
+    ):
+        # Combine context + question as the text input
+        ctx = (context or "").strip()
+        q = (question or "").strip()
+        text = f"{ctx} {q}".strip() if ctx else q
+
+        # Choices are the labels; label index marks the correct one
+        choice_texts = [(c or "").strip() for c in choices]
+        label = int(label)
+        label_ints = [int(i == label) for i in range(len(choice_texts))]
+
+        texts.append(text)
+        ltexts.append(choice_texts)
+        lints.append(label_ints)
+
+    return {
+        "text": texts,
+        LabelName.ltext: ltexts,
+        LabelName.lint: lints,
+    }
+
+
+def detect_transform(ds: datasets.Dataset):
+    """Auto-detect the correct transform based on dataset columns."""
+    cols = set(ds.column_names)
+    if "choices" in cols and "question" in cols:
+        logger.info("Detected MCQA format (context/question/choices/label)")
+        return mcqa_transform
+    elif "premise" in cols and "choice1" in cols:
+        logger.info("Detected COLD format (premise/choice1/choice2/label)")
+        return cold_transform
+    else:
+        raise ValueError(f"Unknown dataset format. Columns: {cols}")
 
 
 def seed_everything(seed: int = 42):
@@ -155,8 +238,13 @@ def main():
         min_label_length=model_args.min_label_length,
     )
 
-    # Load COLD dataset
-    dataset = load_cold_dataset(seed=training_args.data_seed)
+    # Load dataset
+    dataset = load_pretrain_dataset(
+        model_args.dataset_path, model_args.dataset_name, seed=training_args.data_seed
+    )
+
+    # Auto-detect transform
+    raw_transform = detect_transform(dataset)
 
     # Split into train/val
     eval_size = min(int(0.02 * len(dataset)), 5000)
@@ -165,19 +253,21 @@ def main():
     val_data = splits["test"]
     logger.info(f"Train: {len(train_data)}, Val: {len(val_data)}")
 
-    # Apply COLD column mapping as a lazy transform, then tokenize on top.
-    # We compose both into a single set_transform to avoid overwriting.
+    # Compose column mapping + tokenization into a single on-the-fly transform
     logger.info("Setting up on-the-fly tokenization...")
 
     def make_composed_transform(shuffle_labels: bool):
-        """Create a transform that maps COLD → GliZNet format → tokenized."""
         label_pipeline = LabelAugmentationPipeline(
-            [LabelLimit(max_labels=data_config.max_labels, shuffle_labels=shuffle_labels)]
+            [
+                LabelLimit(
+                    max_labels=data_config.max_labels, shuffle_labels=shuffle_labels
+                )
+            ]
         )
 
         def composed(examples):
-            # Step 1: COLD → text/ltext/lint
-            mapped = cold_transform(examples)
+            # Step 1: raw columns → text/ltext/lint
+            mapped = raw_transform(examples)
             # Step 2: tokenize
             tokenizer_inputs = []
             labels_batch = []
@@ -203,7 +293,9 @@ def main():
 
         return composed
 
-    train_dataset = train_data.with_transform(make_composed_transform(shuffle_labels=data_config.shuffle_labels))
+    train_dataset = train_data.with_transform(
+        make_composed_transform(shuffle_labels=data_config.shuffle_labels)
+    )
     val_dataset = val_data.with_transform(make_composed_transform(shuffle_labels=False))
     logger.info("Datasets ready (on-the-fly transform)")
 

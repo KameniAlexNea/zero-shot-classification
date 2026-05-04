@@ -129,9 +129,7 @@ def add_tokenized_function(
                 text = augmentation_pipeline(text)
 
             # Apply label augmentation pipeline
-            label_texts, label_ints = label_augmentation_pipeline(
-                raw_texts, raw_ints
-            )
+            label_texts, label_ints = label_augmentation_pipeline(raw_texts, raw_ints)
 
             tokenizer_inputs.append((text, label_texts))
             labels_batch.append(torch.tensor(label_ints, dtype=torch.float32))
