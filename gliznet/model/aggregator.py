@@ -47,6 +47,7 @@ class LabelAggregator(nn.Module):
         else:
             self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
+        self.hidden_norm = nn.LayerNorm(hidden_size)
 
     def _text_repr(
         self,
@@ -115,7 +116,6 @@ class LabelAggregator(nn.Module):
         lmask: torch.Tensor,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        inference: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
         """Aggregate label representations and compute similarities using token-level attention.
 
@@ -133,6 +133,10 @@ class LabelAggregator(nn.Module):
             text_aggregations: Label-specific text representations (N, D)
         """
         B, L, D = hidden_states.shape
+
+        # Normalize hidden states before any aggregation to stabilize
+        # both label token extraction and cross-attention key/value magnitudes
+        hidden_states = self.hidden_norm(hidden_states)
 
         # Identify text token positions (exclude label/special tokens)
         lab_token_mask = input_ids == self.lab_token_id

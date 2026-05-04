@@ -19,9 +19,9 @@ nohup accelerate launch pretrain_gliznet.py \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     \
-    `# Loss Configuration` \
+    `# Loss Configuration — same as fine-tuning (normalization stabilizes gradients)` \
     --focal_loss_weight 0.5 \
-    --focal_gamma 2.0 \
+    --focal_gamma 1.8 \
     --supcon_loss_weight 0.5 \
     --label_repulsion_weight 5.0 \
     --supcon_margin 0.5 \
@@ -41,15 +41,15 @@ nohup accelerate launch pretrain_gliznet.py \
     --min_text_tokens 10 \
     --min_label_tokens 3 \
     \
-    `# Training Arguments — conservative LR for continued pretraining` \
+    `# Training Arguments` \
     --run_name "gliznet_pretrain_mcqa_${TIMESTAMP}" \
     --output_dir "${OUTPUT_DIR}" \
     --num_train_epochs 2 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 32 \
     --gradient_accumulation_steps 4 \
-    --learning_rate 1e-5 \
-    --warmup_steps 0.05 \
+    --learning_rate 3e-5 \
+    --warmup_ratio 0.05 \
     --weight_decay 1e-2 \
     --lr_scheduler_type cosine \
     --max_grad_norm 1.0 \

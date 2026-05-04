@@ -7,13 +7,15 @@
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
+MODEL_PATH="results/pretrain_mcqa_20260504_070340/checkpoint-1000"
+
 # Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
 # auto-detects GPUs, and ensures torch.autocast propagates correctly per process.
 
 nohup accelerate launch train_gliznet.py \
     \
     `# Model Configuration` \
-    --model_name microsoft/deberta-v3-base \
+    --model_name "${MODEL_PATH}" \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     \
