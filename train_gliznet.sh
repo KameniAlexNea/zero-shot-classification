@@ -44,6 +44,7 @@ nohup accelerate launch train_gliznet.py \
     --max_tokens_per_span 16 \
     --min_text_tokens 5 \
     --min_label_tokens 1 \
+    --enrich_labels \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \

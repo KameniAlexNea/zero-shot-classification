@@ -55,6 +55,10 @@ class ModelArgs:
         default="bilinear",
         metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
     )
+    enrich_labels: bool = field(
+        default=False,
+        metadata={"help": "Enable self-attention over [CLS + all labels] before cross-attention scoring."},
+    )
 
     losses: List[str] = field(
         default_factory=lambda: ["softmax", "repulsion", "focal"],
