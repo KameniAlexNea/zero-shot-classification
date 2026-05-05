@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 
 import os
-import warnings
-
-os.environ["WANDB_PROJECT"] = "gliznet"
-os.environ["WANDB_WATCH"] = "none"
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
-warnings.filterwarnings("ignore", message=".*torch._prims_common.check.*")
-
 import random
+import warnings
 
 import datasets
 import torch
@@ -22,13 +14,24 @@ from transformers import (
     TrainingArguments,
 )
 
-from args import ModelArgs
+from config.args import ModelArgs
+from gliznet.augmentation import (
+    load_augmentation_pipeline,
+    load_label_augmentation_pipeline,
+)
 from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
-from training_data import additional_datasets
+from config.training_data import additional_datasets
+
+os.environ["WANDB_PROJECT"] = "gliznet"
+os.environ["WANDB_WATCH"] = "none"
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+warnings.filterwarnings("ignore", message=".*torch._prims_common.check.*")
 
 
 def create_model_tokenizer(args: ModelArgs):
@@ -51,9 +54,25 @@ def create_model_tokenizer(args: ModelArgs):
         fix_mistral_regex=True,
     )
 
-    # Initialize model with pretrained backbone and resize embeddings for custom tokens
-    if args.model_name.startswith("alexneakameni/"):
-        model = GliZNetForSequenceClassification.from_pretrained(args.model_name)
+    # Load full model (including bilinear head) if resuming from a saved checkpoint
+    if os.path.isdir(args.model_name) or args.model_name.startswith("alexneakameni/"):
+        config = GliZNetConfig.from_pretrained(
+            args.model_name,
+            dropout_rate=args.dropout_rate,
+            focal_loss_weight=args.focal_loss_weight,
+            focal_gamma=args.focal_gamma,
+            supcon_loss_weight=args.supcon_loss_weight,
+            label_repulsion_weight=args.label_repulsion_weight,
+            supcon_margin=args.supcon_margin,
+            scoring_method=args.scoring_method,
+            losses=args.losses,
+            lab_token_id=tokenizer.lab_token_id,
+            max_labels=args.max_labels,
+        )
+        model = GliZNetForSequenceClassification.from_pretrained(
+            args.model_name, config=config
+        )
+        logger.info(f"Loaded full model from {args.model_name}")
         return model, tokenizer
 
     # Create GliZNet configuration
@@ -61,7 +80,8 @@ def create_model_tokenizer(args: ModelArgs):
         backbone_model=args.model_name,
         dropout_rate=args.dropout_rate,
         # Loss configuration
-        bce_loss_weight=args.bce_loss_weight,
+        focal_loss_weight=args.focal_loss_weight,
+        focal_gamma=args.focal_gamma,
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
         supcon_margin=args.supcon_margin,
@@ -164,10 +184,8 @@ def main():
             dataset, model_args.max_extended_ds_size, training_args.data_seed
         )
     added_size = len(dataset) - size_before
-
-    splits = dataset.train_test_split(
-        test_size=model_args.eval_size, seed=training_args.data_seed
-    )
+    eval_size = min(model_args.eval_size * len(dataset), 2000)
+    splits = dataset.train_test_split(test_size=eval_size, seed=training_args.data_seed)
     train_data = splits["train"]
     val_data = splits["test"]
 
@@ -177,12 +195,29 @@ def main():
 
     # Create datasets (note: token_dropout removed, should be in collate_fn if needed)
     logger.info("Tokenizing datasets...")
+
+    # Load text augmentation pipeline if enabled
+    aug_pipeline = None
+    if model_args.text_augmentation:
+        aug_pipeline = load_augmentation_pipeline(model_args.augmentation_config)
+        logger.info(f"Text augmentation enabled: {aug_pipeline!r}")
+
+    # Load label augmentation pipeline from config
+    train_label_pipeline = load_label_augmentation_pipeline(
+        config_path=model_args.augmentation_config,
+        max_labels=data_config.max_labels,
+        shuffle_labels=data_config.shuffle_labels,
+    )
+    logger.info(f"Train label augmentation: {train_label_pipeline!r}")
+
     train_dataset = add_tokenized_function(
         hf_dataset=train_data,
         tokenizer=tokenizer,
         max_labels=data_config.max_labels,
         shuffle_labels=data_config.shuffle_labels,
         as_transform=True,
+        augmentation_pipeline=aug_pipeline,
+        label_augmentation_pipeline=train_label_pipeline,
     )
 
     val_dataset = add_tokenized_function(

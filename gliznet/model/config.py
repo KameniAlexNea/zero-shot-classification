@@ -13,6 +13,8 @@ class GliZNetConfig(PretrainedConfig):
         dropout_rate: Dropout probability for projections
         lab_token_id: Token ID of the [LAB] separator token (set automatically from tokenizer)
         bce_loss_weight: Weight for binary cross-entropy loss
+        focal_loss_weight: Weight for focal loss
+        focal_gamma: Focusing parameter for focal loss (higher = more focus on hard examples)
         supcon_loss_weight: Weight for multi-label softmax loss (legacy name; not true SupCon)
         label_repulsion_weight: Weight for VICReg collapse-prevention loss (default 0.0 — disabled).
     """
@@ -27,6 +29,8 @@ class GliZNetConfig(PretrainedConfig):
         lab_token_id: Optional[int] = None,
         # Loss weights
         bce_loss_weight: float = 1.0,
+        focal_loss_weight: float = 1.0,
+        focal_gamma: float = 2.0,
         supcon_loss_weight: float = 1.0,
         label_repulsion_weight: float = 0.0,
         # One-vs-negatives margin: negatives are shifted up by this value before logsumexp,
@@ -51,13 +55,15 @@ class GliZNetConfig(PretrainedConfig):
 
         # Loss configuration
         self.bce_loss_weight = bce_loss_weight
+        self.focal_loss_weight = focal_loss_weight
+        self.focal_gamma = focal_gamma
         self.supcon_loss_weight = supcon_loss_weight
         self.label_repulsion_weight = label_repulsion_weight
         self.supcon_margin = supcon_margin
         self.max_labels = max_labels
         self.scoring_method = scoring_method
         self.losses = (
-            list(losses) if losses is not None else ["softmax", "repulsion", "bce"]
+            list(losses) if losses is not None else ["softmax", "repulsion", "focal"]
         )
 
         # Resolve backbone_config without any network I/O.

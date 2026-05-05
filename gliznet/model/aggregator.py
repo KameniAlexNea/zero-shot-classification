@@ -38,6 +38,9 @@ class LabelAggregator(nn.Module):
 
         hidden_size = config.backbone_config.hidden_size
         self.hidden_size = hidden_size
+        self.max_labels = config.max_labels
+        self.lab_token_id = config.lab_token_id
+        self._inv_scale = hidden_size**-0.5
 
         if config.scoring_method == "cosine":
             self.scoring = CosineScoring()
@@ -45,15 +48,40 @@ class LabelAggregator(nn.Module):
             self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
 
+    def _text_repr(
+        self,
+        dense_labels: torch.Tensor,
+        aggregated_labels: torch.Tensor,
+        hidden_states: torch.Tensor,
+        text_mask: torch.Tensor,
+        all_batch_ids: torch.Tensor,
+        all_label_ids: torch.Tensor,
+        max_label_id: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Cross-attention of each label over text tokens.
+
+        Returns:
+            aggregated_text: (N, D) label-specific text representations.
+            aggregated_labels: (N, D) label embeddings (unchanged in base class).
+        """
+        # (B, K, L) = (B, K, D) @ (B, D, L) scaled
+        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2))
+        scores = scores * self._inv_scale
+        scores.masked_fill_(~text_mask.unsqueeze(1), float("-inf"))
+        attn = F.softmax(scores, dim=2)
+        agg_text_dense = torch.bmm(attn, hidden_states)  # (B, K, D)
+        aggregated_text = agg_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
+        return aggregated_text, aggregated_labels
+
     def aggregate_labels(
         self,
         input_ids: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
-        batch_size, _, _ = hidden_states.shape
+        batch_size = hidden_states.shape[0]
         device = hidden_states.device
 
-        lab_mask = input_ids == self.config.lab_token_id
+        lab_mask = input_ids == self.lab_token_id
         if not lab_mask.any():
             empty_idx = torch.empty(0, dtype=torch.long, device=device)
             empty_emb = torch.empty(0, self.hidden_size, device=device)
@@ -62,22 +90,22 @@ class LabelAggregator(nn.Module):
         label_hidden = self.dropout(hidden_states[lab_mask])
 
         lab_counts = lab_mask.sum(dim=1)
-        max_labels = self.config.max_labels
 
-        batch_label_grid = (
-            torch.arange(batch_size, device=device)
-            .unsqueeze(1)
-            .expand(batch_size, max_labels)
-        )
         label_id_grid = (
-            torch.arange(1, max_labels + 1, device=device)
+            torch.arange(1, self.max_labels + 1, device=device)
             .unsqueeze(0)
             .expand(batch_size, -1)
         )
+        batch_label_grid = (
+            torch.arange(batch_size, device=device)
+            .unsqueeze(1)
+            .expand(batch_size, self.max_labels)
+        )
 
         valid_mask = label_id_grid <= lab_counts.unsqueeze(1)
-        all_batch_ids = batch_label_grid.reshape(-1)[valid_mask.reshape(-1)]
-        all_label_ids = label_id_grid.reshape(-1)[valid_mask.reshape(-1)]
+        flat_valid = valid_mask.reshape(-1)
+        all_batch_ids = batch_label_grid.reshape(-1)[flat_valid]
+        all_label_ids = label_id_grid.reshape(-1)[flat_valid]
 
         return label_hidden, all_batch_ids, all_label_ids
 
@@ -87,7 +115,6 @@ class LabelAggregator(nn.Module):
         lmask: torch.Tensor,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        inference: bool = False,
     ) -> Tuple[torch.Tensor, ...]:
         """Aggregate label representations and compute similarities using token-level attention.
 
@@ -106,8 +133,10 @@ class LabelAggregator(nn.Module):
         """
         B, L, D = hidden_states.shape
 
+        hidden_states = F.normalize(hidden_states, p=2, dim=-1)
+
         # Identify text token positions (exclude label/special tokens)
-        lab_token_mask = input_ids == self.config.lab_token_id
+        lab_token_mask = input_ids == self.lab_token_id
         text_mask = (lmask == 0) & (attention_mask == 1) & (~lab_token_mask)
 
         aggregated_labels, all_batch_ids, all_label_ids = self.aggregate_labels(
@@ -126,26 +155,20 @@ class LabelAggregator(nn.Module):
             )
 
         # Token-level attention: attend over text tokens per label.
-        max_label_id = (
-            int(all_label_ids.max().item()) if inference else self.config.max_labels
-        )
-        scale = D**0.5
+        max_label_id = self.max_labels
 
         dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
         dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels
 
-        # (B, max_labels, D) @ (B, D, L) → (B, max_labels, L)
-        scores_dense = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) / scale
-        scores_dense = scores_dense.masked_fill(~text_mask.unsqueeze(1), float("-inf"))
-        attn_weights_dense = F.softmax(scores_dense, dim=2)  # (B, max_labels, L)
-
-        # (B, max_labels, L) @ (B, L, D) → (B, max_labels, D)
-        aggregated_text_dense = torch.bmm(attn_weights_dense, hidden_states)
-
-        # Extract only the valid (N,) label slots
-        aggregated_text = aggregated_text_dense[
-            all_batch_ids, all_label_ids - 1
-        ]  # (N, D)
+        aggregated_text, aggregated_labels = self._text_repr(
+            dense_labels,
+            aggregated_labels,
+            hidden_states,
+            text_mask,
+            all_batch_ids,
+            all_label_ids,
+            max_label_id,
+        )
 
         logits = self.scoring(aggregated_text, aggregated_labels)
 

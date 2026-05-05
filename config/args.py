@@ -23,9 +23,15 @@ class ModelArgs:
     )
 
     # Loss configuration
-    bce_loss_weight: float = field(
+    focal_loss_weight: float = field(
         default=1.0,
-        metadata={"help": "Weight for binary cross-entropy loss"},
+        metadata={"help": "Weight for focal loss"},
+    )
+    focal_gamma: float = field(
+        default=2.0,
+        metadata={
+            "help": "Focusing parameter for focal loss (higher = more focus on hard examples)"
+        },
     )
     supcon_loss_weight: float = field(
         default=1.0,
@@ -49,10 +55,11 @@ class ModelArgs:
         default="bilinear",
         metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
     )
+
     losses: List[str] = field(
-        default_factory=lambda: ["softmax", "repulsion", "bce"],
+        default_factory=lambda: ["softmax", "repulsion", "focal"],
         metadata={
-            "help": "Active loss modules. Any subset of: softmax, repulsion, bce"
+            "help": "Active loss modules. Any subset of: softmax, repulsion, focal"
         },
     )
 
@@ -121,5 +128,20 @@ class ModelArgs:
         default=False,
         metadata={
             "help": "Whether to augment the training set with additional datasets defined in training_data.py"
+        },
+    )
+
+    # Text augmentation (noise injection for robustness)
+    text_augmentation: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to apply text augmentation to simulate real-world noisy text (typos, missing words, etc.)"
+        },
+    )
+    augmentation_config: str = field(
+        default=None,
+        metadata={
+            "help": "Path to YAML file configuring the augmentation pipeline. "
+            "If not provided, uses the default pipeline."
         },
     )

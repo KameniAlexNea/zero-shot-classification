@@ -176,32 +176,6 @@ def load_Salesforce_cos_e(max_size: Optional[int] = None, seed: int = 42):
     )
 
 
-def load_onionmonster_dream(max_size: Optional[int] = None, seed: int = 42):
-    """Load DREAM dataset."""
-
-    def mapper_func(ds):
-        raws = []
-        for x in ds:
-            for query in x["1"]:
-                text = ensure_string("\n".join(x["0"]) + "\n\n" + query["question"])
-                ltext = [ensure_string(choice) for choice in query["choice"]]
-                lint = [int(i == query["answer"]) for i in query["choice"]]
-                raws.append(
-                    {
-                        "text": text,
-                        LabelName.ltext: ltext,
-                        LabelName.lint: lint,
-                    }
-                )
-        return datasets.Dataset.from_list(raws)
-
-    ds = datasets.load_dataset("onionmonster/dream", None, split="train")
-    if max_size is not None and len(ds) > max_size:
-        ds = ds.shuffle(seed=seed).select(range(max_size))
-    ds = mapper_func(ds)
-    return validate_and_filter_dataset(ds.select_columns(selected_columns))
-
-
 def _make_true_all_labels_mapper() -> Callable:
     """Shared mapper for datasets with true_labels / all_labels columns."""
 
@@ -216,28 +190,6 @@ def _make_true_all_labels_mapper() -> Callable:
         }
 
     return mapper
-
-
-def load_knowledgator_gliclass_v3_logic(max_size: Optional[int] = None, seed: int = 42):
-    """Load knowledgator/gliclass-v3-logic-dataset."""
-    return load_dataset_with_validation(
-        "knowledgator/gliclass-v3-logic-dataset",
-        None,
-        mapper_func=_make_true_all_labels_mapper(),
-        max_size=max_size,
-        seed=seed,
-    )
-
-
-def load_biomike_formal_logic_reasoning(max_size: Optional[int] = None, seed: int = 42):
-    """Load BioMike/formal-logic-reasoning-gliclass-2k."""
-    return load_dataset_with_validation(
-        "BioMike/formal-logic-reasoning-gliclass-2k",
-        None,
-        mapper_func=_make_true_all_labels_mapper(),
-        max_size=max_size,
-        seed=seed,
-    )
 
 
 def _make_bigbench_mapper(
@@ -406,6 +358,49 @@ def load_jvonrad_multilingual_mcq_consistency(
     )
 
 
+def load_openlifescienceai_medmcqa(max_size: Optional[int] = None, seed: int = 42):
+    """Load openlifescienceai/medmcqa — medical multiple-choice QA.
+
+    Each sample has four options (opa‥opd); ``cop`` is the 0-based index of the
+    correct option (0=a, 1=b, 2=c, 3=d).
+    """
+
+    def mapper(x: Dict[str, Any]) -> Dict[str, Any]:
+        ltext = [
+            ensure_string(x["opa"]),
+            ensure_string(x["opb"]),
+            ensure_string(x["opc"]),
+            ensure_string(x["opd"]),
+        ]
+        correct = int(x["cop"])
+        lint = [int(i == correct) for i in range(4)]
+        return {
+            "text": ensure_string(x["question"]),
+            LabelName.ltext: ltext,
+            LabelName.lint: lint,
+        }
+
+    return load_dataset_with_validation(
+        "openlifescienceai/medmcqa",
+        None,
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
+    )
+
+
+def load_yusuke1997_mcsqa(max_size: Optional[int] = None, seed: int = 42):
+    """Load yusuke1997/mCSQA (English subset) — commonsense QA with 5 choices."""
+    mapper = create_mcq_mapper("question")
+    return load_dataset_with_validation(
+        "yusuke1997/mCSQA",
+        "en",
+        mapper_func=mapper,
+        max_size=max_size,
+        seed=seed,
+    )
+
+
 # Registry of additional datasets to mix in during training.
 # Comment out or remove entries to disable specific sources.
 additional_datasets = {
@@ -414,9 +409,6 @@ additional_datasets = {
     "allenai_openbookqa": load_allenai_openbookqa,
     "tau_commonsense_qa": load_tau_commonsense_qa,
     "Salesforce_cos_e": load_Salesforce_cos_e,
-    "onionmonster_dream": load_onionmonster_dream,
-    "knowledgator_gliclass_v3_logic": load_knowledgator_gliclass_v3_logic,
-    "biomike_formal_logic_reasoning": load_biomike_formal_logic_reasoning,
     "bigbench_abstract_narrative_understanding": load_bigbench_abstract_narrative_understanding,
     "bigbench_elementary_math_qa": load_bigbench_elementary_math_qa,
     "bigbench_contextual_parametric_knowledge_conflicts": load_bigbench_contextual_parametric_knowledge_conflicts,
@@ -424,4 +416,6 @@ additional_datasets = {
     "bigbench_vitaminc_fact_verification": load_bigbench_vitaminc_fact_verification,
     "allenai_art": load_allenai_art,
     "jvonrad_multilingual_mcq_consistency": load_jvonrad_multilingual_mcq_consistency,
+    "openlifescienceai_medmcqa": load_openlifescienceai_medmcqa,
+    "yusuke1997_mcsqa": load_yusuke1997_mcsqa,
 }
