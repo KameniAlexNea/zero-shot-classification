@@ -6,8 +6,7 @@
 
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-WANDB_PROJECT="gliznet-pretrain"
-MODEL_PATH="microsoft/deberta-v3-base"
+MODEL_PATH="results/pretrained_alex_20260506_063055/checkpoint-1681"
 
 # Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
 # auto-detects GPUs, and ensures torch.autocast propagates correctly per process.
@@ -21,7 +20,7 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
     --focal_loss_weight 0.3 \
-    --focal_gamma 1.2 \
+    --focal_gamma 1.8 \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
     --supcon_margin 0.1 \
@@ -34,6 +33,8 @@ nohup accelerate launch train_gliznet.py \
     --min_label_length 3 \
     --data_seed 42 \
     --text_augmentation True \
+    --max_extended_ds_size 50000 \
+    --use_additional_datasets \
     --augmentation_config config/augmentation_config.yaml \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
@@ -47,7 +48,7 @@ nohup accelerate launch train_gliznet.py \
     `# Training Arguments` \
     --run_name "gliznet_pretrain_alex_${TIMESTAMP}" \
     --output_dir "results/pretrained_alex_${TIMESTAMP}" \
-    --num_train_epochs 3 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 32 \
     --gradient_accumulation_steps 2 \
@@ -58,8 +59,10 @@ nohup accelerate launch train_gliznet.py \
     --max_grad_norm 1.0 \
     \
     `# Evaluation & Checkpointing` \
-    --eval_strategy epoch \
-    --save_strategy epoch \
+    --eval_strategy steps \
+    --save_strategy steps \
+    --eval_steps 500 \
+    --save_steps 500 \
     --save_total_limit 4 \
     --load_best_model_at_end \
     --metric_for_best_model loss \

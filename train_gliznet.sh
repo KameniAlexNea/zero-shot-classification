@@ -7,7 +7,7 @@
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-MODEL_PATH="microsoft/deberta-v3-base"
+MODEL_PATH="results/pretrained_alex_20260506_084248/checkpoint-4000"
 
 # Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
 # auto-detects GPUs, and ensures torch.autocast propagates correctly per process.

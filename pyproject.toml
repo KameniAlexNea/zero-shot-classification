@@ -11,6 +11,7 @@ requires-python = ">=3.13"
 dependencies = [
     "accelerate>=1.13.0",
     "datasets>=4.8.4",
+    "dotenv>=0.9.9",
     "huggingface-hub>=1.8.0",
     "llm-output-parser>=0.3.0",
     "loguru>=0.7.3",

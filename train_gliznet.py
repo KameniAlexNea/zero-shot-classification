@@ -179,7 +179,7 @@ def main():
         min_label_length=data_config.min_label_length,
     )
     size_before = len(dataset)
-    if model_args.use_additional_datasets:
+    if model_args.use_additional_datasets and model_args.max_extended_ds_size > 0:
         dataset = add_additional_ds(
             dataset, model_args.max_extended_ds_size, training_args.data_seed
         )
