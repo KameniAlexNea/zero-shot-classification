@@ -7,7 +7,7 @@
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-MODEL_PATH="results/pretrained_alex_20260506_084248/checkpoint-4000"
+MODEL_PATH="microsoft/deberta-v3-base"
 
 # Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
 # auto-detects GPUs, and ensures torch.autocast propagates correctly per process.
@@ -21,7 +21,7 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
     --focal_loss_weight 0.3 \
-    --focal_gamma 1.2 \
+    --focal_gamma 1.8 \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
     --supcon_margin 0.1 \
@@ -33,7 +33,7 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 1000 \
+    --max_extended_ds_size 500 \
     --use_additional_datasets \
     --text_augmentation True \
     --augmentation_config config/augmentation_config.yaml \
