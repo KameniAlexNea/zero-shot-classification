@@ -40,6 +40,8 @@ class GliZNetConfig(PretrainedConfig):
         max_labels: int = 20,
         # Scoring head: "bilinear" or "cosine"
         scoring_method: str = "bilinear",
+        # Self-attention over [CLS + all labels] before cross-attention scoring
+        enrich_labels: bool = False,
         # Active loss modules — any subset of LOSS_REGISTRY keys
         losses: list = None,
         **kwargs,
@@ -62,6 +64,7 @@ class GliZNetConfig(PretrainedConfig):
         self.supcon_margin = supcon_margin
         self.max_labels = max_labels
         self.scoring_method = scoring_method
+        self.enrich_labels = enrich_labels
         self.losses = (
             list(losses) if losses is not None else ["softmax", "repulsion", "focal"]
         )

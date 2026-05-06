@@ -26,7 +26,7 @@ from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
 from config.training_data import additional_datasets
 
-os.environ["WANDB_PROJECT"] = "gliznet"
+os.environ["WANDB_PROJECT"] = os.getenv("WANDB_PROJECT", "gliznet")
 os.environ["WANDB_WATCH"] = "none"
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -166,7 +166,7 @@ def main():
     # Load datasets
     logger.info(f"Loading dataset from {model_args.dataset_path}...")
     testing_data = load_dataset(
-        path=model_args.dataset_path,
+        path="alexneakameni/ZSHOT-HARDSET-v2",
         name=model_args.dataset_name,
         split="test",
         min_label_length=data_config.min_label_length,
@@ -179,7 +179,7 @@ def main():
         min_label_length=data_config.min_label_length,
     )
     size_before = len(dataset)
-    if model_args.use_additional_datasets:
+    if model_args.use_additional_datasets and model_args.max_extended_ds_size > 0:
         dataset = add_additional_ds(
             dataset, model_args.max_extended_ds_size, training_args.data_seed
         )
