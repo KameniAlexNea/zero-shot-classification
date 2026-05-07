@@ -6,11 +6,8 @@
 #   RandomCaseChange  - lowercases capitalized words (custom)
 #   KeyboardTypo      - QWERTY adjacent key replacement (nlpaug KeyboardAug)
 #   OcrTypo           - OCR-like character substitution (nlpaug OcrAug)
-#   CharSwap          - swap adjacent characters (nlpaug RandomCharAug swap)
-#   CharDrop          - delete a character (nlpaug RandomCharAug delete)
-#   CharInsert        - insert a random character (nlpaug RandomCharAug insert)
-#   WordDrop          - delete random words (nlpaug RandomWordAug delete)
-#   WordSwap          - swap adjacent words (nlpaug RandomWordAug swap)
+#   RandomChar        - character-level aug (nlpaug RandomCharAug, action: swap/delete/insert)
+#   RandomWord        - word-level aug (nlpaug RandomWordAug, action: delete/swap)
 #   SpellingError     - common spelling mistakes (nlpaug SpellingAug)
 #   WordSplit         - split a word into two (nlpaug SplitAug)
 #
@@ -21,42 +18,59 @@
 
 augmentations:
   - name: SuffixTruncation
-    prob: 0.3
+    prob: 0.1
     params:
       word_prob: 0.12
 
   - name: KeyboardTypo
-    prob: 0.3
+    prob: 0.15
     params:
-      word_prob: 0.08
+      aug_word_p: 0.08
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
 
   - name: OcrTypo
-    prob: 0.2
+    prob: 0.1
     params:
-      word_prob: 0.06
+      aug_word_p: 0.06
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
 
   - name: SpellingError
-    prob: 0.2
+    prob: 0.1
     params:
-      word_prob: 0.08
+      aug_p: 0.08
+      aug_min: 1
 
-  - name: CharSwap
-    prob: 0.2
+  - name: RandomChar
+    prob: 0.1
     params:
-      word_prob: 0.08
+      action: swap
+      aug_word_p: 0.08
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
 
-  - name: CharDrop
+  - name: RandomChar
     prob: 0.15
     params:
-      word_prob: 0.06
+      action: delete
+      aug_word_p: 0.06
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
 
-  - name: WordDrop
-    prob: 0.15
+  - name: RandomWord
+    prob: 0.1
     params:
-      word_prob: 0.04
+      action: delete
+      aug_p: 0.04
+      aug_min: 1
 
   - name: RandomCaseChange
-    prob: 0.1
+    prob: 0.15
     params:
       word_prob: 0.05
 
@@ -64,8 +78,8 @@ augmentations:
 label_augmentations:
   - name: RatioEnforcementSelector
     params:
-      neg_prob: 0.5
-      pos_prob: 0.2
+      neg_prob: 0.1
+      pos_prob: 0.1
       neg_params:
         min_positives: 1
         max_positives: 3
@@ -73,12 +87,13 @@ label_augmentations:
         max_negatives: 10
       pos_params:
         min_positives: 2
-        max_positives: 6
+        max_positives: 10
         min_negatives: 0
         max_negatives: 2
 
   - name: LabelLimit
     params:
       max_labels: 20
+      min_labels: 5
       shuffle_labels: true
       remove_underscores: 0.9

@@ -206,7 +206,6 @@ def main():
     train_label_pipeline = load_label_augmentation_pipeline(
         config_path=model_args.augmentation_config,
         max_labels=data_config.max_labels,
-        shuffle_labels=data_config.shuffle_labels,
     )
     logger.info(f"Train label augmentation: {train_label_pipeline!r}")
 

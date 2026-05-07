@@ -14,7 +14,6 @@ import random
 import string
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
 
 import nlpaug.augmenter.char as nac
 import nlpaug.augmenter.word as naw
@@ -151,68 +150,15 @@ AUGMENTATION_REGISTRY: dict[str, callable] = {
     "SuffixTruncation": lambda **kw: SuffixTruncation(**kw),
     "RandomCaseChange": lambda **kw: RandomCaseChange(**kw),
     # nlpaug character-level
-    "KeyboardTypo": lambda word_prob=0.08, **kw: _NlpAugWrapper(
-        nac.KeyboardAug(
-            aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw
-        ),
-        "KeyboardTypo",
-    ),
-    "OcrTypo": lambda word_prob=0.08, **kw: _NlpAugWrapper(
-        nac.OcrAug(
-            aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw
-        ),
-        "OcrTypo",
-    ),
-    "CharSwap": lambda word_prob=0.1, **kw: _NlpAugWrapper(
-        nac.RandomCharAug(
-            action="swap",
-            aug_word_p=word_prob,
-            aug_char_min=1,
-            aug_char_max=1,
-            min_char=4,
-            **kw,
-        ),
-        "CharSwap",
-    ),
-    "CharDrop": lambda word_prob=0.1, **kw: _NlpAugWrapper(
-        nac.RandomCharAug(
-            action="delete",
-            aug_word_p=word_prob,
-            aug_char_min=1,
-            aug_char_max=1,
-            min_char=4,
-            **kw,
-        ),
-        "CharDrop",
-    ),
-    "CharInsert": lambda word_prob=0.05, **kw: _NlpAugWrapper(
-        nac.RandomCharAug(
-            action="insert",
-            aug_word_p=word_prob,
-            aug_char_min=1,
-            aug_char_max=1,
-            min_char=4,
-            **kw,
-        ),
-        "CharInsert",
-    ),
+    "KeyboardTypo": lambda **kw: _NlpAugWrapper(nac.KeyboardAug(**kw), "KeyboardTypo"),
+    "OcrTypo": lambda **kw: _NlpAugWrapper(nac.OcrAug(**kw), "OcrTypo"),
+    "RandomChar": lambda **kw: _NlpAugWrapper(nac.RandomCharAug(**kw), "RandomChar"),
     # nlpaug word-level
-    "WordDrop": lambda word_prob=0.05, **kw: _NlpAugWrapper(
-        naw.RandomWordAug(action="delete", aug_p=word_prob, aug_min=1, **kw),
-        "WordDrop",
+    "RandomWord": lambda **kw: _NlpAugWrapper(naw.RandomWordAug(**kw), "RandomWord"),
+    "SpellingError": lambda **kw: _NlpAugWrapper(
+        naw.SpellingAug(**kw), "SpellingError"
     ),
-    "WordSwap": lambda word_prob=0.05, **kw: _NlpAugWrapper(
-        naw.RandomWordAug(action="swap", aug_p=word_prob, aug_min=1, **kw),
-        "WordSwap",
-    ),
-    "SpellingError": lambda word_prob=0.08, **kw: _NlpAugWrapper(
-        naw.SpellingAug(aug_p=word_prob, aug_min=1, **kw),
-        "SpellingError",
-    ),
-    "WordSplit": lambda word_prob=0.05, **kw: _NlpAugWrapper(
-        naw.SplitAug(aug_p=word_prob, aug_min=1, **kw),
-        "WordSplit",
-    ),
+    "WordSplit": lambda **kw: _NlpAugWrapper(naw.SplitAug(**kw), "WordSplit"),
 }
 
 
@@ -237,10 +183,12 @@ class LabelLimit(LabelAugmentation):
     def __init__(
         self,
         max_labels: int = 20,
+        min_labels: int = 1,
         shuffle_labels: bool = True,
         remove_underscores: float = 0.9,
     ):
         self.max_labels = max_labels
+        self.min_labels = min_labels
         self.shuffle_labels = shuffle_labels
         self.remove_underscores = remove_underscores
 
@@ -256,7 +204,9 @@ class LabelLimit(LabelAugmentation):
 
         if self.shuffle_labels and combined:
             random.shuffle(combined)
-            num_labels = random.randint(1, min(self.max_labels, len(combined)))
+            lo = min(self.min_labels, len(combined))
+            hi = min(self.max_labels, len(combined))
+            num_labels = random.randint(lo, hi)
             selected_pairs = combined[:num_labels]
         else:
             selected_pairs = combined[: self.max_labels]
@@ -331,25 +281,13 @@ class RatioEnforcementSelector(LabelAugmentation):
         self,
         neg_prob: float = 0.5,
         pos_prob: float = 0.2,
-        neg_params: Optional[dict] = None,
-        pos_params: Optional[dict] = None,
+        neg_params: dict | None = None,
+        pos_params: dict | None = None,
     ):
         self.neg_prob = neg_prob
         self.pos_prob = pos_prob
-        neg_params = neg_params or {
-            "min_positives": 1,
-            "max_positives": 3,
-            "min_negatives": 3,
-            "max_negatives": 10,
-        }
-        pos_params = pos_params or {
-            "min_positives": 2,
-            "max_positives": 6,
-            "min_negatives": 0,
-            "max_negatives": 2,
-        }
-        self._neg_aug = RatioEnforcement(**neg_params)
-        self._pos_aug = RatioEnforcement(**pos_params)
+        self._neg_aug = RatioEnforcement(**(neg_params or {}))
+        self._pos_aug = RatioEnforcement(**(pos_params or {}))
 
     def __call__(
         self, labels_text: list[str], labels_int: list[int]
@@ -387,9 +325,7 @@ LABEL_AUGMENTATION_REGISTRY: dict[str, type[LabelAugmentation]] = {
 }
 
 
-def load_augmentation_pipeline(
-    config_path: Optional[str] = None,
-) -> AugmentationPipeline:
+def load_augmentation_pipeline(config_path: str) -> AugmentationPipeline:
     """Load an augmentation pipeline from a YAML config file.
 
     YAML format::
@@ -405,14 +341,11 @@ def load_augmentation_pipeline(
               word_prob: 0.08
 
     Args:
-        config_path: Path to YAML config. If None, uses default_augmentation_pipeline().
+        config_path: Path to YAML config.
 
     Returns:
         Configured AugmentationPipeline
     """
-    if config_path is None:
-        return default_augmentation_pipeline()
-
     path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(f"Augmentation config not found: {config_path}")
@@ -440,9 +373,8 @@ def load_augmentation_pipeline(
 
 
 def load_label_augmentation_pipeline(
-    config_path: Optional[str] = None,
-    max_labels: int = 20,
-    shuffle_labels: bool = True,
+    config_path: str,
+    max_labels: int | None = None,
 ) -> LabelAugmentationPipeline:
     """Load a label augmentation pipeline from a YAML config file.
 
@@ -453,25 +385,21 @@ def load_label_augmentation_pipeline(
             params:
               neg_prob: 0.5
               pos_prob: 0.2
+              neg_params: {min_positives: 1, max_positives: 3, ...}
+              pos_params: {min_positives: 2, max_positives: 6, ...}
           - name: LabelLimit
             params:
               max_labels: 20
               shuffle_labels: true
 
     Args:
-        config_path: Path to YAML config. If None, returns a default pipeline
-            with just LabelLimit using the provided max_labels/shuffle_labels.
-        max_labels: Fallback max_labels when no config is provided.
-        shuffle_labels: Fallback shuffle_labels when no config is provided.
+        config_path: Path to YAML config.
+        max_labels: If provided, overrides max_labels in LabelLimit config
+            (useful for passing the training args value).
 
     Returns:
         Configured LabelAugmentationPipeline
     """
-    if config_path is None:
-        return LabelAugmentationPipeline(
-            [LabelLimit(max_labels=max_labels, shuffle_labels=shuffle_labels)]
-        )
-
     path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(f"Augmentation config not found: {config_path}")
@@ -481,9 +409,9 @@ def load_label_augmentation_pipeline(
 
     entries = config.get("label_augmentations", [])
     if not entries:
-        # No label_augmentations section — fall back to default
-        return LabelAugmentationPipeline(
-            [LabelLimit(max_labels=max_labels, shuffle_labels=shuffle_labels)]
+        raise ValueError(
+            f"No 'label_augmentations' section in {config_path}. "
+            "Define label augmentations in the config file."
         )
 
     augmentations = []
@@ -497,28 +425,11 @@ def load_label_augmentation_pipeline(
                 f"Available: {list(LABEL_AUGMENTATION_REGISTRY.keys())}"
             )
 
+        # Override max_labels from args if provided
+        if name == "LabelLimit" and max_labels is not None:
+            params["max_labels"] = max_labels
+
         aug_cls = LABEL_AUGMENTATION_REGISTRY[name]
         augmentations.append(aug_cls(**params))
 
     return LabelAugmentationPipeline(augmentations)
-
-
-def default_augmentation_pipeline() -> AugmentationPipeline:
-    """Create the default augmentation pipeline for training.
-
-    Applies subtle noise: keyboard typos, OCR errors, spelling mistakes,
-    suffix truncation, and occasional word drops. Each augmenter fires
-    independently with low probability to avoid destroying the text.
-    """
-    return AugmentationPipeline(
-        [
-            (0.3, AUGMENTATION_REGISTRY["SuffixTruncation"](word_prob=0.12)),
-            (0.3, AUGMENTATION_REGISTRY["KeyboardTypo"](word_prob=0.08)),
-            (0.2, AUGMENTATION_REGISTRY["OcrTypo"](word_prob=0.06)),
-            (0.2, AUGMENTATION_REGISTRY["SpellingError"](word_prob=0.08)),
-            (0.2, AUGMENTATION_REGISTRY["CharSwap"](word_prob=0.08)),
-            (0.15, AUGMENTATION_REGISTRY["CharDrop"](word_prob=0.06)),
-            (0.15, AUGMENTATION_REGISTRY["WordDrop"](word_prob=0.04)),
-            (0.1, AUGMENTATION_REGISTRY["RandomCaseChange"](word_prob=0.05)),
-        ]
-    )
