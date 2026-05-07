@@ -132,8 +132,10 @@ def compute_metrics(
         ranked = g[np.argsort(-s)]  # sort labels by descending predicted score
 
         for k in ks:
-            hits[k].append(float(ranked[:k].any()))
-            ndcgs[k].append(_ndcg_at_k(ranked, k))
+            # Only compute @k when we have at least k candidates
+            if len(ranked) >= k:
+                hits[k].append(float(ranked[:k].any()))
+                ndcgs[k].append(_ndcg_at_k(ranked, k))
 
         # MRR: reciprocal rank of first positive (1-indexed)
         pos_ranks = np.where(ranked > 0.5)[0]
