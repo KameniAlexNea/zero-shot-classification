@@ -18,10 +18,11 @@ nohup accelerate launch train_gliznet.py \
     --model_name "${MODEL_PATH}" \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
+    --enrich_labels \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
-    --focal_loss_weight 0.3 \
-    --focal_gamma 1.8 \
+    --focal_loss_weight 0.4 \
+    --focal_gamma 1.85 \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
     --supcon_margin 0.1 \
@@ -33,10 +34,10 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 500 \
+    --max_extended_ds_size 1000 \
     --use_additional_datasets \
     --text_augmentation True \
-    --augmentation_config config/augmentation_config.yaml \
+    --augmentation_config gliznet/config/augmentation_config.yaml \
     `# Tokenizer Configuration` \
     --use_fast_tokenizer \
     --model_max_length 512 \
@@ -44,14 +45,13 @@ nohup accelerate launch train_gliznet.py \
     --max_tokens_per_span 16 \
     --min_text_tokens 5 \
     --min_label_tokens 1 \
-    --enrich_labels \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
     --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
     --num_train_epochs 10 \
-    --per_device_train_batch_size 32 \
-    --per_device_eval_batch_size 32 \
+    --per_device_train_batch_size 48 \
+    --per_device_eval_batch_size 48 \
     --gradient_accumulation_steps 2 \
     --learning_rate 4e-5 \
     --warmup_steps 0.05 \

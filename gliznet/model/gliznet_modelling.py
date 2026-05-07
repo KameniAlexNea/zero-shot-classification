@@ -7,7 +7,7 @@ from transformers import AutoConfig, AutoModel, PreTrainedModel
 
 from gliznet.model.aggregator import LabelAggregator
 from gliznet.model.config import GliZNetConfig
-from gliznet.model.loss import GliZNetLoss
+from gliznet.model.losses import GliZNetLoss
 from gliznet.model.outputs import GliZNetOutput
 
 if TYPE_CHECKING:

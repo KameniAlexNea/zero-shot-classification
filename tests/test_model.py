@@ -11,7 +11,7 @@ from transformers import AutoModel
 
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.model.aggregator import LabelAggregator
-from gliznet.model.loss import GliZNetLoss
+from gliznet.model.losses import GliZNetLoss
 
 
 # ──────────────────────────────────────────────────────────────────────────────

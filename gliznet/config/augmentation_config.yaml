@@ -1,0 +1,99 @@
+# Text augmentation pipeline for GliZNet training.
+# Each entry: {name, prob (probability of applying), params}
+#
+# Available text augmentations:
+#   SuffixTruncation  - "running" -> "runnin" (informal spelling, custom)
+#   RandomCaseChange  - lowercases capitalized words (custom)
+#   KeyboardTypo      - QWERTY adjacent key replacement (nlpaug KeyboardAug)
+#   OcrTypo           - OCR-like character substitution (nlpaug OcrAug)
+#   RandomChar        - character-level aug (nlpaug RandomCharAug, action: swap/delete/insert)
+#   RandomWord        - word-level aug (nlpaug RandomWordAug, action: delete/swap)
+#   SpellingError     - common spelling mistakes (nlpaug SpellingAug)
+#   WordSplit         - split a word into two (nlpaug SplitAug)
+#
+# Available label augmentations:
+#   RatioEnforcement         - enforce a target pos/neg ratio
+#   RatioEnforcementSelector  - randomly pick neg-heavy, pos-heavy, or pass-through
+#   LabelLimit               - limits total labels & shuffles
+
+augmentations:
+  - name: SuffixTruncation
+    prob: 0.1
+    params:
+      word_prob: 0.12
+
+  - name: KeyboardTypo
+    prob: 0.15
+    params:
+      aug_word_p: 0.08
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
+
+  - name: OcrTypo
+    prob: 0.1
+    params:
+      aug_word_p: 0.06
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
+
+  - name: SpellingError
+    prob: 0.1
+    params:
+      aug_p: 0.08
+      aug_min: 1
+
+  - name: RandomChar
+    prob: 0.1
+    params:
+      action: swap
+      aug_word_p: 0.08
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
+
+  - name: RandomChar
+    prob: 0.15
+    params:
+      action: delete
+      aug_word_p: 0.06
+      aug_char_min: 1
+      aug_char_max: 1
+      min_char: 4
+
+  - name: RandomWord
+    prob: 0.1
+    params:
+      action: delete
+      aug_p: 0.04
+      aug_min: 1
+
+  - name: RandomCaseChange
+    prob: 0.15
+    params:
+      word_prob: 0.05
+
+# Label augmentations are applied sequentially to (labels_text, labels_int)
+label_augmentations:
+  - name: RatioEnforcementSelector
+    params:
+      neg_prob: 0.1
+      pos_prob: 0.1
+      neg_params:
+        min_positives: 1
+        max_positives: 3
+        min_negatives: 3
+        max_negatives: 10
+      pos_params:
+        min_positives: 2
+        max_positives: 10
+        min_negatives: 0
+        max_negatives: 2
+
+  - name: LabelLimit
+    params:
+      max_labels: 20
+      min_labels: 5
+      shuffle_labels: true
+      remove_underscores: 0.9

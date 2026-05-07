@@ -57,7 +57,9 @@ class ModelArgs:
     )
     enrich_labels: bool = field(
         default=False,
-        metadata={"help": "Enable self-attention over [CLS + all labels] before cross-attention scoring."},
+        metadata={
+            "help": "Enable self-attention over [CLS + all labels] before cross-attention scoring."
+        },
     )
 
     losses: List[str] = field(

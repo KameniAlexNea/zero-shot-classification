@@ -6,7 +6,7 @@ from gliznet.model.gliznet_modelling import (
     GliZNetPreTrainedModel,
 )
 from gliznet.model.config import GliZNetConfig
-from gliznet.model.loss import GliZNetLoss
+from gliznet.model.losses import GliZNetLoss
 from gliznet.model.outputs import GliZNetOutput
 
 # Register with HuggingFace Auto* classes so that

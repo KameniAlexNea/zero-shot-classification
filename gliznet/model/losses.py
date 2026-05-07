@@ -74,7 +74,9 @@ class RepulsionLoss(nn.Module):
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.variance_target = 0.05  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
+        self.variance_target = (
+            0.05  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
+        )
         self.eps = 1e-4
         self.covariance_weight = 0.04
 
@@ -91,7 +93,9 @@ class RepulsionLoss(nn.Module):
         # Normalize to unit sphere (detached scale) so both variance and covariance
         # operate in the same directional space. Detaching the norm prevents covariance
         # gradients from acting on magnitude, keeping the two terms consistent.
-        per_sample_norm = label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
+        per_sample_norm = (
+            label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
+        )
         normalized = label_embeddings / per_sample_norm
 
         # Variance term: penalize dimensions with std below target (VICReg eq. 2)
