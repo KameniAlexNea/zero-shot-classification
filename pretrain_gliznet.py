@@ -18,7 +18,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from config.args import ModelArgs
+from gliznet.config.args import ModelArgs
 from gliznet.augmentation import LabelAugmentationPipeline, LabelLimit
 from gliznet.data import collate_fn
 from gliznet.metrics import compute_metrics

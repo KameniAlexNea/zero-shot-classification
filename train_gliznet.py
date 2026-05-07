@@ -14,7 +14,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from config.args import ModelArgs
+from gliznet.config.args import ModelArgs
 from gliznet.augmentation import (
     load_augmentation_pipeline,
     load_label_augmentation_pipeline,
@@ -24,7 +24,7 @@ from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
 from gliznet.training_config import GliZNetDataConfig
-from config.training_data import additional_datasets
+from gliznet.config.training_data import additional_datasets
 
 os.environ["WANDB_PROJECT"] = os.getenv("WANDB_PROJECT", "gliznet")
 os.environ["WANDB_WATCH"] = "none"

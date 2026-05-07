@@ -6,26 +6,8 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 # ---------------------------------------------------------------------------
 
 
-def _flatten(data: list) -> list:
-    """Recursively flatten one level of list nesting at a time."""
-    while data and isinstance(data[0], list):
-        data = [item for sublist in data for item in sublist]
-    return data
-
-
 def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-x))
-
-
-def _prepare(
-    logits: list[np.ndarray],
-    labels: list[np.ndarray],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Flatten, concatenate, and remove -100-padded positions from both arrays."""
-    logits = np.concatenate([j.reshape(-1) for j in _flatten(logits)])
-    labels = np.concatenate([j.reshape(-1) for j in _flatten(labels)])
-    valid = labels != -100
-    return logits[valid], labels[valid]
 
 
 def _ndcg_at_k(ranked_relevance: np.ndarray, k: int) -> float:
