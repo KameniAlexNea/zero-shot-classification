@@ -246,16 +246,14 @@ class RatioEnforcement(LabelAugmentation):
         positives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 1]
         negatives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 0]
 
-        if not positives:
+        if len(positives) < self.min_positives or len(negatives) < self.min_negatives:
             return labels_text, labels_int
 
         num_pos = random.randint(
             self.min_positives, min(self.max_positives, len(positives))
         )
-        num_neg = (
-            random.randint(self.min_negatives, min(self.max_negatives, len(negatives)))
-            if negatives
-            else 0
+        num_neg = random.randint(
+            self.min_negatives, min(self.max_negatives, len(negatives))
         )
 
         random.shuffle(positives)
