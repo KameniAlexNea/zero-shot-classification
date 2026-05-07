@@ -60,21 +60,24 @@ class SoftmaxLoss(nn.Module):
 
 
 class RepulsionLoss(nn.Module):
-    """Per-sample cosine repulsion to prevent label embedding collapse.
+    """Per-sample VICReg-style regularization to prevent label embedding collapse.
 
-    Penalizes high cosine similarity between different label embeddings WITHIN
-    the same sample, preserving contextual sensitivity (the same label can have
-    different embeddings in different text contexts).
+    Computes variance and covariance terms WITHIN each sample's labels
+    independently (not globally across the batch), preserving contextual
+    sensitivity — the same label can have different embeddings in different
+    text contexts.
 
-    Only activates when cosine similarity exceeds a threshold, allowing related
-    labels (e.g., "cat" and "animal") to maintain some positive similarity.
+    Fully vectorized via dense (B, K, D) tensor and batched matmul.
 
-    Fully vectorized — no Python loops over batch elements.
+    Reference: Bardes et al., "VICReg: Variance-Invariance-Covariance
+    Regularization for Self-Supervised Learning", ICLR 2022.
     """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.threshold = 0.3
+        self.variance_target = 0.05
+        self.eps = 1e-4
+        self.covariance_weight = 0.04
         self.max_labels = config.max_labels
 
     def forward(
@@ -92,35 +95,60 @@ class RepulsionLoss(nn.Module):
         B = batch_indices.max().item() + 1
         K = self.max_labels
 
-        # L2-normalize for cosine similarity
-        embs_norm = F.normalize(label_embeddings, p=2, dim=-1)
+        # L2-normalize (detached magnitude) so variance/covariance operate in
+        # directional space only.
+        mag = label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
+        normalized = label_embeddings / mag
 
         # Build dense (B, K, D) tensor — zeros for empty slots
-        dense = embs_norm.new_zeros(B, K, D)
-        dense[batch_indices, label_ids - 1] = embs_norm
+        dense = normalized.new_zeros(B, K, D)
+        dense[batch_indices, label_ids - 1] = normalized
 
-        # Validity mask: which (batch, label) positions are occupied
+        # Validity mask (B, K) and per-sample label counts
         valid = torch.zeros(B, K, dtype=torch.bool, device=device)
         valid[batch_indices, label_ids - 1] = True
+        counts = valid.sum(dim=1).float()  # (B,)
 
-        # Batched pairwise cosine similarity: (B, K, K)
-        sim = torch.bmm(dense, dense.transpose(1, 2))
-
-        # Mask: upper triangle × both positions valid
-        triu = torch.triu(
-            torch.ones(K, K, dtype=torch.bool, device=device), diagonal=1
-        )
-        pair_valid = valid.unsqueeze(2) & valid.unsqueeze(1)  # (B, K, K)
-        mask = triu.unsqueeze(0) & pair_valid  # (B, K, K)
-
-        # Hinge: penalize similarities above threshold
-        violations = F.relu(sim - self.threshold) * mask
-
-        count = mask.sum()
-        if count == 0:
+        # Only compute for samples with >= 2 labels
+        multi_label = counts >= 2
+        if not multi_label.any():
             return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
 
-        return violations.sum() / count
+        dense = dense[multi_label]  # (B', K, D)
+        valid_m = valid[multi_label]  # (B', K)
+        counts_m = counts[multi_label]  # (B',)
+        B_eff = dense.shape[0]
+
+        # Float mask for arithmetic: (B', K, 1)
+        fmask = valid_m.unsqueeze(-1).float()
+
+        # Per-sample mean: (B', 1, D)
+        mean = (dense * fmask).sum(dim=1, keepdim=True) / counts_m.view(-1, 1, 1)
+
+        # Center (zeroing invalid positions)
+        centered = (dense - mean) * fmask  # (B', K, D)
+
+        # ── Variance term: per-sample, per-dimension std ──
+        # Var = sum((x - mu)^2) / (N - 1) for each sample & dim
+        var = (centered.pow(2)).sum(dim=1) / (counts_m.unsqueeze(1) - 1)  # (B', D)
+        std = torch.sqrt(var + self.eps)  # (B', D)
+        variance_loss = F.relu(self.variance_target - std).mean()
+
+        # ── Covariance term: per-sample off-diagonal covariance ──
+        # cov_b = centered_b^T @ centered_b / (N_b - 1)  →  (D, D) per sample
+        # Using bmm: (B', D, K) @ (B', K, D) → (B', D, D)
+        cov = torch.bmm(centered.transpose(1, 2), centered)  # (B', D, D)
+        cov = cov / (counts_m.view(-1, 1, 1) - 1)
+
+        # Zero diagonal (we only penalize off-diagonal correlations)
+        diag_mask = torch.eye(D, dtype=torch.bool, device=device).unsqueeze(0)
+        cov = cov.masked_fill(diag_mask, 0.0)
+
+        # Mean of squared off-diagonal entries, averaged over samples
+        covariance_loss = cov.pow(2).sum(dim=(1, 2)).mean() / D
+
+        return variance_loss + self.covariance_weight * covariance_loss
+
 
 
 class FocalLoss(nn.Module):
