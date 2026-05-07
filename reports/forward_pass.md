@@ -29,7 +29,7 @@ graph TD
         Q["Backbone<br/>DeBERTa/ModernBERT/etc"] --> E;
         R["Label Repr<br/>[LAB] token hidden state"] --> G;
         S["Cross-Attention<br/>label queries over text tokens"] --> G;
-        T["Loss Function<br/>One-vs-negatives softmax (primary)<br/>+ Auxiliary BCE<br/>+ Label Repulsion (optional)"] --> K;
+        T["Loss Function<br/>One-vs-negatives softmax (primary)<br/>+ Focal Loss<br/>+ Label Repulsion"] --> K;
     end
 
     style A fill:#ffecb3

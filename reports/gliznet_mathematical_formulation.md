@@ -2,7 +2,7 @@
 
 ## Abstract
 
-GliZNet (Generalized Label-Informed Zero-Shot Network) is a novel architecture for zero-shot text classification that leverages label semantics through a carefully designed sequence construction, a label aggregator with cross-attention, and a multi-objective loss function combining one-vs-negatives softmax ranking, optional label repulsion, and binary cross-entropy. This document provides a comprehensive mathematical formulation of the model, detailing how each component contributes to the overall effectiveness.
+GliZNet (Generalized Label-Informed Zero-Shot Network) is a novel architecture for zero-shot text classification that leverages label semantics through a carefully designed sequence construction, a label aggregator with cross-attention, and a multi-objective loss function combining one-vs-negatives softmax ranking, label repulsion, and focal loss. This document provides a comprehensive mathematical formulation of the model, detailing how each component contributes to the overall effectiveness.
 
 ---
 
@@ -80,9 +80,11 @@ where:
 
 ## 4. Representation Space
 
-GliZNet uses backbone hidden states directly without an additional projection layer. All downstream operations — label extraction, cross-attention, and bilinear scoring — operate in the backbone's native hidden space $\mathbb{R}^{d_h}$:
+GliZNet uses backbone hidden states with L2 normalisation but without a learned projection layer. All hidden states are unit-normalised before downstream operations:
 
-$$\mathbf{z}_i = \mathbf{h}_i \in \mathbb{R}^{d_h}$$
+$$\mathbf{z}_i = \frac{\mathbf{h}_i}{\|\mathbf{h}_i\|_2} \in \mathbb{R}^{d_h}$$
+
+This normalisation stabilises the cross-attention scores and bilinear scoring by ensuring embeddings lie on the unit hypersphere. All downstream operations — label extraction, cross-attention, and bilinear scoring — operate in this normalised space.
 
 A configurable dropout is applied within the `LabelAggregator` before extracting label token representations as a regulariser during training.
 
@@ -120,7 +122,7 @@ where $\mathcal{T}_j = \{i \mid m_i = j\}$ is the set of positions belonging to 
 
 ---
 
-## 6. Text Representation via Token-Level Attention
+## 6. Label-Conditioned Text Representation
 
 ### 6.1 Motivation
 
@@ -132,44 +134,74 @@ $$\mathbf{e}^{\text{text}} = \mathbf{z}_{\text{CLS}}^{\text{text}}$$
 - Label "sports" should focus on sport-related words in the text
 - Label "politics" should focus on political terms
 
-### 6.2 Label-Specific Text Aggregation
+GliZNet instead computes a **unique text representation for each label** via cross-attention, where the label embedding serves as the query and text tokens are keys/values.
 
-GliZNet computes a **unique text representation for each label** using learned attention:
+### 6.2 Cross-Attention Primitive: `TextPool(Q, H, mask)`
 
-$$\mathbf{e}_{b,j}^{\text{text}} = \sum_{i \in \mathcal{T}_{\text{text}}^{(b)}} \alpha_{b,j,i} \cdot \mathbf{z}_i^{\text{text}}$$
+All text pooling in GliZNet uses the same operation. Given a set of query vectors $\mathbf{Q} \in \mathbb{R}^{B \times K \times d_h}$ (one per label) and the text hidden states $\mathbf{H} \in \mathbb{R}^{B \times L \times d_h}$:
 
-where:
-- $b$ indexes the batch
-- $j$ indexes the label
-- $\mathcal{T}_{\text{text}}^{(b)}$ is the set of text token positions for sample $b$ (where $m_i = 0$ and attention mask is 1)
-- $\alpha_{b,j,i}$ is the attention weight
+**Step 1 — Scaled dot-product scores** with learnable temperature:
 
-### 6.3 Attention Weight Computation
+$$s_{b,j,i} = \tau_{\text{attn}} \cdot \langle \mathbf{q}_{b,j},\; \mathbf{z}_i \rangle$$
 
-The attention scores are computed via scaled dot-product similarity:
+where $\tau_{\text{attn}} = \exp(\log \sqrt{d_h})$ is a learnable scalar (initialised to $\sqrt{d_h}$). Since all vectors are L2-normalised (§4), the dot product equals cosine similarity.
 
-$$s_{b,j,i} = \frac{\langle \mathbf{e}_{b,j}^{\text{label}}, \mathbf{h}_i \rangle}{\sqrt{d_h}}$$
-
-**Masking** to exclude non-text positions:
+**Step 2 — Masking** to restrict attention to text positions only:
 
 $$\tilde{s}_{b,j,i} = \begin{cases}
 s_{b,j,i} & \text{if } i \in \mathcal{T}_{\text{text}}^{(b)} \\
 -\infty & \text{otherwise}
 \end{cases}$$
 
-**Softmax normalization**:
+where $\mathcal{T}_{\text{text}}^{(b)}$ is the set of text token positions for sample $b$ (positions where $m_i = 0$ and attention mask is 1).
+
+**Step 3 — Softmax normalisation**:
 
 $$\alpha_{b,j,i} = \frac{\exp(\tilde{s}_{b,j,i})}{\sum_{i' \in \mathcal{T}_{\text{text}}^{(b)}} \exp(\tilde{s}_{b,j,i'})}$$
 
-**Vectorized Implementation**: The code uses batched matrix multiplication for efficiency:
+**Step 4 — Weighted aggregation**:
 
-$$\mathbf{E}^{\text{text}} = \text{softmax}\left(\frac{\mathbf{E}^{\text{label}} (\mathbf{H}^{\text{text}})^T}{\sqrt{d_h}}\right) \mathbf{H}^{\text{text}}$$
+$$\text{TextPool}(\mathbf{Q}, \mathbf{H}, \text{mask})_{b,j} = \sum_{i \in \mathcal{T}_{\text{text}}^{(b)}} \alpha_{b,j,i} \cdot \mathbf{z}_i$$
 
-where:
-- $\mathbf{E}^{\text{label}} \in \mathbb{R}^{B \times K \times d_h}$ contains all label embeddings, dense across the batch
-- $\mathbf{H}^{\text{text}} \in \mathbb{R}^{B \times L \times d_h}$ contains text token hidden states
+**Vectorized form** (batched matrix multiplication):
 
-**Intuition**: Each label "queries" the text tokens and attends to the most relevant parts, creating a label-conditioned text representation.
+$$\text{TextPool}(\mathbf{Q}, \mathbf{H}, \text{mask}) = \text{softmax}\!\left(\tau_{\text{attn}} \cdot \mathbf{Q}\,\mathbf{H}^T \odot \text{mask}\right) \mathbf{H}$$
+
+This primitive is called once (without enrichment) or twice (with enrichment) — see below.
+
+### 6.3 Full Pipeline
+
+The pipeline depends on whether label enrichment is enabled (`enrich_labels=True`, current default):
+
+#### Without enrichment (single pass):
+
+$$\mathbf{e}_{b,j}^{\text{text}} = \text{TextPool}(\mathbf{E}^{\text{label}},\; \mathbf{H},\; \text{mask})_{b,j}$$
+
+Each raw label embedding directly queries the text. Done.
+
+#### With enrichment (two passes — current model):
+
+**Pass 1** — Each label independently pools text to get initial evidence:
+
+$$\mathbf{e}_{b,j}^{\text{text}(1)} = \text{TextPool}(\mathbf{E}^{\text{label}},\; \mathbf{H},\; \text{mask})_{b,j}$$
+
+**Fusion** — Concatenate each label with its text evidence and project to $d_h$:
+
+$$\mathbf{f}_{b,j} = \mathbf{W}_{\text{fuse}} [\mathbf{e}_{b,j}^{\text{label}} \| \mathbf{e}_{b,j}^{\text{text}(1)}] + \mathbf{b}_{\text{fuse}}, \quad \mathbf{W}_{\text{fuse}} \in \mathbb{R}^{d_h \times 2d_h}$$
+
+**Cooperative label attention** — Labels attend to each other's fused context (8-head MHA with residual + LayerNorm):
+
+$$\tilde{\mathbf{E}}^{\text{label}} = \text{LayerNorm}\!\left(\mathbf{E}^{\text{label}} + \text{MHA}(Q{=}\mathbf{E}^{\text{label}},\, K{=}\mathbf{F},\, V{=}\mathbf{F})\right)$$
+
+where $\mathbf{F} = [\mathbf{f}_{b,1}, \ldots, \mathbf{f}_{b,K}]$. A padding mask excludes invalid label positions.
+
+**Pass 2** — The enriched labels re-query text with updated semantics:
+
+$$\mathbf{e}_{b,j}^{\text{text}} = \text{TextPool}(\tilde{\mathbf{E}}^{\text{label}},\; \mathbf{H},\; \text{mask})_{b,j}$$
+
+Only Pass 2's output is used for scoring. The enriched embeddings $\tilde{\mathbf{e}}_{b,j}^{\text{label}}$ are also used as the label representation for the bilinear scorer.
+
+**Why two passes?** After Pass 1, label $i$ knows what text evidence label $j$ found (via the fused context in MHA). This lets labels cooperatively route their attention — e.g., if "sports" already claims athletic terms in Pass 1, "competition" can shift focus to other relevant tokens in Pass 2.
 
 ---
 
@@ -181,40 +213,30 @@ For each (text, label) pair $(b, j)$, compute a similarity score:
 
 $$\text{sim}_{b,j} = f_{\text{sim}}(\mathbf{e}_{b,j}^{\text{text}}, \mathbf{e}_{b,j}^{\text{label}})$$
 
-GliZNet supports three similarity functions:
+GliZNet supports two similarity functions:
 
-#### **7.1.1 Cosine Similarity (Recommended)**
-
-$$\text{sim}_{b,j} = \tau \cdot \frac{\langle \mathbf{e}_{b,j}^{\text{text}}, \mathbf{e}_{b,j}^{\text{label}} \rangle}{\|\mathbf{e}_{b,j}^{\text{text}}\|_2 \cdot \|\mathbf{e}_{b,j}^{\text{label}}\|_2}$$
-
-where:
-- $\tau = \exp(\log \tau_0)$ is a learnable temperature (initialized to $\tau_0 = e^{2.0} \approx 7.4$)
-- Normalization ensures scores are in $[-\tau, \tau]$, promoting stable gradients
-
-**Why learnable $\tau$?**
-- Cosine similarity is bounded in $[-1, 1]$, which may be too conservative
-- $\tau$ allows the model to adjust the dynamic range of logits
-- Higher $\tau$ → sharper probability distributions (higher confidence)
-- Lower $\tau$ → smoother distributions (less confident)
-
-#### **7.1.2 Dot Product**
-
-$$\text{sim}_{b,j} = \mathbf{W}_{\text{dot}} (\mathbf{e}_{b,j}^{\text{text}} \odot \mathbf{e}_{b,j}^{\text{label}}) + b_{\text{dot}}$$
-
-where $\odot$ is element-wise multiplication, and $\mathbf{W}_{\text{dot}} \in \mathbb{R}^{1 \times d_p}$ is a learned weight vector.
-
-#### **7.1.3 Bilinear**
+#### **7.1.1 Bilinear (Recommended — Current)**
 
 $$\text{sim}_{b,j} = (\mathbf{e}_{b,j}^{\text{text}})^T \mathbf{W}_{\text{bilinear}} \mathbf{e}_{b,j}^{\text{label}} + b_{\text{bilinear}}$$
 
-where $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_p \times d_p}$ is a learned interaction matrix.
+where $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_h \times d_h}$ is a learned interaction matrix and $b_{\text{bilinear}}$ is a scalar bias.
 
-**Current implementation**: GliZNet uses the **bilinear** scoring head (`nn.Bilinear(d_h, d_h, 1)`).
+Implemented as `nn.Bilinear(d_h, d_h, 1)`. Since inputs are already L2-normalised (§4), the bilinear form learns asymmetric directional interactions between text and label representations without additional normalisation.
+
+**Why bilinear?**
+- Most expressive: captures cross-space interactions that cosine or dot product cannot
+- Learns which dimensions of the text representation should interact with which dimensions of the label representation
+- Works well with L2-normalised inputs (bounded input magnitude prevents exploding logits)
+
+#### **7.1.2 Cosine Similarity (Alternative)**
+
+$$\text{sim}_{b,j} = \tau \cdot \frac{\langle \mathbf{e}_{b,j}^{\text{text}}, \mathbf{e}_{b,j}^{\text{label}} \rangle}{\|\mathbf{e}_{b,j}^{\text{text}}\|_2 \cdot \|\mathbf{e}_{b,j}^{\text{label}}\|_2}$$
+
+where $\tau = \exp(\log \tau_0)$ is a learnable temperature (initialized to $1/0.07 \approx 14.3$). Since inputs are already unit-normalised, the explicit normalisation here is redundant but kept for numerical safety.
 
 **Trade-offs**:
-- **Bilinear** *(current)*: Most expressive; learns a cross-space interaction matrix $\mathbf{W} \in \mathbb{R}^{d_h \times d_h}$; no normalisation required
-- **Cosine**: Robust, interpretable, fewer parameters; requires explicit $\ell_2$ normalisation
-- **Dot**: Fast, minimal parameters; sensitive to embedding magnitude
+- **Bilinear** *(current, recommended)*: Most expressive; learns a cross-space interaction matrix $\mathbf{W} \in \mathbb{R}^{d_h \times d_h}$; ~$d_h^2$ additional parameters
+- **Cosine**: Robust, interpretable, fewer parameters (only 1 learnable scalar); constrains scores to $[-\tau, \tau]$
 
 ---
 
@@ -222,9 +244,9 @@ where $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_p \times d_p}$ is a learne
 
 GliZNet's loss is a weighted combination of three complementary objectives:
 
-$$\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softmax}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{BCE}} \mathcal{L}_{\text{BCE}}$$
+$$\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softmax}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{focal}} \mathcal{L}_{\text{focal}}$$
 
-where $\lambda_{\text{softmax}}, \lambda_{\text{repulsion}}, \lambda_{\text{BCE}} \geq 0$ are hyperparameters.
+where $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{repulsion}} = 0.1$, $\lambda_{\text{focal}} = 0.4$ are hyperparameters.
 
 ### 8.1 One-vs-Negatives Softmax Loss (Primary Objective)
 
@@ -289,37 +311,38 @@ The label "competition" should have:
 
 Repulsion within sample preserves this contextual sensitivity.
 
-### 8.3 Binary Cross-Entropy Loss (Auxiliary)
+### 8.3 Focal Loss (Auxiliary)
 
 #### **8.3.1 Formulation**
 
-Standard per-label BCE applied directly to the bilinear logits:
+Focal loss applied per label, down-weighting easy examples with focusing parameter $\gamma = 1.85$:
 
-$$\mathcal{L}_{\text{BCE}} = -\frac{1}{N} \sum_{b,j} \left[ y_{b,j} \log \sigma(\text{sim}_{b,j}) + (1 - y_{b,j}) \log(1 - \sigma(\text{sim}_{b,j})) \right]$$
+$$\mathcal{L}_{\text{focal}} = -\frac{1}{N} \sum_{b,j} (1 - p_{b,j})^\gamma \left[ y_{b,j} \log p_{b,j} + (1 - y_{b,j}) \log(1 - p_{b,j}) \right]$$
 
 where:
+- $p_{b,j} = \sigma(\text{sim}_{b,j})$ is the predicted probability
 - $y_{b,j} \in \{0, 1\}$ is the ground truth label
-- $\sigma(x) = \frac{1}{1 + e^{-x}}$ is the sigmoid function
+- $\gamma = 1.85$ is the focusing parameter
 - Padding positions ($y_{b,j} = -100$) and non-finite logits are excluded before computing the loss
 
-#### **8.3.2 Why Add BCE?**
+#### **8.3.2 Why Focal Loss?**
 
-- **Complementary Signal**: BCE provides direct per-label supervision, while the softmax loss is comparative (relative ranking)
-- **Calibration**: BCE encourages well-calibrated per-label probabilities
-- **Stability**: Helps when softmax gradients are noisy (e.g., very few labels per sample)
+- **Hard Example Mining**: Down-weights easy negatives (which dominate in zero-shot settings) and focuses gradients on hard-to-classify labels
+- **Complementary Signal**: Provides direct per-label supervision while softmax loss is comparative (relative ranking)
+- **Class Imbalance**: Naturally handles the imbalance between positive and negative labels per sample
 
-#### **8.3.3 Interaction with Multi-Label Softmax**
+#### **8.3.3 Interaction with Softmax Loss**
 
 The two losses have complementary gradient flows:
 
 $$\frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_{b,j}} = p_{b,j}^{\text{softmax}} - \mathbb{1}[j \in \mathcal{P}_b]$$
 
-$$\frac{\partial \mathcal{L}_{\text{BCE}}}{\partial \text{sim}_{b,j}} = \sigma(\text{sim}_{b,j}) - y_{b,j}$$
+$$\frac{\partial \mathcal{L}_{\text{focal}}}{\partial \text{sim}_{b,j}} = (1 - p_{b,j})^{\gamma-1}[\gamma \log(p_{b,j}) \cdot p_{b,j} + (1-p_{b,j})] \cdot (p_{b,j} - y_{b,j})$$
 
 - Softmax loss: Relative gradient (depends on distribution over all labels in the sample)
-- BCE: Absolute gradient (independent per label)
+- Focal loss: Absolute gradient, amplified for hard examples
 
-Together, they provide both **ranking** and **thresholding** signals.
+Together, they provide both **ranking** and **hard-example-focused thresholding** signals.
 
 ---
 
@@ -329,12 +352,12 @@ Together, they provide both **ranking** and **thresholding** signals.
 
 The composite loss creates a rich gradient landscape. For label embedding $\mathbf{e}_j^{\text{label}}$:
 
-$$\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{softmax}} \frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{BCE}} \frac{\partial \mathcal{L}_{\text{BCE}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}}$$
+$$\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{softmax}} \frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{focal}} \frac{\partial \mathcal{L}_{\text{focal}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}}$$
 
 **Three forces**:
 1. **One-vs-negatives softmax**: For each positive, push its logit above all negative logits by at least margin $m$ (relative ranking)
 2. **Repulsion**: Push different labels apart within the same sample (geometric)
-3. **BCE**: Absolute per-label calibration signal independent of the ranking loss
+3. **Focal loss**: Hard-example-focused per-label calibration signal, amplified for misclassified labels
 
 ### 9.2 Learnable Parameters
 
@@ -350,9 +373,9 @@ The model learns:
 - Optimizer: AdamW with weight decay
 - Learning rate: 1e-5 to 5e-5 (lower for backbone, higher for new parameters)
 - Warmup: 10% of total steps
-- Loss weights: $\lambda_{\text{softmax}} = 0.5$, $\lambda_{\text{BCE}} = 0.5$, $\lambda_{\text{repulsion}} = 0.05$; margin $m = 0.5$
+- Loss weights: $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{focal}} = 0.4$ ($\gamma = 1.85$), $\lambda_{\text{repulsion}} = 0.1$; margin $m = 0.1$
 
-**Scheduler**: Linear decay after warmup to prevent overfitting
+**Scheduler**: Cosine decay after warmup to prevent overfitting
 
 ---
 
@@ -413,16 +436,16 @@ For batch size $B$, sequence length $L$, and $K$ labels:
 **Information Flow**:
 
 1. **Backbone encoding**: Self-attention allows each token to "see" all labels, creating rich contextual embeddings
-2. **Dual projection**: Separates text and label spaces, allowing specialized learned metrics
+2. **L2 normalisation**: Places all representations on the unit hypersphere, stabilising attention and scoring
 3. **Label-conditioned attention**: Each label focuses on relevant text parts, avoiding dilution from irrelevant content
-4. **Contrastive learning**: SupCon provides strong discriminative signal via relative comparisons
+4. **Label enrichment**: Labels cooperatively route by attending to each other's text evidence
 5. **Repulsion**: Prevents collapse while respecting contextual differences
-6. **BCE calibration**: Ensures well-calibrated per-label probabilities
+6. **Focal loss**: Focuses on hard examples, improving discrimination on difficult labels
 
 **Mathematical Guarantees**:
 
-- **Lipschitz continuity**: With bounded weights and cosine similarity, the model is Lipschitz-continuous in input space
-- **Universal approximation**: Bilinear similarity can approximate any scoring function (given sufficient $d_p$)
+- **Lipschitz continuity**: With L2-normalised inputs and bounded bilinear weights, the model is Lipschitz-continuous in input space
+- **Universal approximation**: Bilinear similarity can approximate any scoring function (given sufficient $d_h$)
 - **Optimization**: The loss is differentiable everywhere (except at repulsion threshold, but ReLU is subdifferentiable)
 
 ### 11.2 Comparison to Related Approaches
@@ -431,7 +454,7 @@ For batch size $B$, sequence length $L$, and $K$ labels:
 |--------|----------|--------|-------------------|------|
 | **Cross-Encoder** | [CLS] text [SEP] label | $K$ | None (independent) | BCE |
 | **Dual-Encoder** | [CLS] text; [CLS] label | 2 | None | Contrastive |
-| **GliZNet** | [CLS] text [SEP] labels [LAB] ... | 1 | Full (self-attention) | SupCon + Repulsion + BCE |
+| **GliZNet** | [CLS] text [SEP] labels [LAB] ... | 1 | Full (self-attention) | Softmax + Repulsion + Focal |
 
 **GliZNet advantages**:
 - Captures label dependencies (e.g., "sports" and "competition" co-occurrence)
@@ -444,34 +467,34 @@ For batch size $B$, sequence length $L$, and $K$ labels:
 
 ### 12.1 Loss Weights
 
-**$\lambda_{\text{SupCon}}$**: Primary signal
+**$\lambda_{\text{softmax}}$**: Primary signal
 - Higher → stronger ranking, better discrimination
 - Lower → risk of poor calibration
 
-**$\lambda_{\text{BCE}}$**: Calibration
-- Higher → better calibrated probabilities, may overfit
-- Lower → under-calibrated, but better representations
+**$\lambda_{\text{focal}}$**: Hard-example focus
+- Higher → stronger focus on hard examples, may overfit
+- Lower → less emphasis on hard examples, smoother training
 
 **$\lambda_{\text{repulsion}}$**: Diversity
 - Higher → more separated labels, risk of over-separation
 - Lower → risk of collapse
 
-**Recommended**: Start with $(1.0, 1.0, 0.1)$ and tune based on validation.
+**Recommended**: Start with $(1.0, 0.4, 0.1)$ for (softmax, focal, repulsion) and tune based on validation.
 
 ### 12.2 Temperature Parameters
 
-**$\tau$ (SupCon)**: Controls logit scale
+**$\tau$ (cosine scoring)**: Controls logit scale (only used if cosine scoring is selected)
 - Higher → sharper distributions (high confidence)
 - Lower → smoother distributions (low confidence)
-- Initialized to $e^{2.0} \approx 7.4$ (empirically effective)
+- Initialized to $1/0.07 \approx 14.3$
 
 **$\tau_{\text{attn}}$**: Controls attention sharpness
 - Higher → focus on few tokens
 - Lower → spread across many tokens
 - Initialized to $1.0$
 
-**$\tau_{\text{BCE}}$**: BCE-specific scale
-- Decoupled from SupCon to prevent gradient conflicts
+**$\tau_{\text{focal}}$**: Focal-specific scale
+- Decoupled from softmax to prevent gradient conflicts
 
 ### 12.3 Projection Dimension $d_p$
 
@@ -521,15 +544,17 @@ Replace backbone with multilingual model (e.g., mBERT, XLM-R) to enable:
 
 GliZNet represents a novel synthesis of:
 - **Unified encoding**: Efficient single-pass processing of text and all labels
-- **Dual projections**: Separate learned spaces for text and label semantics
+- **L2-normalised representation space**: Stable gradients without learned projections
 - **Label-conditioned attention**: Dynamic text aggregation per label
-- **Multi-objective learning**: Balancing discrimination (SupCon), diversity (repulsion), and calibration (BCE)
+- **Label enrichment**: Cooperative label context via multi-head self-attention
+- **Multi-objective learning**: Balancing discrimination (softmax), diversity (repulsion), and hard-example focus (focal loss)
 
 The mathematical formulation reveals how these components interact:
 - Contrastive learning provides strong discriminative gradients
 - Repulsion prevents collapse while respecting context
 - Attention enables fine-grained text-label matching
-- Temperature scaling controls confidence and calibration
+- Focal loss focuses training on hard examples
+- Label enrichment enables cooperative routing between labels
 
 Together, these design choices create a powerful, efficient, and interpretable zero-shot classification architecture.
 
@@ -554,9 +579,9 @@ Together, these design choices create a powerful, efficient, and interpretable z
 | $\mathbf{e}_j^{\text{text}}$ | Label-conditioned text embedding | $\mathbb{R}^{d_p}$ |
 | $\text{sim}_{b,j}$ | Similarity score for sample $b$, label $j$ | scalar |
 | $\tau$ | Temperature scale (learnable) | scalar |
-| $\mathcal{L}_{\text{SupCon}}$ | Supervised contrastive loss | scalar |
+| $\mathcal{L}_{\text{softmax}}$ | One-vs-negatives softmax loss | scalar |
 | $\mathcal{L}_{\text{repulsion}}$ | Label repulsion loss | scalar |
-| $\mathcal{L}_{\text{BCE}}$ | Binary cross-entropy loss | scalar |
+| $\mathcal{L}_{\text{focal}}$ | Focal loss | scalar |
 
 ---
 
@@ -616,6 +641,6 @@ def aggregate_labels(hidden_states, lmask):
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: December 26, 2025  
+**Document Version**: 2.0  
+**Last Updated**: May 7, 2026  
 **Author**: Generated from GliZNet codebase analysis
