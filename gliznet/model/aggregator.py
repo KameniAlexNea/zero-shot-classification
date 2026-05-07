@@ -43,14 +43,16 @@ class LabelContextAttention(nn.Module):
     def forward(
         self,
         dense_labels: torch.Tensor,  # (B, K, D) label embeddings
-        dense_text: torch.Tensor,    # (B, K, D) first-pass text pooling per label
-        label_mask: torch.Tensor,    # (B, K) bool, True = valid label
-    ) -> torch.Tensor:               # (B, K, D) enriched label embeddings
+        dense_text: torch.Tensor,  # (B, K, D) first-pass text pooling per label
+        label_mask: torch.Tensor,  # (B, K) bool, True = valid label
+    ) -> torch.Tensor:  # (B, K, D) enriched label embeddings
         # Fuse each label with its text evidence to create the context memory
         fused = self.fuse(torch.cat([dense_labels, dense_text], dim=-1))
         # Cross-attention: labels query the fused peer context
         pad_mask = ~label_mask  # True = ignore
-        out, _ = self.attn(query=dense_labels, key=fused, value=fused, key_padding_mask=pad_mask)
+        out, _ = self.attn(
+            query=dense_labels, key=fused, value=fused, key_padding_mask=pad_mask
+        )
         return self.norm(dense_labels + out)
 
 
@@ -67,7 +69,9 @@ class LabelAggregator(nn.Module):
         self.lab_token_id = config.lab_token_id
         self._inv_scale = hidden_size**-0.5
         # Learned temperature for attention over unit-norm vectors
-        self.attn_temperature = nn.Parameter(torch.tensor(math.log(math.sqrt(float(hidden_size)))))
+        self.attn_temperature = nn.Parameter(
+            torch.tensor(math.log(math.sqrt(float(hidden_size))))
+        )
 
         if config.scoring_method == "cosine":
             self.scoring = CosineScoring()
@@ -81,10 +85,10 @@ class LabelAggregator(nn.Module):
 
     def _text_repr_dense(
         self,
-        dense_labels: torch.Tensor,   # (B, K, D)
+        dense_labels: torch.Tensor,  # (B, K, D)
         hidden_states: torch.Tensor,  # (B, L, D)
-        text_mask: torch.Tensor,      # (B, L)
-    ) -> torch.Tensor:                # (B, K, D)
+        text_mask: torch.Tensor,  # (B, L)
+    ) -> torch.Tensor:  # (B, K, D)
         """First-pass text pooling returning the full dense (B, K, D) tensor."""
         scale = self.attn_temperature.exp()
         scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) * scale
@@ -202,7 +206,9 @@ class LabelAggregator(nn.Module):
 
         # Let all labels interact with each other and the global CLS token
         if self.label_context is not None:
-            label_mask = torch.zeros(B, max_label_id, dtype=torch.bool, device=hidden_states.device)
+            label_mask = torch.zeros(
+                B, max_label_id, dtype=torch.bool, device=hidden_states.device
+            )
             label_mask[all_batch_ids, all_label_ids - 1] = True
             # Round 1: independent text pooling to get initial text locations
             dense_text = self._text_repr_dense(dense_labels, hidden_states, text_mask)

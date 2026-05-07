@@ -149,8 +149,8 @@ class TestComputeMetrics:
         assert m["mrr"] == pytest.approx(1 / 3)  # positive at rank 3
 
     def test_hit_at_k_increases_with_k(self):
-        scores = [[3.0, 2.0, 1.0, 0.0]]
-        labels = [[0, 0, 0, 1]]  # positive at rank 4
+        scores = [[5.0, 4.0, 3.0, 2.0, 1.0, 0.0]]
+        labels = [[0, 0, 0, 0, 1, 0]]  # positive at rank 5
         m = compute_metrics(_make_eval_pred(scores, labels), ks=(1, 3, 5))
         assert m["hit@1"] == 0.0
         assert m["hit@3"] == 0.0

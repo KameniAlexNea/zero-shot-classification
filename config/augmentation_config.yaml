@@ -15,7 +15,8 @@
 #   WordSplit         - split a word into two (nlpaug SplitAug)
 #
 # Available label augmentations:
-#   NegativeRatioEnforcement - enforces realistic pos/neg ratio (1:3 to 1:10)
+#   RatioEnforcement         - enforce a target pos/neg ratio
+#   RatioEnforcementSelector  - randomly pick neg-heavy, pos-heavy, or pass-through
 #   LabelLimit               - limits total labels & shuffles
 
 augmentations:
@@ -61,12 +62,20 @@ augmentations:
 
 # Label augmentations are applied sequentially to (labels_text, labels_int)
 label_augmentations:
-  - name: NegativeRatioEnforcement
+  - name: RatioEnforcementSelector
     params:
-      min_positives: 1
-      max_positives: 3
-      neg_ratio_min: 3
-      neg_ratio_max: 10
+      neg_prob: 0.5
+      pos_prob: 0.2
+      neg_params:
+        min_positives: 1
+        max_positives: 3
+        min_negatives: 3
+        max_negatives: 10
+      pos_params:
+        min_positives: 2
+        max_positives: 6
+        min_negatives: 0
+        max_negatives: 2
 
   - name: LabelLimit
     params:

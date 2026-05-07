@@ -152,23 +152,48 @@ AUGMENTATION_REGISTRY: dict[str, callable] = {
     "RandomCaseChange": lambda **kw: RandomCaseChange(**kw),
     # nlpaug character-level
     "KeyboardTypo": lambda word_prob=0.08, **kw: _NlpAugWrapper(
-        nac.KeyboardAug(aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw),
+        nac.KeyboardAug(
+            aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw
+        ),
         "KeyboardTypo",
     ),
     "OcrTypo": lambda word_prob=0.08, **kw: _NlpAugWrapper(
-        nac.OcrAug(aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw),
+        nac.OcrAug(
+            aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw
+        ),
         "OcrTypo",
     ),
     "CharSwap": lambda word_prob=0.1, **kw: _NlpAugWrapper(
-        nac.RandomCharAug(action="swap", aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw),
+        nac.RandomCharAug(
+            action="swap",
+            aug_word_p=word_prob,
+            aug_char_min=1,
+            aug_char_max=1,
+            min_char=4,
+            **kw,
+        ),
         "CharSwap",
     ),
     "CharDrop": lambda word_prob=0.1, **kw: _NlpAugWrapper(
-        nac.RandomCharAug(action="delete", aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw),
+        nac.RandomCharAug(
+            action="delete",
+            aug_word_p=word_prob,
+            aug_char_min=1,
+            aug_char_max=1,
+            min_char=4,
+            **kw,
+        ),
         "CharDrop",
     ),
     "CharInsert": lambda word_prob=0.05, **kw: _NlpAugWrapper(
-        nac.RandomCharAug(action="insert", aug_word_p=word_prob, aug_char_min=1, aug_char_max=1, min_char=4, **kw),
+        nac.RandomCharAug(
+            action="insert",
+            aug_word_p=word_prob,
+            aug_char_min=1,
+            aug_char_max=1,
+            min_char=4,
+            **kw,
+        ),
         "CharInsert",
     ),
     # nlpaug word-level
@@ -189,9 +214,6 @@ AUGMENTATION_REGISTRY: dict[str, callable] = {
         "WordSplit",
     ),
 }
-
-# Backward-compat aliases
-AUGMENTATION_REGISTRY["CharDuplicate"] = AUGMENTATION_REGISTRY["CharInsert"]
 
 
 # ─── Label-level augmentations ────────────────────────────────────────────────
@@ -246,20 +268,24 @@ class LabelLimit(LabelAugmentation):
         return list(labels_text), list(labels_int)
 
 
-class NegativeRatioEnforcement(LabelAugmentation):
-    """Enforce a realistic positive-to-negative ratio (1:3 to 1:10)."""
+class RatioEnforcement(LabelAugmentation):
+    """Enforce a target positive/negative label ratio.
+
+    Configurable for both negative-heavy (few pos, many neg) and
+    positive-heavy (many pos, few neg) distributions.
+    """
 
     def __init__(
         self,
         min_positives: int = 1,
         max_positives: int = 3,
-        neg_ratio_min: int = 3,
-        neg_ratio_max: int = 10,
+        min_negatives: int = 3,
+        max_negatives: int = 10,
     ):
         self.min_positives = min_positives
         self.max_positives = max_positives
-        self.neg_ratio_min = neg_ratio_min
-        self.neg_ratio_max = neg_ratio_max
+        self.min_negatives = min_negatives
+        self.max_negatives = max_negatives
 
     def __call__(
         self, labels_text: list[str], labels_int: list[int]
@@ -276,21 +302,64 @@ class NegativeRatioEnforcement(LabelAugmentation):
         num_pos = random.randint(
             self.min_positives, min(self.max_positives, len(positives))
         )
+        num_neg = (
+            random.randint(self.min_negatives, min(self.max_negatives, len(negatives)))
+            if negatives
+            else 0
+        )
+
         random.shuffle(positives)
-        selected_positives = positives[:num_pos]
+        random.shuffle(negatives)
 
-        target_neg = num_pos * random.randint(self.neg_ratio_min, self.neg_ratio_max)
-        if negatives:
-            random.shuffle(negatives)
-            selected_negatives = negatives[: min(target_neg, len(negatives))]
-        else:
-            selected_negatives = []
-
-        combined = selected_positives + selected_negatives
+        combined = positives[:num_pos] + negatives[:num_neg]
         random.shuffle(combined)
 
         labels_text, labels_int = zip(*combined)
         return list(labels_text), list(labels_int)
+
+
+class RatioEnforcementSelector(LabelAugmentation):
+    """Randomly select between negative-heavy, positive-heavy, or pass-through.
+
+    Exposes the model to varied label distributions during training:
+      - negative-heavy: typical real-world (1 pos among many negs)
+      - positive-heavy: multi-label scenarios (many pos, few/no negs)
+      - pass-through: keep the original distribution as-is
+    """
+
+    def __init__(
+        self,
+        neg_prob: float = 0.5,
+        pos_prob: float = 0.2,
+        neg_params: Optional[dict] = None,
+        pos_params: Optional[dict] = None,
+    ):
+        self.neg_prob = neg_prob
+        self.pos_prob = pos_prob
+        neg_params = neg_params or {
+            "min_positives": 1,
+            "max_positives": 3,
+            "min_negatives": 3,
+            "max_negatives": 10,
+        }
+        pos_params = pos_params or {
+            "min_positives": 2,
+            "max_positives": 6,
+            "min_negatives": 0,
+            "max_negatives": 2,
+        }
+        self._neg_aug = RatioEnforcement(**neg_params)
+        self._pos_aug = RatioEnforcement(**pos_params)
+
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        r = random.random()
+        if r < self.neg_prob:
+            return self._neg_aug(labels_text, labels_int)
+        elif r < self.neg_prob + self.pos_prob:
+            return self._pos_aug(labels_text, labels_int)
+        return labels_text, labels_int
 
 
 class LabelAugmentationPipeline:
@@ -313,7 +382,8 @@ class LabelAugmentationPipeline:
 
 LABEL_AUGMENTATION_REGISTRY: dict[str, type[LabelAugmentation]] = {
     "LabelLimit": LabelLimit,
-    "NegativeRatioEnforcement": NegativeRatioEnforcement,
+    "RatioEnforcement": RatioEnforcement,
+    "RatioEnforcementSelector": RatioEnforcementSelector,
 }
 
 
@@ -379,12 +449,10 @@ def load_label_augmentation_pipeline(
     YAML format::
 
         label_augmentations:
-          - name: NegativeRatioEnforcement
+          - name: RatioEnforcementSelector
             params:
-              min_positives: 1
-              max_positives: 3
-              neg_ratio_min: 3
-              neg_ratio_max: 10
+              neg_prob: 0.5
+              pos_prob: 0.2
           - name: LabelLimit
             params:
               max_labels: 20
