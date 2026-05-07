@@ -60,56 +60,67 @@ class SoftmaxLoss(nn.Module):
 
 
 class RepulsionLoss(nn.Module):
-    """VICReg-style regularization to prevent label embedding collapse.
+    """Per-sample cosine repulsion to prevent label embedding collapse.
 
-    Combines two terms:
-    - Variance: ensures each embedding dimension maintains std >= 1 across
-      the batch, preventing collapse to a single point.
-    - Covariance: decorrelates embedding dimensions, preventing collapse to a
-      low-rank subspace.
+    Penalizes high cosine similarity between different label embeddings WITHIN
+    the same sample, preserving contextual sensitivity (the same label can have
+    different embeddings in different text contexts).
 
-    Reference: Bardes et al., "VICReg: Variance-Invariance-Covariance Regularization
-    for Self-Supervised Learning", ICLR 2022.
+    Only activates when cosine similarity exceeds a threshold, allowing related
+    labels (e.g., "cat" and "animal") to maintain some positive similarity.
+
+    Fully vectorized — no Python loops over batch elements.
     """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.variance_target = (
-            0.05  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
-        )
-        self.eps = 1e-4
-        self.covariance_weight = 0.04
+        self.threshold = 0.3
+        self.max_labels = config.max_labels
 
     def forward(
         self,
         label_embeddings: torch.Tensor,
+        batch_indices: torch.Tensor,
+        label_ids: torch.Tensor,
         **_,
     ) -> torch.Tensor:
         if label_embeddings.numel() == 0 or label_embeddings.shape[0] < 2:
             return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
 
-        N, D = label_embeddings.shape
+        D = label_embeddings.shape[1]
+        device = label_embeddings.device
+        B = batch_indices.max().item() + 1
+        K = self.max_labels
 
-        # Normalize to unit sphere (detached scale) so both variance and covariance
-        # operate in the same directional space. Detaching the norm prevents covariance
-        # gradients from acting on magnitude, keeping the two terms consistent.
-        per_sample_norm = (
-            label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
+        # L2-normalize for cosine similarity
+        embs_norm = F.normalize(label_embeddings, p=2, dim=-1)
+
+        # Build dense (B, K, D) tensor — zeros for empty slots
+        dense = embs_norm.new_zeros(B, K, D)
+        dense[batch_indices, label_ids - 1] = embs_norm
+
+        # Validity mask: which (batch, label) positions are occupied
+        valid = torch.zeros(B, K, dtype=torch.bool, device=device)
+        valid[batch_indices, label_ids - 1] = True
+
+        # Batched pairwise cosine similarity: (B, K, K)
+        sim = torch.bmm(dense, dense.transpose(1, 2))
+
+        # Mask: upper triangle × both positions valid
+        triu = torch.triu(
+            torch.ones(K, K, dtype=torch.bool, device=device), diagonal=1
         )
-        normalized = label_embeddings / per_sample_norm
+        pair_valid = valid.unsqueeze(2) & valid.unsqueeze(1)  # (B, K, K)
+        mask = triu.unsqueeze(0) & pair_valid  # (B, K, K)
 
-        # Variance term: penalize dimensions with std below target (VICReg eq. 2)
-        std_per_dim = torch.sqrt(normalized.var(dim=0) + self.eps)
-        variance_loss = F.relu(self.variance_target - std_per_dim).mean()
+        # Hinge: penalize similarities above threshold
+        violations = F.relu(sim - self.threshold) * mask
 
-        # Covariance term: exact VICReg (Bardes et al. eq. 3).
-        centered = normalized - normalized.mean(dim=0)
-        cov = (centered.T @ centered) / (N - 1)
-        # Avoid in-place op on autograd graph; subtract diagonal explicitly.
-        cov = cov - torch.diag(torch.diagonal(cov))
-        covariance_loss = cov.pow(2).sum() / D
+        count = mask.sum()
+        if count == 0:
+            return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
 
-        return variance_loss + self.covariance_weight * covariance_loss
+        return violations.sum() / count
 
 
 class FocalLoss(nn.Module):
