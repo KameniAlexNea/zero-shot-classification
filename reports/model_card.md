@@ -18,44 +18,43 @@ metrics:
 base_model: microsoft/deberta-v3-base
 pipeline_tag: zero-shot-classification
 ---
-
 # GliZNet — DeBERTa-v3-base
 
 **GliZNet** (Generalized Zero-Shot Network) is a zero-shot text classification model that processes the input text and **all candidate labels jointly in a single forward pass**, achieving O(1) inference complexity regardless of the number of labels.
 
-Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with optional additive margin), auxiliary BCE, and a partial VICReg regularizer (variance + covariance terms only — the invariance term is dropped, leaving a pure label-repulsion objective) sharpens discrimination between semantically similar labels.
+Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with additive margin), auxiliary focal loss, and a partial VICReg regularizer (variance + covariance terms only — the invariance term is dropped, leaving a pure label-repulsion objective) sharpens discrimination between semantically similar labels.
 
-> **Paper**: *GliZNet: A Novel Architecture for Zero-Shot Text Classification*  
+> **Paper**: *GliZNet: A Novel Architecture for Zero-Shot Text Classification*
 > Alex Kameni (Ivalua / Massy, France)
 >
-> **Code**: [github.com/KameniAlexNea/zero-shot-classification](https://github.com/KameniAlexNea/zero-shot-classification)  
+> **Code**: [github.com/KameniAlexNea/zero-shot-classification](https://github.com/KameniAlexNea/zero-shot-classification)
 > **Synthetic data generation**: [github.com/KameniAlexNea/generate-gliznet-data](https://github.com/KameniAlexNea/generate-gliznet-data)
 
 ---
 
 ## Model Details
 
-| Property | Value |
-|---|---|
-| Backbone | `microsoft/deberta-v3-base` (~184 M params) |
-| Scoring head | Bilinear (`nn.Bilinear(D, D, 1)`) |
-| Max sequence length | 512 tokens |
-| Label separator token | `[LAB]` |
-| Label representation | `[LAB]` token hidden state |
-| Training precision | `bfloat16` |
-| Model type ID | `gliznet` |
+| Property              | Value                                         |
+| --------------------- | --------------------------------------------- |
+| Backbone              | `microsoft/deberta-v3-base` (~184 M params) |
+| Scoring head          | Bilinear (`nn.Bilinear(D, D, 1)`)           |
+| Max sequence length   | 512 tokens                                    |
+| Label separator token | `[LAB]`                                     |
+| Label representation  | `[LAB]` token hidden state                  |
+| Training precision    | `bfloat16`                                  |
+| Model type ID         | `gliznet`                                   |
 
 ### Architecture Summary
 
 ```mermaid
 flowchart TD
-    A["Input sequence\n[CLS] &lt;text&gt; [SEP] &lt;label_1&gt; [LAB] &lt;label_2&gt; [LAB] … [PAD]"]
+    A["Input sequence\n[CLS] <text> [SEP] <label_1> [LAB] <label_2> [LAB] … [PAD]"]
     A --> B["DeBERTa-v3-base\nContextual hidden states"]
     B --> C["Label repr\n[LAB] token hidden state per label"]
     B --> D["Label-specific text repr\nCross-attention: label queries text tokens"]
     C --> E["Bilinear scoring head\nlogit = Bilinear(text_repr, label_repr)"]
     D --> E
-    E --> F["One-vs-negatives loss (+ optional margin)\n+ auxiliary BCE\n+ optional label repulsion\n(training only)"]
+    E --> F["One-vs-negatives loss (+ margin)\n+ focal loss\n+ label repulsion\n(training only)"]
 ```
 
 ---
@@ -102,49 +101,52 @@ model  = AutoModel.from_pretrained("alexneakameni/gliznet-deberta-v3-base")
 
 ## Performance
 
-Evaluated on the **GLiClass benchmark** — 10 standard text-classification datasets reported as **macro F1**.  
+Evaluated on the **GLiClass benchmark** — 10 standard text-classification datasets reported as **macro F1**.
 GLiClass variants are the closest published competitors; all encode text and labels jointly in a single forward pass.
 
-![GliZNet Performance](./gliznet_performance.png)
+![GliZNet Performance](https://raw.githubusercontent.com/KameniAlexNea/zero-shot-classification/refs/heads/main/reports/gliznet_performance.png)
 
 ### Macro F1 on GLiClass benchmark datasets
 
-| Dataset | GliZNet (ours) | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-large | GLiClass-modern-base | GLiClass-edge |
-|---|---|---|---|---|---|---|
-| CR | 0.8752 | 0.9398 | 0.9127 | 0.8952 | 0.8902 | 0.8215 |
-| SST-2 | 0.8839 | 0.9192 | 0.8959 | 0.9330 | 0.8959 | 0.8199 |
-| SST-5 | 0.3969 | 0.4606 | 0.3376 | 0.4619 | 0.2756 | 0.2823 |
-| IMDb | 0.8855 | 0.9366 | 0.9251 | 0.9402 | 0.9158 | 0.8485 |
-| 20-Newsgroups | 0.3877 | 0.5958 | 0.4759 | 0.3905 | 0.3433 | 0.2217 |
-| Enron Spam | 0.5164 | 0.7584 | 0.6760 | 0.5813 | 0.6398 | 0.5623 |
-| Financial PhraseBank | 0.5945 | 0.9000 | 0.8971 | 0.5929 | 0.4200 | 0.5004 |
-| AG News | 0.7332 | 0.7181 | 0.7279 | 0.7269 | 0.6663 | 0.6645 |
-| Emotion | 0.3991 | 0.4506 | 0.4447 | 0.4517 | 0.4254 | 0.3851 |
-| Rotten Tomatoes | 0.8009 | 0.8411 | 0.7943 | 0.7664 | 0.7070 | 0.7024 |
-| **AVERAGE** | **0.6473** | **0.7520** | **0.7087** | **0.6740** | **0.6179** | **0.5809** |
+| Dataset              | GliZNet (ours)   | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-base |
+| -------------------- | ---------------- | ----------------- | ---------------- | -------------------- |
+| CR                   | 0.8747           | 0.9281            | 0.9127           | 0.8936               |
+| SST-2                | 0.8921           | 0.9176            | 0.8959           | 0.8982               |
+| SST-5                | 0.4294           | 0.3798            | 0.3236           | 0.2885               |
+| IMDb                 | 0.8887           | 0.9366            | 0.9248           | 0.9154               |
+| 20-Newsgroups        | 0.4712           | 0.5806            | 0.5045           | 0.3342               |
+| Enron Spam           | 0.5296           | 0.7574            | 0.6252           | 0.5903               |
+| Financial PhraseBank | 0.7094           | 0.9023            | 0.9094           | 0.4121               |
+| AG News              | 0.7237           | 0.7229            | 0.7209           | 0.7069               |
+| Emotion              | 0.4262           | 0.4504            | 0.4450           | 0.4249               |
+| Rotten Tomatoes      | 0.6640           | 0.8411            | 0.7943           | 0.7060               |
+| **AVERAGE**    | **0.6609** | **0.7417**  | **0.7056** | **0.6170**     |
 
-**Δ GliZNet vs GLiClass-large**: −0.1047 · **Δ vs GLiClass-base**: −0.0614 · **Δ vs GLiClass-modern-large**: −0.0267 · **Δ vs GLiClass-modern-base**: +0.0294 · **Δ vs GLiClass-edge**: +0.0664
+**Δ GliZNet vs GLiClass-large**: −0.0808 · **Δ vs GLiClass-base**: −0.0447 · **Δ vs GLiClass-modern-base**: +0.0439
 
-*GliZNet is a DeBERTa-v3-**base** model trained on synthetic data only; GLiClass-large uses a significantly bigger backbone.*
+*GliZNet is a DeBERTa-v3-**base** model trained on synthetic data with augmentation; GLiClass-large uses a significantly bigger backbone.*
 
 ---
 
 ## Training Details
 
-| Setting | Value |
-|---|---|
-| Dataset | `alexneakameni/ZSHOT-HARDSET-v2` |
-| Train / Val / Test split | 54,289 / 1,188 / 1,322 |
-| Optimizer | AdamW |
-| Learning rate | 1e-4 (cosine schedule, 5% warmup) |
-| Weight decay | 1e-3 |
-| Batch size | 16 × 2 GPUs × 4 grad. accum. = **128 effective** |
-| Epochs | 10 (early stopping, patience=3) |
-| Precision | bf16 |
-| Distributed training | DeepSpeed ZeRO-2 via `accelerate launch` |
-| Hardware | 2 × NVIDIA GPU |
-| Loss | One-vs-negatives softmax (weight 0.5, margin 0.5) + auxiliary BCE (weight 0.5) + partial VICReg label repulsion — variance & covariance only, no invariance term (weight 0.05) |
-| Max labels per sample | 20 |
+| Setting               | Value                                                                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Dataset               | `alexneakameni/ZSHOT-HARDSET-v2` (~397k train samples)                                                                    |
+| Additional datasets   | 14 MCQ / NLI datasets (1k samples each)                                                                                     |
+| Optimizer             | AdamW                                                                                                                       |
+| Learning rate         | 4e-5 (cosine schedule, 5% warmup)                                                                                           |
+| Weight decay          | 1e-3                                                                                                                        |
+| Batch size            | 48 × 2 GPUs × 2 grad. accum. =**192 effective**                                                                     |
+| Epochs                | 10 (early stopping, patience=3) - trained for 3 epochs                                                                      |
+| Precision             | bf16                                                                                                                        |
+| Distributed training  | DDP via `accelerate launch`                                                                                               |
+| Hardware              | 2 × NVIDIA GPU                                                                                                             |
+| Loss                  | One-vs-negatives softmax (weight 1.0, margin 0.1) + focal loss (weight 0.4, γ=1.85) + label repulsion (weight 0.1)         |
+| Max labels per sample | 20                                                                                                                          |
+| Label enrichment      | Self-attention over [CLS + all labels] before cross-attention                                                               |
+| Text augmentation     | nlpaug pipeline (keyboard typos, OCR typos, char swap/delete, word delete, spelling errors, suffix truncation, case change) |
+| Label augmentation    | RatioEnforcementSelector (neg_prob=0.1, pos_prob=0.1) + LabelLimit (max=20, min=5, shuffle)                                 |
 
 ---
 
@@ -164,7 +166,7 @@ The `lmask` tensor (label mask) assigns 0 to text tokens and unique integers 1�
 
 - Trained on synthetic English data; performance on specialized domains (legal, medical) or non-English text may degrade.
 - Best results when all candidate labels fit within 1024 tokens. Very large label sets should be batched.
-- The model does not produce calibrated probabilities; scores are cosine similarities scaled by a learned temperature.
+- The model does not produce calibrated probabilities; scores are bilinear compatibility values passed through a sigmoid.
 
 ---
 
