@@ -7,7 +7,7 @@
 # Generate timestamp for unique output directory
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-MODEL_PATH="microsoft/deberta-v3-base"
+MODEL_PATH="alexneakameni/gliznet-deberta-v3-base"
 
 # Use accelerate launch for DistributedDataParallel (DDP) — HuggingFace-native,
 # auto-detects GPUs, and ensures torch.autocast propagates correctly per process.
@@ -50,10 +50,10 @@ nohup accelerate launch train_gliznet.py \
     --run_name "gliznet_training_${TIMESTAMP}" \
     --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
     --num_train_epochs 10 \
-    --per_device_train_batch_size 48 \
-    --per_device_eval_batch_size 48 \
-    --gradient_accumulation_steps 2 \
-    --learning_rate 4e-5 \
+    --per_device_train_batch_size 64 \
+    --per_device_eval_batch_size 64 \
+    --gradient_accumulation_steps 1 \
+    --learning_rate 2e-5 \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \

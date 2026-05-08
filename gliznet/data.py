@@ -201,10 +201,17 @@ def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
             ),
         }
 
-    # Stack regular tensors (already tensors from tokenizer)
-    input_ids = torch.stack([item["input_ids"] for item in batch])
-    attention_mask = torch.stack([item["attention_mask"] for item in batch])
-    lmask = torch.stack([item["lmask"] for item in batch])
+    # Dynamic padding: pad input_ids / attention_mask / lmask to the longest
+    # sequence in the batch. This avoids wasting compute on padding tokens.
+    input_ids = pad_sequence(
+        [item["input_ids"] for item in batch], batch_first=True, padding_value=0
+    )
+    attention_mask = pad_sequence(
+        [item["attention_mask"] for item in batch], batch_first=True, padding_value=0
+    )
+    lmask = pad_sequence(
+        [item["lmask"] for item in batch], batch_first=True, padding_value=0
+    )
 
     # Pad labels (variable length per sample) here at collation time
     labels = pad_sequence(

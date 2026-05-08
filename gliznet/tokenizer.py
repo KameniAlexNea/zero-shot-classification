@@ -189,13 +189,12 @@ class GliZNETTokenizer:
         ]
         sequences, lmasks = zip(*all_sequences)
 
-        # Pad to model_max_length when set, otherwise to the longest sequence in the batch
+        # Dynamic padding: pad to the longest sequence in the batch (capped by
+        # model_max_length). This avoids wasting compute on padding tokens in
+        # self-attention (O(L^2)).
+        longest = max(len(seq) for seq in sequences)
         model_max = self.tokenizer.model_max_length
-        max_len = (
-            model_max
-            if (model_max and model_max <= 1_000_000)
-            else max(len(seq) for seq in sequences)
-        )
+        max_len = min(longest, model_max) if (model_max and model_max <= 1_000_000) else longest
 
         # Pad all sequences
         input_ids = []
