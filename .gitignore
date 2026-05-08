@@ -172,3 +172,4 @@ synthetic_data/annotated_batches
 arxiv_synthetic_data
 synthetic_data/*/*json
 alexneakameni
+.gradio
