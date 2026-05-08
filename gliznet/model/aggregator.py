@@ -65,7 +65,6 @@ class LabelAggregator(nn.Module):
 
         hidden_size = config.backbone_config.hidden_size
         self.hidden_size = hidden_size
-        self.max_labels = config.max_labels
         self.lab_token_id = config.lab_token_id
         self._inv_scale = hidden_size**-0.5
         # Learned temperature for attention over unit-norm vectors
@@ -134,16 +133,17 @@ class LabelAggregator(nn.Module):
         label_hidden = self.dropout(hidden_states[lab_mask])
 
         lab_counts = lab_mask.sum(dim=1)
+        max_k = int(lab_counts.max().item())
 
         label_id_grid = (
-            torch.arange(1, self.max_labels + 1, device=device)
+            torch.arange(1, max_k + 1, device=device)
             .unsqueeze(0)
             .expand(batch_size, -1)
         )
         batch_label_grid = (
             torch.arange(batch_size, device=device)
             .unsqueeze(1)
-            .expand(batch_size, self.max_labels)
+            .expand(batch_size, max_k)
         )
 
         valid_mask = label_id_grid <= lab_counts.unsqueeze(1)
@@ -151,7 +151,7 @@ class LabelAggregator(nn.Module):
         all_batch_ids = batch_label_grid.reshape(-1)[flat_valid]
         all_label_ids = label_id_grid.reshape(-1)[flat_valid]
 
-        return label_hidden, all_batch_ids, all_label_ids
+        return label_hidden, all_batch_ids, all_label_ids, max_k
 
     def forward(
         self,
@@ -183,7 +183,7 @@ class LabelAggregator(nn.Module):
         lab_token_mask = input_ids == self.lab_token_id
         text_mask = (lmask == 0) & (attention_mask == 1) & (~lab_token_mask)
 
-        aggregated_labels, all_batch_ids, all_label_ids = self.aggregate_labels(
+        aggregated_labels, all_batch_ids, all_label_ids, max_k = self.aggregate_labels(
             input_ids, hidden_states
         )
 
@@ -199,7 +199,7 @@ class LabelAggregator(nn.Module):
             )
 
         # Token-level attention: attend over text tokens per label.
-        max_label_id = self.max_labels
+        max_label_id = max_k
 
         dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
         dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels
