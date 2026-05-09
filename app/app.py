@@ -96,6 +96,90 @@ def _load_eval_examples():
 EVAL_EXAMPLES = _load_eval_examples()
 
 
+EXAMPLES = [
+    # [text, labels, type, threshold, expected, why_not]
+
+    # ── Fine-grained sentiment (GliZNet's strength) ──────────────────────────
+    [
+        "The restaurant was okay — nothing special, but the pasta was edible and the waiter tried his best.",
+        "very positive, positive, neutral, negative, very negative",
+        "multi-class",
+        0.0,
+        "neutral",
+        "'positive' — the praise is faint and hedged ('okay', 'tried his best'), not genuine enthusiasm. "
+        "'negative' — no complaint is made; the tone is resigned acceptance, not dissatisfaction.",
+    ],
+    [
+        "I was hoping for more, honestly. The build quality is fine but the battery barely lasts half a day.",
+        "very positive, positive, neutral, negative, very negative",
+        "multi-class",
+        0.0,
+        "negative",
+        "'neutral' — 'hoping for more' and 'barely lasts' express clear disappointment, not indifference. "
+        "'very negative' — the reviewer concedes 'build quality is fine', softening the overall stance.",
+    ],
+
+    # ── Semantically close labels ────────────────────────────────────────────
+    [
+        "The CEO announced record quarterly profits while simultaneously laying off 2,000 employees to cut costs.",
+        "corporate restructuring, financial success, employee welfare, economic growth, labor dispute",
+        "multi-label",
+        0.3,
+        "corporate restructuring, financial success",
+        "'employee welfare' — layoffs are the opposite of welfare; the text describes harm, not care. "
+        "'economic growth' — profits are company-specific, not macroeconomic growth. "
+        "'labor dispute' — no conflict or negotiation is described; the layoffs are unilateral.",
+    ],
+    [
+        "New research shows that moderate coffee consumption may reduce the risk of Alzheimer's disease by up to 30%.",
+        "medical research, nutrition advice, drug development, disease prevention, public health policy",
+        "multi-label",
+        0.3,
+        "medical research, disease prevention",
+        "'nutrition advice' — the text reports a study finding, not a dietary recommendation. "
+        "'drug development' — coffee is not a drug being developed; this is observational research. "
+        "'public health policy' — no policy or regulation is discussed.",
+    ],
+
+    # ── Rhetorical stance / intent ───────────────────────────────────────────
+    [
+        "Sure, let's just keep dumping plastic into the ocean. That'll definitely fix everything.",
+        "environmental activism, sincere optimism, sarcasm, policy proposal, scientific analysis",
+        "multi-class",
+        0.0,
+        "sarcasm",
+        "'environmental activism' — while the topic is environmental, the stance is ironic commentary, not a call to action. "
+        "'sincere optimism' — 'That'll definitely fix everything' is clearly ironic. "
+        "'policy proposal' — no concrete policy is proposed.",
+    ],
+    [
+        "While the opposition raises valid concerns about cost, the long-term savings from renewable energy "
+        "infrastructure far outweigh the initial investment, as demonstrated by Denmark's 40-year track record.",
+        "political argument, scientific evidence, emotional appeal, balanced reporting, policy advocacy",
+        "multi-label",
+        0.3,
+        "political argument, policy advocacy",
+        "'balanced reporting' — the author takes a clear side ('far outweigh'), this is not neutral reporting. "
+        "'scientific evidence' — Denmark's track record is a policy outcome, not a scientific experiment. "
+        "'emotional appeal' — the argument relies on data and logic, not emotion.",
+    ],
+
+    # ── Many labels with hard negatives ──────────────────────────────────────
+    [
+        "After years of training and countless sacrifices, the athlete finally stood on the Olympic podium, "
+        "tears streaming down her face as the national anthem played.",
+        "athletic achievement, personal sacrifice, patriotism, emotional moment, celebrity gossip, "
+        "sports injury, political protest, entertainment review, historical analysis, travel experience",
+        "multi-label",
+        0.3,
+        "athletic achievement, personal sacrifice, patriotism, emotional moment",
+        "'celebrity gossip' — the text is a narrative of achievement, not tabloid speculation. "
+        "'sports injury' — sacrifice here is metaphorical (time, effort), not physical injury. "
+        "'political protest' — the anthem scene is patriotic pride, not a protest.",
+    ],
+]
+
+
 # ── Helpers for evaluation ───────────────────────────────────────────────────
 
 def _get_ranked_scores(text, labels):
@@ -325,6 +409,17 @@ with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
                 fn=_sample_random,
                 inputs=[],
                 outputs=[text_input, labels_input, cls_type, expected_box, why_not_box, gz_out, gc_out],
+            )
+
+            def _classify_example(text, labels_str, classification_type, threshold, _expected, _why_not):
+                return classify(text, labels_str, classification_type, threshold)
+
+            gr.Examples(
+                examples=EXAMPLES,
+                inputs=[text_input, labels_input, cls_type, threshold, expected_box, why_not_box],
+                outputs=[gz_out, gc_out],
+                fn=_classify_example,
+                cache_examples=True,
             )
 
         # ── Tab 2: Batch evaluation ──────────────────────────────────────
