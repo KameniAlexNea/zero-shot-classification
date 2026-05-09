@@ -1,4 +1,6 @@
 gradio>=5.0.0
+numpy
+pandas
 pydantic>=2.0.0
 gliclass>=0.1.17
 gliznet @ git+https://github.com/alexneakameni/zero-shot-classification.git

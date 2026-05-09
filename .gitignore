@@ -173,3 +173,4 @@ arxiv_synthetic_data
 synthetic_data/*/*json
 alexneakameni
 .gradio
+app/eval_examples.json
