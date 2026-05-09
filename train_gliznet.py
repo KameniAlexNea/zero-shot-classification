@@ -10,7 +10,6 @@ from loguru import logger
 from transformers import (
     EarlyStoppingCallback,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
 )
 
@@ -23,6 +22,7 @@ from gliznet.data import add_tokenized_function, collate_fn, load_dataset
 from gliznet.metrics import compute_metrics
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.tokenizer import GliZNETTokenizer
+from gliznet.trainer import GliZNetTrainer
 from gliznet.training_config import GliZNetDataConfig
 from gliznet.config.training_data import additional_datasets
 
@@ -260,7 +260,7 @@ def main():
             f"Early stopping enabled with patience={model_args.early_stopping_patience}"
         )
 
-    trainer = Trainer(
+    trainer = GliZNetTrainer(
         model=model,
         processing_class=tokenizer.tokenizer,
         args=training_args,

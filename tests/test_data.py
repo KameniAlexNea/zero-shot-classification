@@ -38,9 +38,10 @@ def test_getitem_shapes(dataset):
     item2 = dataset[1]
     assert "input_ids" in item
     assert len(item) == 4  # input_ids, attention_mask, lmask, labels
-    assert item["input_ids"].shape == (512,)
-    assert item["attention_mask"].shape == (512,)
-    assert item["lmask"].shape == (512,)
+    # Dynamic padding: shape depends on actual content, not model_max_length
+    L = item["input_ids"].shape[0]
+    assert item["attention_mask"].shape == (L,)
+    assert item["lmask"].shape == (L,)
     assert item["labels"].shape == (1,)
     assert item2["labels"].shape == (2,)
 
@@ -48,9 +49,11 @@ def test_getitem_shapes(dataset):
 def test_getitems_shapes(dataset):
     item = dataset[:2]
     assert "input_ids" in item
-    assert item["input_ids"].shape == (2, 512)
-    assert item["attention_mask"].shape == (2, 512)
-    assert item["lmask"].shape == (2, 512)
+    # Dynamic padding: batch padded to longest in the batch
+    L = item["input_ids"].shape[1]
+    assert item["input_ids"].shape == (2, L)
+    assert item["attention_mask"].shape == (2, L)
+    assert item["lmask"].shape == (2, L)
     assert isinstance(item["labels"], list)
     assert len(item["labels"]) == 2
     assert item["labels"][0].shape == (1,)
@@ -60,9 +63,11 @@ def test_getitems_shapes(dataset):
 def test_collate_fn(dataset):
     item = collate_fn([dataset[0], dataset[1]])
     assert "input_ids" in item
-    assert item["input_ids"].shape == (2, 512)
-    assert item["attention_mask"].shape == (2, 512)
-    assert item["lmask"].shape == (2, 512)
+    # Dynamic padding: padded to longest in the batch
+    L = item["input_ids"].shape[1]
+    assert item["input_ids"].shape == (2, L)
+    assert item["attention_mask"].shape == (2, L)
+    assert item["lmask"].shape == (2, L)
     assert isinstance(item["labels"], torch.Tensor)
     assert item["labels"].shape == (2, 2)
     # Sample 0: labels_int=[1] -> [1.0, -100]
@@ -77,8 +82,10 @@ def test_dataloader_with_collate(dataset):
     loader = DataLoader(dataset, batch_size=2, collate_fn=collate_fn)
     item = next(iter(loader))
     assert "input_ids" in item
-    assert item["input_ids"].shape == (2, 512)
-    assert item["attention_mask"].shape == (2, 512)
-    assert item["lmask"].shape == (2, 512)
+    # Dynamic padding: padded to longest in the batch
+    L = item["input_ids"].shape[1]
+    assert item["input_ids"].shape == (2, L)
+    assert item["attention_mask"].shape == (2, L)
+    assert item["lmask"].shape == (2, L)
     assert isinstance(item["labels"], torch.Tensor)
     assert item["labels"].shape == (2, 2)

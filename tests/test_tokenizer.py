@@ -51,29 +51,28 @@ def test_from_pretrained(hf_tokenizer):
 
 def test_padding_behavior(tokenizer, hf_tokenizer):
     result = tokenizer([("hi", ["a"])], return_tensors="pt")
-    assert result["input_ids"].shape == (1, 20)
-    assert result["attention_mask"].shape == (1, 20)
-    assert result["lmask"].shape == (1, 20)
+    # Dynamic padding: single sample → no padding, length == actual sequence
     seq_len = int(result["attention_mask"][0].sum().item())
-    assert seq_len < 20
-    assert result["input_ids"][0, seq_len:].tolist() == [hf_tokenizer.pad_token_id] * (
-        20 - seq_len
-    )
-    assert result["attention_mask"][0, seq_len:].tolist() == [0] * (20 - seq_len)
+    assert result["input_ids"].shape == (1, seq_len)
+    assert result["attention_mask"].shape == (1, seq_len)
+    assert result["lmask"].shape == (1, seq_len)
 
 
 def test_call_single_vs_batch(tokenizer):
     single = tokenizer.tokenize("A single call.", ["l1", "l2"])
-    assert single["input_ids"].shape == (20,)
-    assert single["attention_mask"].shape == (20,)
-    assert single["lmask"].shape == (20,)
+    # Dynamic padding: single sample, length matches actual tokens
+    L = single["input_ids"].shape[0]
+    assert single["attention_mask"].shape == (L,)
+    assert single["lmask"].shape == (L,)
 
     batch = tokenizer(
         [("First call.", ["lA"]), ("Second call.", ["lB"])], return_tensors="pt"
     )
-    assert batch["input_ids"].shape == (2, 20)
-    assert batch["attention_mask"].shape == (2, 20)
-    assert batch["lmask"].shape == (2, 20)
+    # Dynamic padding: batch padded to longest sequence in batch
+    L = batch["input_ids"].shape[1]
+    assert batch["input_ids"].shape == (2, L)
+    assert batch["attention_mask"].shape == (2, L)
+    assert batch["lmask"].shape == (2, L)
 
 
 def test_decode(tokenizer, hf_tokenizer):

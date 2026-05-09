@@ -60,56 +60,95 @@ class SoftmaxLoss(nn.Module):
 
 
 class RepulsionLoss(nn.Module):
-    """VICReg-style regularization to prevent label embedding collapse.
+    """Per-sample VICReg-style regularization to prevent label embedding collapse.
 
-    Combines two terms:
-    - Variance: ensures each embedding dimension maintains std >= 1 across
-      the batch, preventing collapse to a single point.
-    - Covariance: decorrelates embedding dimensions, preventing collapse to a
-      low-rank subspace.
+    Computes variance and covariance terms WITHIN each sample's labels
+    independently (not globally across the batch), preserving contextual
+    sensitivity — the same label can have different embeddings in different
+    text contexts.
 
-    Reference: Bardes et al., "VICReg: Variance-Invariance-Covariance Regularization
-    for Self-Supervised Learning", ICLR 2022.
+    Fully vectorized via dense (B, K, D) tensor and batched matmul.
+
+    Reference: Bardes et al., "VICReg: Variance-Invariance-Covariance
+    Regularization for Self-Supervised Learning", ICLR 2022.
     """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.variance_target = (
-            0.05  # unit-sphere baseline ~0.036; 0.2 actively pushes spread
-        )
+        self.variance_target = 0.05
         self.eps = 1e-4
         self.covariance_weight = 0.04
+        self.max_labels = config.max_labels
 
     def forward(
         self,
         label_embeddings: torch.Tensor,
+        batch_indices: torch.Tensor,
+        label_ids: torch.Tensor,
         **_,
     ) -> torch.Tensor:
         if label_embeddings.numel() == 0 or label_embeddings.shape[0] < 2:
             return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
 
-        N, D = label_embeddings.shape
+        D = label_embeddings.shape[1]
+        device = label_embeddings.device
+        B = batch_indices.max().item() + 1
+        K = self.max_labels
 
-        # Normalize to unit sphere (detached scale) so both variance and covariance
-        # operate in the same directional space. Detaching the norm prevents covariance
-        # gradients from acting on magnitude, keeping the two terms consistent.
-        per_sample_norm = (
-            label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
-        )
-        normalized = label_embeddings / per_sample_norm
+        # L2-normalize (detached magnitude) so variance/covariance operate in
+        # directional space only.
+        mag = label_embeddings.norm(dim=-1, keepdim=True).detach().clamp(min=1e-6)
+        normalized = label_embeddings / mag
 
-        # Variance term: penalize dimensions with std below target (VICReg eq. 2)
-        std_per_dim = torch.sqrt(normalized.var(dim=0) + self.eps)
-        variance_loss = F.relu(self.variance_target - std_per_dim).mean()
+        # Build dense (B, K, D) tensor — zeros for empty slots
+        dense = normalized.new_zeros(B, K, D)
+        dense[batch_indices, label_ids - 1] = normalized
 
-        # Covariance term: exact VICReg (Bardes et al. eq. 3).
-        centered = normalized - normalized.mean(dim=0)
-        cov = (centered.T @ centered) / (N - 1)
-        # Avoid in-place op on autograd graph; subtract diagonal explicitly.
-        cov = cov - torch.diag(torch.diagonal(cov))
-        covariance_loss = cov.pow(2).sum() / D
+        # Validity mask (B, K) and per-sample label counts
+        valid = torch.zeros(B, K, dtype=torch.bool, device=device)
+        valid[batch_indices, label_ids - 1] = True
+        counts = valid.sum(dim=1).float()  # (B,)
+
+        # Only compute for samples with >= 2 labels
+        multi_label = counts >= 2
+        if not multi_label.any():
+            return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
+
+        dense = dense[multi_label]  # (B', K, D)
+        valid_m = valid[multi_label]  # (B', K)
+        counts_m = counts[multi_label]  # (B',)
+        B_eff = dense.shape[0]
+
+        # Float mask for arithmetic: (B', K, 1)
+        fmask = valid_m.unsqueeze(-1).float()
+
+        # Per-sample mean: (B', 1, D)
+        mean = (dense * fmask).sum(dim=1, keepdim=True) / counts_m.view(-1, 1, 1)
+
+        # Center (zeroing invalid positions)
+        centered = (dense - mean) * fmask  # (B', K, D)
+
+        # ── Variance term: per-sample, per-dimension std ──
+        # Var = sum((x - mu)^2) / (N - 1) for each sample & dim
+        var = (centered.pow(2)).sum(dim=1) / (counts_m.unsqueeze(1) - 1)  # (B', D)
+        std = torch.sqrt(var + self.eps)  # (B', D)
+        variance_loss = F.relu(self.variance_target - std).mean()
+
+        # ── Covariance term: per-sample off-diagonal covariance ──
+        # cov_b = centered_b^T @ centered_b / (N_b - 1)  →  (D, D) per sample
+        # Using bmm: (B', D, K) @ (B', K, D) → (B', D, D)
+        cov = torch.bmm(centered.transpose(1, 2), centered)  # (B', D, D)
+        cov = cov / (counts_m.view(-1, 1, 1) - 1)
+
+        # Zero diagonal (we only penalize off-diagonal correlations)
+        diag_mask = torch.eye(D, dtype=torch.bool, device=device).unsqueeze(0)
+        cov = cov.masked_fill(diag_mask, 0.0)
+
+        # Mean of squared off-diagonal entries, averaged over samples
+        covariance_loss = cov.pow(2).sum(dim=(1, 2)).mean() / D
 
         return variance_loss + self.covariance_weight * covariance_loss
+
 
 
 class FocalLoss(nn.Module):
