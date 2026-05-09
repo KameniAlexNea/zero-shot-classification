@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from gliznet.metrics import (
-    _flatten,
     _ndcg_at_k,
     _sigmoid,
     compute_metrics,
@@ -33,26 +32,6 @@ def _make_eval_pred(scores_list, labels_list):
         scores_arr[i, : len(s)] = s
         labels_arr[i, : len(lab)] = lab
     return scores_arr, labels_arr
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# _flatten
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-class TestFlatten:
-    def test_single_level(self):
-        assert _flatten([[1, 2], [3, 4]]) == [1, 2, 3, 4]
-
-    def test_already_flat(self):
-        assert _flatten([1, 2, 3]) == [1, 2, 3]
-
-    def test_empty(self):
-        assert _flatten([]) == []
-
-    def test_double_level(self):
-        assert _flatten([[[1, 2]], [[3, 4]]]) == [1, 2, 3, 4]
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # _sigmoid

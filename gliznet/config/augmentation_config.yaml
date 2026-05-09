@@ -75,21 +75,42 @@ augmentations:
       word_prob: 0.05
 
 # Label augmentations are applied sequentially to (labels_text, labels_int)
+#
+# ScenarioAwareSampler targets real-world inference patterns:
+#   - needle (20%):   1 positive among many negatives (standard single-label ZSC)
+#   - few_pos (10%):  2-4 positives with negatives (multi-label with distractors)
+#   - all_neg (5%):   only negatives ("none of these labels apply")
+#   - all_pos (5%):   only positives ("all of these labels apply")
+#   - balanced (10%): ~50/50 positive/negative
+#   - passthrough (50%): keep the original distribution
+#
+# LabelLimit with preserve_ratio=true uses stratified sampling so the
+# upstream ratio isn't destroyed by random truncation.
 label_augmentations:
-  - name: RatioEnforcementSelector
+  - name: ScenarioAwareSampler
     params:
-      neg_prob: 0.1
-      pos_prob: 0.1
-      neg_params:
-        min_positives: 1
-        max_positives: 3
-        min_negatives: 3
-        max_negatives: 10
-      pos_params:
-        min_positives: 2
-        max_positives: 10
-        min_negatives: 0
-        max_negatives: 2
+      needle_prob: 0.20
+      few_pos_prob: 0.10
+      all_neg_prob: 0.05
+      all_pos_prob: 0.05
+      balanced_prob: 0.10
+      # needle: exactly 1 positive, 4-15 negatives
+      needle_min_neg: 4
+      needle_max_neg: 15
+      # few_pos: 2-4 positives, 3-10 negatives
+      few_pos_min_pos: 2
+      few_pos_max_pos: 4
+      few_pos_min_neg: 3
+      few_pos_max_neg: 10
+      # all_neg: 5-15 negatives, 0 positives
+      all_neg_min: 5
+      all_neg_max: 15
+      # all_pos: 2-10 positives, 0 negatives
+      all_pos_min: 2
+      all_pos_max: 10
+      # balanced: 2-8 of each class
+      balanced_min_per_class: 2
+      balanced_max_per_class: 8
 
   - name: LabelLimit
     params:
@@ -97,3 +118,4 @@ label_augmentations:
       min_labels: 5
       shuffle_labels: true
       remove_underscores: 0.9
+      preserve_ratio: true

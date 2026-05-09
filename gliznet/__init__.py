@@ -18,6 +18,7 @@ from .augmentation import (
     LabelLimit,
     RatioEnforcement,
     RatioEnforcementSelector,
+    ScenarioAwareSampler,
     load_augmentation_pipeline,
     load_label_augmentation_pipeline,
 )
