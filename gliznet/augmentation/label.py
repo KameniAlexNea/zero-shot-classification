@@ -289,20 +289,18 @@ class ScenarioAwareSampler(LabelAugmentation):
 
     def _needle(self, positives, negatives):
         """Exactly 1 positive among many negatives."""
-        if not positives or not negatives:
+        if not positives or len(negatives) < self.needle_min_neg:
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
         n_neg = random.randint(
             self.needle_min_neg, min(self.needle_max_neg, len(negatives))
         )
-        if n_neg < self.needle_min_neg:
-            return None
         return positives[:1] + negatives[:n_neg]
 
     def _few_pos(self, positives, negatives):
         """2-4 positives with negatives."""
-        if len(positives) < self.few_pos_min_pos or not negatives:
+        if len(positives) < self.few_pos_min_pos or len(negatives) < self.few_pos_min_neg:
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
@@ -312,8 +310,6 @@ class ScenarioAwareSampler(LabelAugmentation):
         n_neg = random.randint(
             self.few_pos_min_neg, min(self.few_pos_max_neg, len(negatives))
         )
-        if n_neg < self.few_pos_min_neg:
-            return None
         return positives[:n_pos] + negatives[:n_neg]
 
     def _all_neg(self, negatives):
