@@ -29,7 +29,12 @@ class GliZNetTrainer(Trainer):
         decay_head = []
         no_decay_head = []
 
-        no_decay_names = {"bias", "LayerNorm.weight", "layernorm.weight", "layer_norm.weight"}
+        no_decay_names = {
+            "bias",
+            "LayerNorm.weight",
+            "layernorm.weight",
+            "layer_norm.weight",
+        }
 
         for name, param in model.named_parameters():
             if not param.requires_grad:

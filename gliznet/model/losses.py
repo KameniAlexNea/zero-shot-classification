@@ -117,7 +117,6 @@ class RepulsionLoss(nn.Module):
         dense = dense[multi_label]  # (B', K, D)
         valid_m = valid[multi_label]  # (B', K)
         counts_m = counts[multi_label]  # (B',)
-        B_eff = dense.shape[0]
 
         # Float mask for arithmetic: (B', K, 1)
         fmask = valid_m.unsqueeze(-1).float()
@@ -148,7 +147,6 @@ class RepulsionLoss(nn.Module):
         covariance_loss = cov.pow(2).sum(dim=(1, 2)).mean() / D
 
         return variance_loss + self.covariance_weight * covariance_loss
-
 
 
 class FocalLoss(nn.Module):
@@ -206,8 +204,12 @@ class FocalLoss(nn.Module):
 
         # Class-balanced per-sample loss: mean(pos_loss) and mean(neg_loss) get
         # equal weight regardless of class imbalance within the sample.
-        pos_loss = (weighted_bce * pos_mask.float()).sum(dim=1) / n_pos.float().clamp(min=1)
-        neg_loss = (weighted_bce * neg_mask.float()).sum(dim=1) / n_neg.float().clamp(min=1)
+        pos_loss = (weighted_bce * pos_mask.float()).sum(dim=1) / n_pos.float().clamp(
+            min=1
+        )
+        neg_loss = (weighted_bce * neg_mask.float()).sum(dim=1) / n_neg.float().clamp(
+            min=1
+        )
 
         n_classes = (n_pos > 0).float() + (n_neg > 0).float()
         sample_loss = (pos_loss + neg_loss) / n_classes.clamp(min=1)

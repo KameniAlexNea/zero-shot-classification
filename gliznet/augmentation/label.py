@@ -113,6 +113,7 @@ class LabelLimit(LabelAugmentation):
         labels_text, labels_int = zip(*selected_pairs)
         return list(labels_text), list(labels_int)
 
+
 class ScenarioAwareSampler(LabelAugmentation):
     """Scenario-aware label sampling aligned with real-world inference patterns.
 
@@ -244,9 +245,7 @@ class ScenarioAwareSampler(LabelAugmentation):
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
-        max_per = min(
-            self.balanced_max_per_class, len(positives), len(negatives)
-        )
+        max_per = min(self.balanced_max_per_class, len(positives), len(negatives))
         if max_per < self.balanced_min_per_class:
             return None
         n = random.randint(self.balanced_min_per_class, max_per)
