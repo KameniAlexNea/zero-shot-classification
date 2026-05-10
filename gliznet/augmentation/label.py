@@ -96,7 +96,8 @@ class LabelLimit(LabelAugmentation):
         if self.shuffle_labels and combined:
             lo = min(self.min_labels, len(combined))
             hi = min(self.max_labels, len(combined))
-            num_labels = random.randint(lo, hi)
+            # Triangular distribution with mode=hi: biases toward more labels
+            num_labels = round(random.triangular(lo, hi, hi))
 
             if self.preserve_ratio:
                 selected_pairs = self._stratified_select(combined, num_labels)
@@ -111,87 +112,6 @@ class LabelLimit(LabelAugmentation):
 
         labels_text, labels_int = zip(*selected_pairs)
         return list(labels_text), list(labels_int)
-
-
-class RatioEnforcement(LabelAugmentation):
-    """Enforce a target positive/negative label ratio.
-
-    Configurable for both negative-heavy (few pos, many neg) and
-    positive-heavy (many pos, few neg) distributions.
-    """
-
-    def __init__(
-        self,
-        min_positives: int = 1,
-        max_positives: int = 3,
-        min_negatives: int = 3,
-        max_negatives: int = 10,
-    ):
-        self.min_positives = min_positives
-        self.max_positives = max_positives
-        self.min_negatives = min_negatives
-        self.max_negatives = max_negatives
-
-    def __call__(
-        self, labels_text: list[str], labels_int: list[int]
-    ) -> tuple[list[str], list[int]]:
-        if not labels_text:
-            return labels_text, labels_int
-
-        positives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 1]
-        negatives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 0]
-
-        if len(positives) < self.min_positives or len(negatives) < self.min_negatives:
-            return labels_text, labels_int
-
-        num_pos = random.randint(
-            self.min_positives, min(self.max_positives, len(positives))
-        )
-        num_neg = random.randint(
-            self.min_negatives, min(self.max_negatives, len(negatives))
-        )
-
-        random.shuffle(positives)
-        random.shuffle(negatives)
-
-        combined = positives[:num_pos] + negatives[:num_neg]
-        random.shuffle(combined)
-
-        labels_text, labels_int = zip(*combined)
-        return list(labels_text), list(labels_int)
-
-
-class RatioEnforcementSelector(LabelAugmentation):
-    """Randomly select between negative-heavy, positive-heavy, or pass-through.
-
-    Exposes the model to varied label distributions during training:
-      - negative-heavy: typical real-world (1 pos among many negs)
-      - positive-heavy: multi-label scenarios (many pos, few/no negs)
-      - pass-through: keep the original distribution as-is
-    """
-
-    def __init__(
-        self,
-        neg_prob: float = 0.5,
-        pos_prob: float = 0.2,
-        neg_params: dict | None = None,
-        pos_params: dict | None = None,
-    ):
-        self.neg_prob = neg_prob
-        self.pos_prob = pos_prob
-        self._neg_aug = RatioEnforcement(**(neg_params or {}))
-        self._pos_aug = RatioEnforcement(**(pos_params or {}))
-
-    def __call__(
-        self, labels_text: list[str], labels_int: list[int]
-    ) -> tuple[list[str], list[int]]:
-        r = random.random()
-        if r < self.neg_prob:
-            return self._neg_aug(labels_text, labels_int)
-        elif r < self.neg_prob + self.pos_prob:
-            return self._pos_aug(labels_text, labels_int)
-        return labels_text, labels_int
-
 
 class ScenarioAwareSampler(LabelAugmentation):
     """Scenario-aware label sampling aligned with real-world inference patterns.
@@ -384,6 +304,4 @@ class LabelAugmentationPipeline:
 LABEL_AUGMENTATION_REGISTRY: dict[str, type[LabelAugmentation]] = {
     "LabelLimit": LabelLimit,
     "ScenarioAwareSampler": ScenarioAwareSampler,
-    "RatioEnforcement": RatioEnforcement,
-    "RatioEnforcementSelector": RatioEnforcementSelector,
 }
