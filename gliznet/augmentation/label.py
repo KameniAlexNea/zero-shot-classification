@@ -204,8 +204,12 @@ class ScenarioAwareSampler(LabelAugmentation):
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
-        n_neg = random.randint(
-            self.needle_min_neg, min(self.needle_max_neg, len(negatives))
+        n_neg = round(
+            random.triangular(
+                self.needle_min_neg,
+                min(self.needle_max_neg, len(negatives)),
+                min(self.needle_max_neg, len(negatives)),
+            )
         )
         return positives[:1] + negatives[:n_neg]
 
@@ -218,10 +222,16 @@ class ScenarioAwareSampler(LabelAugmentation):
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
-        n_neg = random.randint(
-            self.few_pos_min_neg, min(self.few_pos_max_neg, len(negatives))
+        n_neg = round(
+            random.triangular(
+                self.few_pos_min_neg,
+                min(self.few_pos_max_neg, len(negatives)),
+                min(self.few_pos_max_neg, len(negatives)),
+            )
         )
-        n_pos = random.randint(0, min(n_neg, len(positives)))
+        n_pos = round(
+            random.triangular(0, min(n_neg, len(positives)), min(n_neg, len(positives)))
+        )
         return positives[:n_pos] + negatives[:n_neg]
 
     def _few_neg(self, positives, negatives):
@@ -233,10 +243,16 @@ class ScenarioAwareSampler(LabelAugmentation):
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
-        n_pos = random.randint(
-            self.few_neg_min_pos, min(self.few_neg_max_pos, len(positives))
+        n_pos = round(
+            random.triangular(
+                self.few_neg_min_pos,
+                min(self.few_neg_max_pos, len(positives)),
+                min(self.few_neg_max_pos, len(positives)),
+            )
         )
-        n_neg = random.randint(0, min(n_pos, len(negatives)))
+        n_neg = round(
+            random.triangular(0, min(n_pos, len(negatives)), min(n_pos, len(negatives)))
+        )
         return positives[:n_pos] + negatives[:n_neg]
 
     def _balanced(self, positives, negatives):
@@ -248,7 +264,7 @@ class ScenarioAwareSampler(LabelAugmentation):
         max_per = min(self.balanced_max_per_class, len(positives), len(negatives))
         if max_per < self.balanced_min_per_class:
             return None
-        n = random.randint(self.balanced_min_per_class, max_per)
+        n = round(random.triangular(self.balanced_min_per_class, max_per, max_per))
         return positives[:n] + negatives[:n]
 
     def __call__(

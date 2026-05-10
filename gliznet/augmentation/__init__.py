@@ -14,8 +14,6 @@ from .label import (
     LabelAugmentation,
     LabelAugmentationPipeline,
     LabelLimit,
-    RatioEnforcement,
-    RatioEnforcementSelector,
     ScenarioAwareSampler,
 )
 from .text import (
@@ -36,8 +34,6 @@ __all__ = [
     # label
     "LabelAugmentation",
     "LabelLimit",
-    "RatioEnforcement",
-    "RatioEnforcementSelector",
     "ScenarioAwareSampler",
     "LabelAugmentationPipeline",
     "LABEL_AUGMENTATION_REGISTRY",
