@@ -78,11 +78,12 @@ augmentations:
 #
 # ScenarioAwareSampler targets real-world inference patterns:
 #   - needle (20%):   1 positive among many negatives (standard single-label ZSC)
-#   - few_pos (10%):  2-4 positives with negatives (multi-label with distractors)
-#   - all_neg (5%):   only negatives ("none of these labels apply")
-#   - all_pos (5%):   only positives ("all of these labels apply")
+#   - few_pos (15%):  pick n_neg (min 4), then n_pos in [0, n_neg].
+#                     Negatives dominate. Includes all-neg (n_pos=0) naturally.
+#   - few_neg (10%):  pick n_pos (min 4), then n_neg in [0, n_pos].
+#                     Positives dominate. Includes all-pos (n_neg=0) naturally.
 #   - balanced (10%): ~50/50 positive/negative
-#   - passthrough (50%): keep the original distribution
+#   - passthrough (45%): keep the original distribution
 #
 # LabelLimit with preserve_ratio=true uses stratified sampling so the
 # upstream ratio isn't destroyed by random truncation.
@@ -90,24 +91,18 @@ label_augmentations:
   - name: ScenarioAwareSampler
     params:
       needle_prob: 0.20
-      few_pos_prob: 0.10
-      all_neg_prob: 0.05
-      all_pos_prob: 0.05
+      few_pos_prob: 0.15
+      few_neg_prob: 0.10
       balanced_prob: 0.10
       # needle: exactly 1 positive, 4-15 negatives
       needle_min_neg: 4
       needle_max_neg: 15
-      # few_pos: 2-4 positives, 3-10 negatives
-      few_pos_min_pos: 2
-      few_pos_max_pos: 4
-      few_pos_min_neg: 3
-      few_pos_max_neg: 10
-      # all_neg: 5-15 negatives, 0 positives
-      all_neg_min: 5
-      all_neg_max: 15
-      # all_pos: 2-10 positives, 0 negatives
-      all_pos_min: 2
-      all_pos_max: 10
+      # few_pos: pick n_neg first (4-15), then n_pos in [0, n_neg]
+      few_pos_min_neg: 4
+      few_pos_max_neg: 15
+      # few_neg: pick n_pos first (4-15), then n_neg in [0, n_pos]
+      few_neg_min_pos: 4
+      few_neg_max_pos: 15
       # balanced: 2-8 of each class
       balanced_min_per_class: 2
       balanced_max_per_class: 8

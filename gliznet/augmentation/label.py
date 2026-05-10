@@ -205,10 +205,12 @@ class ScenarioAwareSampler(LabelAugmentation):
         - **needle**: Exactly 1 positive among many negatives. Directly mimics
           single-label ZSC (the dominant inference pattern for benchmarks like
           20_newsgroups, ag_news, emotion, SST-5).
-        - **few_pos**: 2-4 positives with negatives. Multi-label with distractors.
-        - **all_neg**: Only negatives. Teaches calibration — "none of these apply."
-          Without this, the model is forced to always pick *something*.
-        - **all_pos**: Only positives. Teaches "all of these apply" for multi-label.
+        - **few_pos**: Pick n negatives (min 4), then pick n_pos from [0, n_neg].
+          Negatives dominate or equal positives. Naturally includes all-negative
+          (n_pos=0) and needle-like (n_pos=1) cases.
+        - **few_neg**: Pick n positives (min 4), then pick n_neg from [0, n_pos].
+          Positives dominate or equal negatives. Naturally includes all-positive
+          (n_neg=0) cases.
         - **balanced**: ~50/50 split. Tests fine-grained discrimination.
         - **passthrough**: Original distribution from the dataset.
 
@@ -225,46 +227,34 @@ class ScenarioAwareSampler(LabelAugmentation):
         self,
         needle_prob: float = 0.20,
         few_pos_prob: float = 0.10,
-        all_neg_prob: float = 0.05,
-        all_pos_prob: float = 0.05,
+        few_neg_prob: float = 0.10,
         balanced_prob: float = 0.10,
         # needle scenario
         needle_min_neg: int = 4,
         needle_max_neg: int = 15,
-        # few_pos scenario
-        few_pos_min_pos: int = 2,
-        few_pos_max_pos: int = 4,
-        few_pos_min_neg: int = 3,
-        few_pos_max_neg: int = 10,
-        # all_neg scenario
-        all_neg_min: int = 5,
-        all_neg_max: int = 15,
-        # all_pos scenario
-        all_pos_min: int = 2,
-        all_pos_max: int = 10,
+        # few_pos scenario: pick n_neg first, then n_pos in [0, n_neg]
+        few_pos_min_neg: int = 4,
+        few_pos_max_neg: int = 15,
+        # few_neg scenario: pick n_pos first, then n_neg in [0, n_pos]
+        few_neg_min_pos: int = 4,
+        few_neg_max_pos: int = 15,
         # balanced scenario
         balanced_min_per_class: int = 2,
         balanced_max_per_class: int = 8,
     ):
         self.needle_prob = needle_prob
         self.few_pos_prob = few_pos_prob
-        self.all_neg_prob = all_neg_prob
-        self.all_pos_prob = all_pos_prob
+        self.few_neg_prob = few_neg_prob
         self.balanced_prob = balanced_prob
 
         self.needle_min_neg = needle_min_neg
         self.needle_max_neg = needle_max_neg
 
-        self.few_pos_min_pos = few_pos_min_pos
-        self.few_pos_max_pos = few_pos_max_pos
         self.few_pos_min_neg = few_pos_min_neg
         self.few_pos_max_neg = few_pos_max_neg
 
-        self.all_neg_min = all_neg_min
-        self.all_neg_max = all_neg_max
-
-        self.all_pos_min = all_pos_min
-        self.all_pos_max = all_pos_max
+        self.few_neg_min_pos = few_neg_min_pos
+        self.few_neg_max_pos = few_neg_max_pos
 
         self.balanced_min_per_class = balanced_min_per_class
         self.balanced_max_per_class = balanced_max_per_class
@@ -299,34 +289,34 @@ class ScenarioAwareSampler(LabelAugmentation):
         return positives[:1] + negatives[:n_neg]
 
     def _few_pos(self, positives, negatives):
-        """2-4 positives with negatives."""
-        if len(positives) < self.few_pos_min_pos or len(negatives) < self.few_pos_min_neg:
+        """Negatives dominate: pick n_neg first, then n_pos in [0, n_neg].
+
+        Naturally includes all-negative (n_pos=0) and needle-like (n_pos=1).
+        """
+        if len(negatives) < self.few_pos_min_neg:
+            return None
+        random.shuffle(positives)
+        random.shuffle(negatives)
+        n_neg = random.randint(
+            self.few_pos_min_neg, min(self.few_pos_max_neg, len(negatives))
+        )
+        n_pos = random.randint(0, min(n_neg, len(positives)))
+        return positives[:n_pos] + negatives[:n_neg]
+
+    def _few_neg(self, positives, negatives):
+        """Positives dominate: pick n_pos first, then n_neg in [0, n_pos].
+
+        Naturally includes all-positive (n_neg=0).
+        """
+        if len(positives) < self.few_neg_min_pos:
             return None
         random.shuffle(positives)
         random.shuffle(negatives)
         n_pos = random.randint(
-            self.few_pos_min_pos, min(self.few_pos_max_pos, len(positives))
+            self.few_neg_min_pos, min(self.few_neg_max_pos, len(positives))
         )
-        n_neg = random.randint(
-            self.few_pos_min_neg, min(self.few_pos_max_neg, len(negatives))
-        )
+        n_neg = random.randint(0, min(n_pos, len(negatives)))
         return positives[:n_pos] + negatives[:n_neg]
-
-    def _all_neg(self, negatives):
-        """Only negatives — teaches 'none of these apply'."""
-        if len(negatives) < self.all_neg_min:
-            return None
-        random.shuffle(negatives)
-        n = random.randint(self.all_neg_min, min(self.all_neg_max, len(negatives)))
-        return negatives[:n]
-
-    def _all_pos(self, positives):
-        """Only positives — teaches 'all of these apply'."""
-        if len(positives) < self.all_pos_min:
-            return None
-        random.shuffle(positives)
-        n = random.randint(self.all_pos_min, min(self.all_pos_max, len(positives)))
-        return positives[:n]
 
     def _balanced(self, positives, negatives):
         """Roughly equal positives and negatives."""
@@ -356,8 +346,7 @@ class ScenarioAwareSampler(LabelAugmentation):
         scenarios = [
             (self.needle_prob, lambda: self._needle(positives, negatives)),
             (self.few_pos_prob, lambda: self._few_pos(positives, negatives)),
-            (self.all_neg_prob, lambda: self._all_neg(negatives)),
-            (self.all_pos_prob, lambda: self._all_pos(positives)),
+            (self.few_neg_prob, lambda: self._few_neg(positives, negatives)),
             (self.balanced_prob, lambda: self._balanced(positives, negatives)),
         ]
 
