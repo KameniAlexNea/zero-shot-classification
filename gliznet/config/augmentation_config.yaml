@@ -91,9 +91,9 @@ label_augmentations:
   - name: ScenarioAwareSampler
     params:
       needle_prob: 0.20
-      few_pos_prob: 0.15
+      few_pos_prob: 0.40
       few_neg_prob: 0.10
-      balanced_prob: 0.10
+      balanced_prob: 0.15
       # needle: exactly 1 positive, 4-15 negatives
       needle_min_neg: 4
       needle_max_neg: 15
@@ -103,9 +103,9 @@ label_augmentations:
       # few_neg: pick n_pos first (4-15), then n_neg in [0, n_pos]
       few_neg_min_pos: 4
       few_neg_max_pos: 15
-      # balanced: 2-8 of each class
-      balanced_min_per_class: 2
-      balanced_max_per_class: 8
+      # balanced: 3-10 of each class
+      balanced_min_per_class: 3
+      balanced_max_per_class: 10
 
   - name: LabelLimit
     params:
