@@ -21,10 +21,10 @@ nohup accelerate launch train_gliznet.py \
     --enrich_labels \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
-    --focal_loss_weight 0.8 \
-    --focal_gamma 1.85 \
+    --focal_loss_weight 0.5 \
+    --focal_gamma 1.8 \
     --supcon_loss_weight 1.0 \
-    --label_repulsion_weight 0.15 \
+    --label_repulsion_weight 0.1 \
     --supcon_margin 0.1 \
     --scoring_method bilinear \
     \
@@ -35,7 +35,7 @@ nohup accelerate launch train_gliznet.py \
     --min_label_length 3 \
     --data_seed 42 \
     --max_extended_ds_size 1000 \
-    --use_additional_datasets \
+    --use_additional_datasets false \
     --text_augmentation True \
     --augmentation_config gliznet/config/augmentation_config.yaml \
     `# Tokenizer Configuration` \
