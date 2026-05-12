@@ -165,29 +165,34 @@ def main():
 
     # Load datasets
     logger.info(f"Loading dataset from {model_args.dataset_path}...")
+    # Final benchmark evaluation set
     testing_data = load_dataset(
+        path="alexneakameni/eval-zero-shot-classification",
+        split="test",
+        min_label_length=data_config.min_label_length,
+    )
+
+    # Validation: ZSHOT-HARDSET-v2 test split
+    val_data = load_dataset(
         path="alexneakameni/ZSHOT-HARDSET-v2",
         name=model_args.dataset_name,
         split="test",
         min_label_length=data_config.min_label_length,
     )
 
-    dataset = load_dataset(
+    # Training: ZSHOT-HARDSET-v2 train split + optional additional datasets
+    train_data = load_dataset(
         path=model_args.dataset_path,
         name=model_args.dataset_name,
         split="train",
         min_label_length=data_config.min_label_length,
     )
-    size_before = len(dataset)
+    size_before = len(train_data)
     if model_args.use_additional_datasets and model_args.max_extended_ds_size > 0:
-        dataset = add_additional_ds(
-            dataset, model_args.max_extended_ds_size, training_args.data_seed
+        train_data = add_additional_ds(
+            train_data, model_args.max_extended_ds_size, training_args.data_seed
         )
-    added_size = len(dataset) - size_before
-    eval_size = min(model_args.eval_size * len(dataset), 2000)
-    splits = dataset.train_test_split(test_size=eval_size, seed=training_args.data_seed)
-    train_data = splits["train"]
-    val_data = splits["test"]
+    added_size = len(train_data) - size_before
 
     logger.info(
         f"Dataset loaded - Train: {len(train_data)} with {added_size} added, Val: {len(val_data)}, Test: {len(testing_data)}"

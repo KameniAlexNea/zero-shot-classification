@@ -19,9 +19,10 @@ nohup accelerate launch train_gliznet.py \
     --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     --enrich_labels \
+    --save_only_model \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
-    --focal_loss_weight 0.4 \
+    --focal_loss_weight 0.8 \
     --focal_gamma 1.85 \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
@@ -53,7 +54,7 @@ nohup accelerate launch train_gliznet.py \
     --per_device_train_batch_size 48 \
     --per_device_eval_batch_size 48 \
     --gradient_accumulation_steps 2 \
-    --learning_rate 4e-5 \
+    --learning_rate 1e-5 \
     --warmup_steps 0.05 \
     --weight_decay 1e-3 \
     --lr_scheduler_type cosine \
@@ -62,7 +63,7 @@ nohup accelerate launch train_gliznet.py \
     `# Evaluation & Checkpointing` \
     --eval_strategy epoch \
     --save_strategy epoch \
-    --save_total_limit 4 \
+    --save_total_limit 5 \
     --load_best_model_at_end \
     --metric_for_best_model loss \
     --early_stopping_patience 3 \

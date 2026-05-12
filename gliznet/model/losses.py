@@ -117,7 +117,6 @@ class RepulsionLoss(nn.Module):
         dense = dense[multi_label]  # (B', K, D)
         valid_m = valid[multi_label]  # (B', K)
         counts_m = counts[multi_label]  # (B',)
-        B_eff = dense.shape[0]
 
         # Float mask for arithmetic: (B', K, 1)
         fmask = valid_m.unsqueeze(-1).float()
@@ -150,9 +149,23 @@ class RepulsionLoss(nn.Module):
         return variance_loss + self.covariance_weight * covariance_loss
 
 
-
 class FocalLoss(nn.Module):
-    """Focal loss — down-weights easy examples to focus on hard ones."""
+    """Scenario-adaptive focal loss with class-balanced per-sample averaging.
+
+    Two improvements over standard focal loss for scenario-aware training:
+
+    1. **Class-balanced averaging**: Within each sample, positive and negative
+       losses are averaged separately, then combined with equal weight. This
+       prevents minority-class dilution — in a needle sample (1 pos, 10 neg),
+       the single positive gets 50% of the loss weight instead of 9%.
+
+    2. **Adaptive gamma**: For pure-class samples (all-positive or all-negative),
+       gamma is set to 0 (standard BCE). In these samples SoftmaxLoss returns 0
+       because it needs both classes for contrastive learning. FocalLoss becomes
+       the sole classification signal, so focal down-weighting is disabled to
+       ensure reliable gradients. Mixed-class samples keep full gamma for
+       hard-example mining.
+    """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
@@ -161,23 +174,52 @@ class FocalLoss(nn.Module):
     def forward(
         self, dense_logits: torch.Tensor, labels: torch.Tensor, **_
     ) -> torch.Tensor:
-        mask = labels != -100
+        mask = labels != -100  # (B, K)
         if not mask.any():
             return dense_logits.new_zeros(1, requires_grad=True).squeeze()
 
-        valid_logits = dense_logits[mask]
-        valid_targets = labels[mask]
+        targets = torch.where(mask, labels, torch.zeros_like(labels))
 
         # p_t via sigmoid is numerically stable; torch.exp(-bce) underflows when
         # BCE is large (confident wrong prediction), zeroing the focal weight.
-        probs = torch.sigmoid(valid_logits)
-        p_t = probs * valid_targets + (1 - probs) * (1 - valid_targets)
-        focal_weight = (1.0 - p_t) ** self.gamma
+        probs = torch.sigmoid(dense_logits)
+        p_t = probs * targets + (1 - probs) * (1 - targets)
 
         bce = F.binary_cross_entropy_with_logits(
-            valid_logits, valid_targets, reduction="none"
+            dense_logits, targets, reduction="none"
+        )  # (B, K)
+
+        # Per-sample class detection
+        pos_mask = (targets > 0.5) & mask  # (B, K)
+        neg_mask = (targets < 0.5) & mask  # (B, K)
+        n_pos = pos_mask.sum(dim=1)  # (B,)
+        n_neg = neg_mask.sum(dim=1)  # (B,)
+        has_both = (n_pos > 0) & (n_neg > 0)  # (B,)
+
+        # Adaptive gamma: full focal for mixed samples, γ=0 (standard BCE) for
+        # pure-class samples where SoftmaxLoss provides no signal.
+        gamma = torch.where(has_both, self.gamma, 0.0).unsqueeze(1)  # (B, 1)
+        focal_weight = (1.0 - p_t) ** gamma
+        weighted_bce = focal_weight * bce * mask.float()  # (B, K)
+
+        # Class-balanced per-sample loss: mean(pos_loss) and mean(neg_loss) get
+        # equal weight regardless of class imbalance within the sample.
+        pos_loss = (weighted_bce * pos_mask.float()).sum(dim=1) / n_pos.float().clamp(
+            min=1
         )
-        return (focal_weight * bce).mean()
+        neg_loss = (weighted_bce * neg_mask.float()).sum(dim=1) / n_neg.float().clamp(
+            min=1
+        )
+
+        n_classes = (n_pos > 0).float() + (n_neg > 0).float()
+        sample_loss = (pos_loss + neg_loss) / n_classes.clamp(min=1)
+
+        # Average over samples with at least one valid label
+        valid_samples = mask.any(dim=1)
+        if not valid_samples.any():
+            return dense_logits.new_zeros(1, requires_grad=True).squeeze()
+
+        return sample_loss[valid_samples].mean()
 
 
 LOSS_REGISTRY: Dict[str, type] = {

@@ -194,7 +194,11 @@ class GliZNETTokenizer:
         # self-attention (O(L^2)).
         longest = max(len(seq) for seq in sequences)
         model_max = self.tokenizer.model_max_length
-        max_len = min(longest, model_max) if (model_max and model_max <= 1_000_000) else longest
+        max_len = (
+            min(longest, model_max)
+            if (model_max and model_max <= 1_000_000)
+            else longest
+        )
 
         # Pad all sequences
         input_ids = []
