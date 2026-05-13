@@ -246,7 +246,7 @@ GliZNet's loss is a weighted combination of three complementary objectives:
 
 $$\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softmax}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{focal}} \mathcal{L}_{\text{focal}}$$
 
-where $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{repulsion}} = 0.1$, $\lambda_{\text{focal}} = 0.4$ are hyperparameters.
+where $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{repulsion}} = 0.1$, $\lambda_{\text{focal}} = 0.8$ are hyperparameters.
 
 ### 8.1 One-vs-Negatives Softmax Loss (Primary Objective)
 
@@ -315,34 +315,54 @@ Repulsion within sample preserves this contextual sensitivity.
 
 #### **8.3.1 Formulation**
 
-Focal loss applied per label, down-weighting easy examples with focusing parameter $\gamma = 1.85$:
+Let $p_{b,j} = \sigma(\text{sim}_{b,j})$ be the predicted probability for sample $b$, label $j$, and let:
 
-$$\mathcal{L}_{\text{focal}} = -\frac{1}{N} \sum_{b,j} (1 - p_{b,j})^\gamma \left[ y_{b,j} \log p_{b,j} + (1 - y_{b,j}) \log(1 - p_{b,j}) \right]$$
+$$p_{b,j}^{(t)} = p_{b,j} \cdot y_{b,j} + (1 - p_{b,j})(1 - y_{b,j})$$
 
-where:
-- $p_{b,j} = \sigma(\text{sim}_{b,j})$ is the predicted probability
-- $y_{b,j} \in \{0, 1\}$ is the ground truth label
-- $\gamma = 1.85$ is the focusing parameter
-- Padding positions ($y_{b,j} = -100$) and non-finite logits are excluded before computing the loss
+be the probability assigned to the ground-truth class. The per-element focal loss is:
 
-#### **8.3.2 Why Focal Loss?**
+$$\ell_{b,j} = (1 - p_{b,j}^{(t)})^{\gamma_b} \cdot \text{BCE}(p_{b,j},\, y_{b,j})$$
 
-- **Hard Example Mining**: Down-weights easy negatives (which dominate in zero-shot settings) and focuses gradients on hard-to-classify labels
-- **Complementary Signal**: Provides direct per-label supervision while softmax loss is comparative (relative ranking)
-- **Class Imbalance**: Naturally handles the imbalance between positive and negative labels per sample
+where $\text{BCE}(p, y) = -[y \log p + (1-y)\log(1-p)]$, and padding positions ($y_{b,j} = -100$) are excluded.
 
-#### **8.3.3 Interaction with Softmax Loss**
+#### **8.3.2 Adaptive Gamma**
+
+For *pure-class* samples — where $\mathcal{P}_b = \varnothing$ (all-negative) or $\mathcal{N}_b = \varnothing$ (all-positive) — $\mathcal{L}_{\text{softmax}} = 0$ by design, since it requires both classes for its one-vs-negatives formulation. FocalLoss then becomes the **only** source of gradient for those samples. Applying full focal down-weighting ($\gamma = 1.85$) would suppress exactly the signal the model needs. The adaptive gamma disables focusing for pure-class samples:
+
+$$\gamma_b = \begin{cases} \gamma & \text{if } |\mathcal{P}_b| > 0 \text{ and } |\mathcal{N}_b| > 0 \quad \text{(mixed-class)} \\ 0 & \text{otherwise} \quad \text{(standard BCE)} \end{cases}$$
+
+Mixed-class samples retain full $\gamma = 1.85$ for hard-example mining. Pure-class samples revert to standard BCE for reliable, unattenuated gradients.
+
+#### **8.3.3 Class-Balanced Per-Sample Aggregation**
+
+Standard focal loss averages over all valid label positions in a sample:
+
+$$\frac{1}{|\mathcal{P}_b| + |\mathcal{N}_b|} \sum_{j \in \mathcal{P}_b \cup \mathcal{N}_b} \ell_{b,j}$$
+
+In a *needle* scenario (1 positive, 10 negatives), this gives the single positive $\frac{1}{11} \approx 9\%$ of the gradient weight, even though learning what a positive looks like is conceptually as important as learning what a negative looks like.
+
+GliZNet instead computes the mean separately for each class, then combines them with equal weight:
+
+$$\bar{\ell}_b^{+} = \frac{1}{\max(|\mathcal{P}_b|, 1)} \sum_{j \in \mathcal{P}_b} \ell_{b,j}, \qquad \bar{\ell}_b^{-} = \frac{1}{\max(|\mathcal{N}_b|, 1)} \sum_{j \in \mathcal{N}_b} \ell_{b,j}$$
+
+$$c_b = \mathbb{1}[|\mathcal{P}_b| > 0] + \mathbb{1}[|\mathcal{N}_b| > 0], \qquad \mathcal{L}_b^{\text{focal}} = \frac{\bar{\ell}_b^{+} + \bar{\ell}_b^{-}}{c_b}$$
+
+Here $c_b \in \{1, 2\}$: pure-class samples contribute only their one present class; mixed-class samples average the two class means. The batch loss then averages over all samples with at least one valid label ($\mathcal{B}_{\text{valid}} = \{b \mid \exists j : y_{b,j} \neq -100\}$):
+
+$$\mathcal{L}_{\text{focal}} = \frac{1}{|\mathcal{B}_{\text{valid}}|} \sum_{b \in \mathcal{B}_{\text{valid}}} \mathcal{L}_b^{\text{focal}}$$
+
+#### **8.3.4 Interaction with Softmax Loss**
 
 The two losses have complementary gradient flows:
 
 $$\frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_{b,j}} = p_{b,j}^{\text{softmax}} - \mathbb{1}[j \in \mathcal{P}_b]$$
 
-$$\frac{\partial \mathcal{L}_{\text{focal}}}{\partial \text{sim}_{b,j}} = (1 - p_{b,j})^{\gamma-1}[\gamma \log(p_{b,j}) \cdot p_{b,j} + (1-p_{b,j})] \cdot (p_{b,j} - y_{b,j})$$
+$$\frac{\partial \mathcal{L}_{\text{focal}}}{\partial \text{sim}_{b,j}} = -(1 - p_{b,j}^{(t)})^{\gamma_b}\left[1 + \gamma_b \log p_{b,j}^{(t)}\right] \cdot p_{b,j}^{(t)}(1 - p_{b,j}^{(t)}) \cdot (y_{b,j} - p_{b,j}) \cdot \frac{1}{c_b}$$
 
-- Softmax loss: Relative gradient (depends on distribution over all labels in the sample)
-- Focal loss: Absolute gradient, amplified for hard examples
+- **Softmax loss**: Relative gradient — depends on the full distribution over labels in the sample (ranking signal)
+- **Focal loss**: Absolute gradient — amplified for hard examples ($p^{(t)}$ small), zeroed for pure-class samples ($\gamma_b = 0$), class-balanced so minority labels are not diluted
 
-Together, they provide both **ranking** and **hard-example-focused thresholding** signals.
+Together, they provide both **discriminative ranking** (which label is most compatible) and **calibrated thresholding** (is each label's probability above a meaningful decision boundary) signals.
 
 ---
 
@@ -357,7 +377,7 @@ $$\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}
 **Three forces**:
 1. **One-vs-negatives softmax**: For each positive, push its logit above all negative logits by at least margin $m$ (relative ranking)
 2. **Repulsion**: Push different labels apart within the same sample (geometric)
-3. **Focal loss**: Hard-example-focused per-label calibration signal, amplified for misclassified labels
+3. **Focal loss**: Class-balanced, scenario-adaptive calibration signal. Full focusing ($\gamma = 1.85$) for mixed-class samples; standard BCE ($\gamma = 0$) for pure-class samples where softmax loss provides no gradient. Positive and negative class losses are averaged separately with equal weight, preventing minority-class dilution.
 
 ### 9.2 Learnable Parameters
 
@@ -373,7 +393,7 @@ The model learns:
 - Optimizer: AdamW with weight decay
 - Learning rate: 1e-5 to 5e-5 (lower for backbone, higher for new parameters)
 - Warmup: 10% of total steps
-- Loss weights: $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{focal}} = 0.4$ ($\gamma = 1.85$), $\lambda_{\text{repulsion}} = 0.1$; margin $m = 0.1$
+- Loss weights: $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{focal}} = 0.8$ ($\gamma = 1.85$, adaptive), $\lambda_{\text{repulsion}} = 0.1$; margin $m = 0.1$
 
 **Scheduler**: Cosine decay after warmup to prevent overfitting
 
@@ -479,7 +499,7 @@ For batch size $B$, sequence length $L$, and $K$ labels:
 - Higher → more separated labels, risk of over-separation
 - Lower → risk of collapse
 
-**Recommended**: Start with $(1.0, 0.4, 0.1)$ for (softmax, focal, repulsion) and tune based on validation.
+**Recommended**: Start with $(1.0, 0.8, 0.1)$ for (softmax, focal, repulsion) and tune based on validation.
 
 ### 12.2 Temperature Parameters
 
@@ -585,62 +605,8 @@ Together, these design choices create a powerful, efficient, and interpretable z
 
 ---
 
-## Appendix B: Implementation Details
-
-### B.1 Efficient Batched Attention
-
-```python
-# Pseudocode for vectorized label-specific attention
-def compute_label_attention(text_embeddings, label_embeddings, text_mask):
-    """
-    text_embeddings: (B, L, D)
-    label_embeddings: (N, D) where N = total labels across batch
-    text_mask: (N, L) - text positions for each label's batch
-    """
-    # Scores: (N, 1, D) @ (N, D, L) -> (N, 1, L) -> (N, L)
-    scores = torch.bmm(
-        label_embeddings.unsqueeze(1),  # (N, 1, D)
-        text_embeddings.transpose(1, 2)  # (N, D, L)
-    ).squeeze(1) / temperature
-    
-    # Mask and softmax
-    scores = scores.masked_fill(~text_mask, float('-inf'))
-    attn_weights = F.softmax(scores, dim=1)  # (N, L)
-    
-    # Aggregate: (N, 1, L) @ (N, L, D) -> (N, 1, D) -> (N, D)
-    text_repr = torch.bmm(
-        attn_weights.unsqueeze(1),  # (N, 1, L)
-        text_embeddings  # (N, L, D)
-    ).squeeze(1)
-    
-    return text_repr
-```
-
-### B.2 Label Aggregation with Scatter
-
-```python
-def aggregate_labels(hidden_states, lmask):
-    """
-    hidden_states: (B, L, D)
-    lmask: (B, L) where lmask[i, j] = label_id (0 for non-label)
-    """
-    label_mask = lmask > 0
-    token_label_ids = lmask[label_mask]  # (N_tokens,)
-    label_hidden = hidden_states[label_mask]  # (N_tokens, D)
-    
-    # Aggregate by label_id using scatter
-    max_label_id = token_label_ids.max().item()
-    aggregated = torch.zeros(max_label_id, D, device=device)
-    counts = torch.zeros(max_label_id, device=device)
-    
-    aggregated.index_add_(0, token_label_ids - 1, label_hidden)
-    counts.index_add_(0, token_label_ids - 1, torch.ones(len(token_label_ids)))
-    
-    return aggregated / counts.unsqueeze(-1)
-```
-
 ---
 
-**Document Version**: 2.0  
-**Last Updated**: May 7, 2026  
-**Author**: Generated from GliZNet codebase analysis
+**Document Version**: 2.1  
+**Last Updated**: May 13, 2026  
+**Author**: Alex Kameni

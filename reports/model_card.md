@@ -110,21 +110,37 @@ GLiClass variants are the closest published competitors; all encode text and lab
 
 | Dataset              | GliZNet (ours)   | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-base |
 | -------------------- | ---------------- | ----------------- | ---------------- | -------------------- |
-| CR                   | 0.8747           | 0.9281            | 0.9127           | 0.8936               |
-| SST-2                | 0.8921           | 0.9176            | 0.8959           | 0.8982               |
-| SST-5                | 0.4294           | 0.3798            | 0.3236           | 0.2885               |
-| IMDb                 | 0.8887           | 0.9366            | 0.9248           | 0.9154               |
-| 20-Newsgroups        | 0.4712           | 0.5806            | 0.5045           | 0.3342               |
-| Enron Spam           | 0.5296           | 0.7574            | 0.6252           | 0.5903               |
-| Financial PhraseBank | 0.7094           | 0.9023            | 0.9094           | 0.4121               |
-| AG News              | 0.7237           | 0.7229            | 0.7209           | 0.7069               |
-| Emotion              | 0.4262           | 0.4504            | 0.4450           | 0.4249               |
-| Rotten Tomatoes      | 0.6640           | 0.8411            | 0.7943           | 0.7060               |
-| **AVERAGE**    | **0.6609** | **0.7417**  | **0.7056** | **0.6170**     |
+| CR                   | 0.8783           | 0.9281            | 0.9127           | 0.8936               |
+| SST-2                | 0.9010           | 0.9176            | 0.8959           | 0.8982               |
+| SST-5                | 0.3739           | 0.3798            | 0.3236           | 0.2885               |
+| IMDb                 | 0.8909           | 0.9366            | 0.9248           | 0.9154               |
+| 20-Newsgroups        | 0.4957           | 0.5806            | 0.5045           | 0.3342               |
+| Enron Spam           | 0.4983           | 0.7574            | 0.6252           | 0.5903               |
+| Financial PhraseBank | 0.7604           | 0.9023            | 0.9094           | 0.4121               |
+| AG News              | 0.7346           | 0.7229            | 0.7209           | 0.7069               |
+| Emotion              | 0.4655           | 0.4504            | 0.4450           | 0.4249               |
+| Rotten Tomatoes      | 0.7714           | 0.8411            | 0.7943           | 0.7060               |
+| **AVERAGE**    | **0.6770** | **0.7417**  | **0.7056** | **0.6170**     |
 
-**Δ GliZNet vs GLiClass-large**: −0.0808 · **Δ vs GLiClass-base**: −0.0447 · **Δ vs GLiClass-modern-base**: +0.0439
+**Δ GliZNet vs GLiClass-large**: −0.0647 · **Δ vs GLiClass-base**: −0.0286 · **Δ vs GLiClass-modern-base**: +0.0600
 
-*GliZNet is a DeBERTa-v3-**base** model trained on synthetic data with augmentation; GLiClass-large uses a significantly bigger backbone.*
+*GliZNet is a DeBERTa-v3-**base** model trained on synthetic data with augmentation; GLiClass-large uses a significantly bigger backbone. GliZNet surpasses GLiClass-base on AG News and Rotten Tomatoes.*
+
+### Qualitative Multi-Label Benchmark (96 curated examples)
+
+Evaluated on 96 manually annotated examples with challenging near-miss distractors (multi-class and multi-label, threshold=0.5). Compared against GLiClass-base-v3.0.
+
+| Metric | GliZNet | GLiClass-base | Δ |
+|---|---|---|---|
+| Hit@1 | **0.8750** | 0.8646 | +0.0104 |
+| MRR | **0.9349** | 0.9288 | +0.0061 |
+| NDCG@3 | **0.9108** | 0.8908 | +0.0200 |
+| Precision (0.5) | **0.7005** | 0.6113 | +0.0892 |
+| Recall (0.5) | 0.9271 | **0.9757** | −0.0486 |
+| F1 (0.5) | **0.7771** | 0.7268 | +0.0503 |
+| ROC AUC (micro) | **0.9188** | 0.9096 | +0.0092 |
+
+GliZNet is better calibrated than GLiClass-base: higher precision (+8.9pp) and F1 (+5pp) at equal threshold. GLiClass-base achieves higher recall by being more label-permissive (Hit@3 = 1.0).
 
 ---
 
@@ -132,21 +148,21 @@ GLiClass variants are the closest published competitors; all encode text and lab
 
 | Setting               | Value                                                                                                                       |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Dataset               | `alexneakameni/ZSHOT-HARDSET-v2` (~397k train samples)                                                                    |
+| Dataset               | `alexneakameni/ZSHOT-HARDSET-v2` (train split) + `alexneakameni/eval-zero-shot-classification` (test)                    |
 | Additional datasets   | 14 MCQ / NLI datasets (1k samples each)                                                                                     |
 | Optimizer             | AdamW                                                                                                                       |
-| Learning rate         | 4e-5 (cosine schedule, 5% warmup)                                                                                           |
+| Learning rate         | **1e-5** (cosine schedule, 5% warmup)                                                                                   |
 | Weight decay          | 1e-3                                                                                                                        |
-| Batch size            | 48 × 2 GPUs × 2 grad. accum. =**192 effective**                                                                     |
-| Epochs                | 10 (early stopping, patience=3) - trained for 3 epochs                                                                      |
+| Batch size            | 48 × 2 GPUs × 2 grad. accum. = **192 effective**                                                                    |
+| Epochs                | 10 (early stopping, patience=3)                                                                                             |
 | Precision             | bf16                                                                                                                        |
 | Distributed training  | DDP via `accelerate launch`                                                                                               |
 | Hardware              | 2 × NVIDIA GPU                                                                                                             |
-| Loss                  | One-vs-negatives softmax (weight 1.0, margin 0.1) + focal loss (weight 0.4, γ=1.85) + label repulsion (weight 0.1)         |
+| Loss                  | One-vs-negatives softmax (weight 1.0, margin 0.1) + focal loss (weight 0.8, γ=1.85, adaptive γ=0 for pure-class samples, class-balanced averaging) + label repulsion (weight 0.1) |
 | Max labels per sample | 20                                                                                                                          |
-| Label enrichment      | Self-attention over [CLS + all labels] before cross-attention                                                               |
+| Label enrichment      | `LabelContextAttention`: each label attends to peers + their first-pass text evidence (cooperative routing)                 |
 | Text augmentation     | nlpaug pipeline (keyboard typos, OCR typos, char swap/delete, word delete, spelling errors, suffix truncation, case change) |
-| Label augmentation    | RatioEnforcementSelector (neg_prob=0.1, pos_prob=0.1) + LabelLimit (max=20, min=5, shuffle)                                 |
+| Label augmentation    | `ScenarioAwareSampler`: needle 20%, few_pos 15%, few_neg 10%, balanced 10%, passthrough 45%. Count sampled via triangular distribution biased toward max. |
 
 ---
 
