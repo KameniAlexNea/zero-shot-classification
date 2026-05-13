@@ -89,7 +89,7 @@ Evaluated on the **GLiClass benchmark** — 10 standard text-classification data
 | **GliZNet-deberta-v3-base (ours, curr best)** | **0.6770** |
 | GLiClass-modern-base-v3.0 | 0.6170 |
 
-GliZNet-base outperforms GLiClass-modern-base (+0.0600) and is within **0.029 macro F1 of GLiClass-base** while using the same backbone size. On a qualitative multi-label benchmark (96 curated examples), GliZNet achieves **MRR 0.935, F1 0.777, ROC AUC 0.919** — beating GLiClass-base on all three. See [`reports/model_card.md`](reports/model_card.md) for the full per-dataset breakdown.
+GliZNet-base outperforms GLiClass-modern-base (+0.0600) and is within **0.029 macro F1 of GLiClass-base** — surpassing it on AG News, Emotion, SST-2, and SST-5 — while using a single-stage training pipeline. See [`reports/model_card.md`](reports/model_card.md) for the full per-dataset breakdown.
 
 ## 🎯 Use Cases
 

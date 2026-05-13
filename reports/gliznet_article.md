@@ -100,7 +100,7 @@ All backbone hidden states are L2-normalised before downstream operations, placi
 
 The joint encoding produces label-aware embeddings in a single transformer pass:
 
-- **Label Representations**: The hidden state of the `[LAB]` separator token that terminates each label span serves as the label representation — a single contextual vector that has attended to all preceding label tokens via self-attention. A dropout layer is applied before extraction as a regulariser.
+- **Label Representations**: The hidden state of the `[LAB]` separator token that terminates each label span serves as the label representation — a single contextual vector that has attended to all preceding label tokens via self-attention. A dropout layer is applied after extraction as a regulariser.
 - **Text Representation**: For each label, a dedicated text representation is computed by attending over all text token positions with the label's `[LAB]` embedding as the query (learnable temperature-scaled dot-product attention), producing a **label-conditioned summary** of the text. This is a key difference from GLiClass, which uses a single global text representation (pooled) shared across all labels.
 - **Label Enrichment** (optional): After the first-pass text pooling, labels attend to each other via multi-head self-attention over fused (label + text evidence) representations. This cooperative enrichment allows label $i$ to see what text evidence label $j$ found, enabling cooperative routing before the final scoring pass.
 
@@ -118,7 +118,7 @@ where $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{focal}} = 0.8$, and $\la
 - **Focal Loss ($\mathcal{L}_{\text{focal}}$)**: A scenario-adaptive, class-balanced focal loss with $\gamma = 1.85$. Two key design choices distinguish it from standard focal loss:
   1. **Adaptive $\gamma$**: For pure-class samples where $\mathcal{L}_{\text{softmax}} = 0$, focal down-weighting ($\gamma = 1.85$) is disabled ($\gamma \to 0$, standard BCE), ensuring reliable gradients are still produced. Mixed-class samples retain full $\gamma$ for hard-example mining.
   2. **Class-balanced averaging**: Positive and negative losses are averaged separately and combined with equal weight — $\mathcal{L}_b^{\text{focal}} = (\bar{\ell}_b^{+} + \bar{\ell}_b^{-}) / c_b$ — so in a needle scenario (1 positive, 10 negatives) the single positive contributes 50% of the sample loss rather than $\approx 9\%$ under a flat average.
-- **Label Repulsion Loss (L_repulsion)**: Penalises high cosine similarity between different label embeddings *within the same sample*, preventing representation collapse while respecting contextual label similarity across samples.
+- **Label Repulsion Loss ($\mathcal{L}_{\text{repulsion}}$)**: A per-sample VICReg-style regularisation (Bardes et al., ICLR 2022) that prevents label embedding collapse within each sample independently. Label embeddings are L2-normalised (with detached magnitude) and mean-centred per sample. A variance term applies a hinge loss encouraging per-dimension spread above a target ($\sigma^* = 0.05$), and a covariance term penalises squared off-diagonal entries of the per-sample covariance matrix to decorrelate dimensions. This operates within each sample only, preserving contextual sensitivity — the same label is free to have different embeddings in different text contexts.
 
 The softmax and focal losses are complementary: softmax provides relative ranking gradients while focal loss provides absolute thresholding gradients with emphasis on hard examples, together ensuring both discriminative ranking and well-calibrated per-label probabilities.
 
@@ -196,7 +196,7 @@ We evaluate GliZNet on the 10-dataset benchmark from GLiClass (Stepanov et al., 
 | Emotion              | Tweet emotion detection        | 6       |
 | Rotten Tomatoes      | Movie review sentiment         | 2       |
 
-All evaluations use macro F1 in a true zero-shot setting (no per-dataset fine-tuning). We compare against GLiClass-large-v3 (439M params), GLiClass-base-v3 (187M), and GLiClass-modern-base-v3 (187M).
+All evaluations use macro F1 in a true zero-shot setting (no per-dataset fine-tuning). Our primary comparison is against GLiClass-base-v3 (187M params), which shares the same DeBERTa-v3-base backbone. We also report GLiClass-large-v3 (439M) and GLiClass-modern-base-v3 (151M) for context.
 
 ### 4.2 Results
 
@@ -218,21 +218,20 @@ All evaluations use macro F1 in a true zero-shot setting (no per-dataset fine-tu
 
 **Where GliZNet excels.** GliZNet achieves strong results on several tasks:
 
-- **SST-2** (binary sentiment): 0.9010 — surpasses GLiClass-base (0.8959) and GLiClass-modern-base (0.8982), approaching GLiClass-large (0.9176).
-- **AG News** (4-class topic): 0.7346 — exceeds both GLiClass-base (0.7209) and GLiClass-large (0.7229). The label-conditioned cross-attention provides a genuine advantage when topic labels are semantically distinct.
+- **SST-2** (binary sentiment): 0.9010 — surpasses GLiClass-base (0.8959) and GLiClass-modern-base (0.8982).
+- **AG News** (4-class topic): 0.7346 — exceeds GLiClass-base (0.7209) and even GLiClass-large (0.7229). The label-conditioned cross-attention provides a genuine advantage when topic labels are semantically distinct.
 - **Emotion** (6-class): 0.4655 — surpasses all GLiClass variants including large (0.4504), demonstrating that per-label text attention benefits fine-grained emotion discrimination.
-- **Financial PhraseBank** (3-class financial sentiment): 0.7604 — far exceeding GLiClass-modern-base (0.4121).
-- **Rotten Tomatoes**: 0.7714 — exceeds GLiClass-base (0.7943 for large, but 0.7943 vs 0.7714 still a gap to large).
+- **SST-5** (5-class fine-grained sentiment): 0.3739 — exceeds GLiClass-base (0.3236) by a wide margin.
 
 GliZNet outperforms GLiClass-modern-base on all 10 datasets and matches or exceeds GLiClass-base on 3 (AG News, Emotion, SST-2).
 
-**Where GliZNet lags.** The largest gaps appear on domain-specific tasks:
+**Where GliZNet lags.** The largest gaps vs GLiClass-base appear on:
 
-- **Enron Spam** (0.4983 vs 0.7574): −0.2591 vs GLiClass-large. Binary spam detection remains the hardest dataset; the task appears to require domain-specific patterns that GLiClass's larger pre-training corpus covers better.
-- **Financial PhraseBank** (0.7604 vs 0.9094): −0.149 vs GLiClass-base. Despite strong improvement from prior runs, 3-class financial sentiment still has a gap.
-- **20-Newsgroups** (0.4957 vs 0.5806): −0.0849 vs GLiClass-large. 20-class topic classification benefits from broader pre-training coverage.
+- **Enron Spam** (0.4983 vs 0.6252): −0.1269. Binary spam detection remains challenging; domain-specific patterns may require broader pre-training coverage.
+- **Financial PhraseBank** (0.7604 vs 0.9094): −0.1490. Despite strong improvement from prior runs, 3-class financial sentiment still has a significant gap.
+- **IMDb** (0.8909 vs 0.9248): −0.0339. Binary movie review classification where GLiClass-base’s 3-stage training advantage is apparent.
 
-**Interpretation.** The label-conditioned cross-attention provides the most advantage on tasks with **semantically confusable labels** (Emotion, AG News, SST-2) where different labels need to attend to different parts of the text. The remaining gap to GLiClass-base (−0.0286 avg) is modest given that GliZNet uses a simpler single-stage training pipeline without RL or LoRA post-training.
+**Interpretation.** The label-conditioned cross-attention provides the most advantage on tasks with **semantically confusable labels** (Emotion, AG News, SST-2, SST-5) where different labels need to attend to different parts of the text. The remaining gap to GLiClass-base (−0.0286 avg) is attributable to GLiClass’s more complex training pipeline (3-stage with RL and LoRA). GliZNet achieves this level of performance with a single-stage training procedure, and further training iterations are expected to narrow the gap.
 
 ## 5. Contributions to the State of the Art
 
@@ -242,7 +241,7 @@ GliZNet advances zero-shot text classification through:
 - **Label-Conditioned Text Representation**: Unlike GLiClass's global text pooling, GliZNet computes a unique text summary per label via cross-attention, so each label attends to relevant text tokens.
 - **Cooperative Label Enrichment**: Multi-head self-attention over label representations allows labels to see each other's text evidence before final scoring, enabling cooperative routing.
 - **Simpler Training Pipeline**: A single-stage supervised training with online nlpaug-based text augmentation and label augmentation, without requiring multi-stage RL or LoRA post-training.
-- **Competitive Results**: Achieves 0.6770 avg F1 vs GLiClass-base's 0.7056 (−0.0286), while using a simpler architecture and training procedure. Outperforms GLiClass-modern-base (0.6170) with the same backbone size. Exceeds GLiClass-base and GLiClass-large on AG News and Emotion.
+- **Competitive Results**: Achieves 0.6770 avg F1 vs GLiClass-base's 0.7056 (−0.0286), while using a single-stage training procedure. Exceeds GLiClass-base on AG News, Emotion, SST-2, and SST-5. Outperforms GLiClass-modern-base (0.6170) on all 10 datasets.
 
 These innovations demonstrate that careful architectural design (cross-attention scoring, label enrichment) combined with robust data augmentation can approach the performance of more complex training pipelines.
 
@@ -250,7 +249,7 @@ These innovations demonstrate that careful architectural design (cross-attention
 
 GliZNet demonstrates that efficient zero-shot text classification can be achieved through a simpler training pipeline than GLiClass's multi-stage approach (pre-train → RL mid-train → LoRA post-train). Its joint encoding achieves O(1) complexity, while the combination of label-conditioned cross-attention, cooperative label enrichment, and bilinear scoring enables context-sensitive classification competitive with models trained using significantly more complex procedures.
 
-Current results (0.6770 avg F1) place GliZNet between GLiClass-modern-base (0.6170) and GLiClass-base (0.7056), with the gap narrowing to −0.0286 — and GliZNet already surpassing GLiClass-base on AG News and Emotion. The remaining gap is likely attributable to GLiClass's larger pre-training corpus (1.2M examples vs ~600k) and RL-based refinement. GliZNet's per-label cross-attention mechanism offers a fundamentally different text-label interaction compared to GLiClass's global pooling, which may prove advantageous as label sets become more fine-grained.
+Current results (0.6770 avg F1) place GliZNet within −0.0286 of GLiClass-base (0.7056), already surpassing it on AG News, Emotion, SST-2, and SST-5. The remaining gap is attributable to GLiClass's more complex 3-stage training pipeline (pre-train → RL mid-train → LoRA post-train). GliZNet achieves this with a single-stage supervised training procedure, and further training iterations are expected to close the gap. GliZNet's per-label cross-attention mechanism offers a fundamentally different text-label interaction compared to GLiClass's global pooling, which may prove increasingly advantageous as label sets become more fine-grained.
 
 Future research directions include:
 

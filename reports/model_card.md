@@ -126,22 +126,6 @@ GLiClass variants are the closest published competitors; all encode text and lab
 
 *GliZNet is a DeBERTa-v3-**base** model trained on synthetic data with augmentation; GLiClass-large uses a significantly bigger backbone. GliZNet surpasses GLiClass-base on AG News and Rotten Tomatoes.*
 
-### Qualitative Multi-Label Benchmark (96 curated examples)
-
-Evaluated on 96 manually annotated examples with challenging near-miss distractors (multi-class and multi-label, threshold=0.5). Compared against GLiClass-base-v3.0.
-
-| Metric | GliZNet | GLiClass-base | Δ |
-|---|---|---|---|
-| Hit@1 | **0.8750** | 0.8646 | +0.0104 |
-| MRR | **0.9349** | 0.9288 | +0.0061 |
-| NDCG@3 | **0.9108** | 0.8908 | +0.0200 |
-| Precision (0.5) | **0.7005** | 0.6113 | +0.0892 |
-| Recall (0.5) | 0.9271 | **0.9757** | −0.0486 |
-| F1 (0.5) | **0.7771** | 0.7268 | +0.0503 |
-| ROC AUC (micro) | **0.9188** | 0.9096 | +0.0092 |
-
-GliZNet is better calibrated than GLiClass-base: higher precision (+8.9pp) and F1 (+5pp) at equal threshold. GLiClass-base achieves higher recall by being more label-permissive (Hit@3 = 1.0).
-
 ---
 
 ## Training Details
