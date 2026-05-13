@@ -84,7 +84,7 @@ GliZNet uses backbone hidden states with L2 normalisation but without a learned 
 
 $$\mathbf{z}_i = \frac{\mathbf{h}_i}{\|\mathbf{h}_i\|_2} \in \mathbb{R}^{d_h}$$
 
-This normalisation stabilises the cross-attention scores and bilinear scoring by ensuring embeddings lie on the unit hypersphere. All downstream operations — label extraction, cross-attention, and bilinear scoring — operate in this normalised space.
+This normalisation stabilises the cross-attention scores and constrains the input magnitude to the bilinear scorer. Note that subsequent operations (dropout during training, fused projections in `LabelContextAttention`, LayerNorm) alter the exact norm of label representations, so downstream vectors are not guaranteed to remain on the unit hypersphere.
 
 A configurable dropout is applied within the `LabelAggregator` before extracting label token representations as a regulariser during training.
 
@@ -92,33 +92,16 @@ A configurable dropout is applied within the `LabelAggregator` before extracting
 
 ## 5. Label Representation Aggregation
 
-### 5.1 Token-Level vs. [LAB]-Token Mode
+### 5.1 [LAB] Token Embedding
 
-GliZNet supports two aggregation strategies:
+The hidden state of the $[\text{LAB}]$ separator token that terminates each label span is used as the label representation:
 
-#### **Mode 1: [LAB] Token Embedding (Current)**
-
-Use the hidden state of the $[\text{LAB}]$ separator token that terminates each label span:
-
-$$\mathbf{e}_j^{\text{label}} = \mathbf{h}_{i_j} \quad \text{where } i_j \text{ is the position of } [\text{LAB}] \text{ after label } j$$
+$$\mathbf{e}_j^{\text{label}} = \mathbf{z}_{i_j} \quad \text{where } i_j \text{ is the position of } [\text{LAB}] \text{ after label } j$$
 
 **Properties**:
 - Single token per label — no pooling overhead
 - The $[\text{LAB}]$ token has attended to all preceding label tokens via self-attention, compressing their semantics into one vector
-- Dropout applied before extraction as regularisation
-
-#### **Mode 2: Average Pooling (Alternative)**
-
-For each label $l_j$, aggregate all its token hidden states:
-
-$$\mathbf{e}_j^{\text{label}} = \frac{1}{|\mathcal{T}_j|} \sum_{i \in \mathcal{T}_j} \mathbf{h}_i$$
-
-where $\mathcal{T}_j = \{i \mid m_i = j\}$ is the set of positions belonging to label $j$.
-
-**Properties**:
-- Permutation-invariant
-- Every label token contributes gradients
-- Higher memory cost for long labels
+- Dropout applied before extraction as regularisation during training
 
 ---
 
@@ -144,7 +127,7 @@ All text pooling in GliZNet uses the same operation. Given a set of query vector
 
 $$s_{b,j,i} = \tau_{\text{attn}} \cdot \langle \mathbf{q}_{b,j},\; \mathbf{z}_i \rangle$$
 
-where $\tau_{\text{attn}} = \exp(\log \sqrt{d_h})$ is a learnable scalar (initialised to $\sqrt{d_h}$). Since all vectors are L2-normalised (§4), the dot product equals cosine similarity.
+where $\tau_{\text{attn}} = \exp(\log \sqrt{d_h})$ is a learnable scalar (initialised to $\sqrt{d_h}$). Text token keys $\mathbf{z}_i$ are L2-normalised (§4). Label queries $\mathbf{q}_{b,j}$ come from $[\text{LAB}]$ token embeddings processed through dropout and optionally through `LabelContextAttention`, so their norm is controlled but not strictly 1.
 
 **Step 2 — Masking** to restrict attention to text positions only:
 
@@ -153,7 +136,9 @@ s_{b,j,i} & \text{if } i \in \mathcal{T}_{\text{text}}^{(b)} \\
 -\infty & \text{otherwise}
 \end{cases}$$
 
-where $\mathcal{T}_{\text{text}}^{(b)}$ is the set of text token positions for sample $b$ (positions where $m_i = 0$ and attention mask is 1).
+where $\mathcal{T}_{\text{text}}^{(b)}$ is the set of text token positions for sample $b$: positions where $m_i = 0$ (not a label-word token), attention mask is 1 (not padding), and the token is not the $[\text{LAB}]$ separator. Formally:
+
+$$\mathcal{T}_{\text{text}}^{(b)} = \{\,i \mid m_i^{(b)} = 0 \;\wedge\; \text{attn\_mask}_i^{(b)} = 1 \;\wedge\; \text{id}_i^{(b)} \neq \text{id}_{[\text{LAB}]}\,\}$$
 
 **Step 3 — Softmax normalisation**:
 
@@ -221,18 +206,17 @@ $$\text{sim}_{b,j} = (\mathbf{e}_{b,j}^{\text{text}})^T \mathbf{W}_{\text{biline
 
 where $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_h \times d_h}$ is a learned interaction matrix and $b_{\text{bilinear}}$ is a scalar bias.
 
-Implemented as `nn.Bilinear(d_h, d_h, 1)`. Since inputs are already L2-normalised (§4), the bilinear form learns asymmetric directional interactions between text and label representations without additional normalisation.
+Implemented as `nn.Bilinear(d_h, d_h, 1)`. The bilinear form learns asymmetric directional interactions: which dimensions of the text representation should respond to which dimensions of the label representation.
 
 **Why bilinear?**
 - Most expressive: captures cross-space interactions that cosine or dot product cannot
 - Learns which dimensions of the text representation should interact with which dimensions of the label representation
-- Works well with L2-normalised inputs (bounded input magnitude prevents exploding logits)
 
 #### **7.1.2 Cosine Similarity (Alternative)**
 
 $$\text{sim}_{b,j} = \tau \cdot \frac{\langle \mathbf{e}_{b,j}^{\text{text}}, \mathbf{e}_{b,j}^{\text{label}} \rangle}{\|\mathbf{e}_{b,j}^{\text{text}}\|_2 \cdot \|\mathbf{e}_{b,j}^{\text{label}}\|_2}$$
 
-where $\tau = \exp(\log \tau_0)$ is a learnable temperature (initialized to $1/0.07 \approx 14.3$). Since inputs are already unit-normalised, the explicit normalisation here is redundant but kept for numerical safety.
+where $\tau = \exp(\log \tau_0)$ is a learnable temperature (initialized to $1/0.07 \approx 14.3$, clamped to 100). The explicit L2-normalisation inside `CosineScoring` normalises the inputs onto the unit sphere regardless of upstream transformations.
 
 **Trade-offs**:
 - **Bilinear** *(current, recommended)*: Most expressive; learns a cross-space interaction matrix $\mathbf{W} \in \mathbb{R}^{d_h \times d_h}$; ~$d_h^2$ additional parameters
