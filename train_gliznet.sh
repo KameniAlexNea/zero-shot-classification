@@ -50,7 +50,7 @@ nohup accelerate launch train_gliznet.py \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
     --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
-    --num_train_epochs 10 \
+    --num_train_epochs 4 \
     --per_device_train_batch_size 48 \
     --per_device_eval_batch_size 48 \
     --gradient_accumulation_steps 2 \

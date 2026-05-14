@@ -107,6 +107,12 @@ label_augmentations:
       balanced_min_per_class: 3
       balanced_max_per_class: 10
 
+  - name: LabelTokenMask
+    params:
+      prob: 0.15
+      token_mask_prob: 0.3
+      mask_token: "[MASK]"
+
   - name: LabelLimit
     params:
       max_labels: 20

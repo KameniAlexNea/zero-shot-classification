@@ -298,6 +298,68 @@ class ScenarioAwareSampler(LabelAugmentation):
         return labels_text, labels_int
 
 
+class LabelTokenMask(LabelAugmentation):
+    """Randomly replace tokens within labels with a mask token.
+
+    For multi-token labels (separated by spaces or underscores), each token
+    has an independent probability of being replaced by ``mask_token``.
+    At least one token is always preserved so the label remains informative.
+
+    Example (mask_token="[MASK]"):
+        "financial growth reporting" → "[MASK] growth reporting"
+        "sentiment_positive"        → "[MASK]_positive"
+
+    This forces the model to attend to partial label cues rather than
+    memorising exact multi-word label strings, improving generalisation to
+    unseen label formulations (e.g. simple labels like "positive").
+    """
+
+    def __init__(
+        self,
+        prob: float = 0.15,
+        token_mask_prob: float = 0.3,
+        mask_token: str = "[MASK]",
+    ):
+        self.prob = prob
+        self.token_mask_prob = token_mask_prob
+        self.mask_token = mask_token
+
+    def _mask_label(self, label: str) -> str:
+        # Detect separator
+        if "_" in label:
+            sep = "_"
+        else:
+            sep = " "
+        tokens = label.split(sep)
+        if len(tokens) <= 1:
+            return label
+
+        masked = [
+            self.mask_token if random.random() < self.token_mask_prob else t
+            for t in tokens
+        ]
+        # Ensure at least one original token survives
+        if all(t == self.mask_token for t in masked):
+            keep = random.randrange(len(tokens))
+            masked[keep] = tokens[keep]
+        return sep.join(masked)
+
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        if random.random() >= self.prob:
+            return labels_text, labels_int
+        labels_text = [self._mask_label(l) for l in labels_text]
+        return labels_text, labels_int
+
+    def __repr__(self) -> str:
+        return (
+            f"LabelTokenMask(prob={self.prob}, "
+            f"token_mask_prob={self.token_mask_prob}, "
+            f"mask_token={self.mask_token!r})"
+        )
+
+
 class LabelAugmentationPipeline:
     """Compose multiple label augmentations applied sequentially."""
 
@@ -318,5 +380,6 @@ class LabelAugmentationPipeline:
 
 LABEL_AUGMENTATION_REGISTRY: dict[str, type[LabelAugmentation]] = {
     "LabelLimit": LabelLimit,
+    "LabelTokenMask": LabelTokenMask,
     "ScenarioAwareSampler": ScenarioAwareSampler,
 }
