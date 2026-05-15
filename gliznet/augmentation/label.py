@@ -4,6 +4,7 @@ Controls the composition and ratio of positive/negative labels per sample,
 aligning training distributions with real-world inference patterns.
 """
 
+import math
 import random
 from abc import ABC, abstractmethod
 
@@ -162,11 +163,14 @@ class ScenarioAwareSampler(LabelAugmentation):
         # balanced scenario
         balanced_min_per_class: int = 2,
         balanced_max_per_class: int = 8,
+        # hard negative selection
+        hard_negative_prob: float = 0.0,
     ):
         self.needle_prob = needle_prob
         self.few_pos_prob = few_pos_prob
         self.few_neg_prob = few_neg_prob
         self.balanced_prob = balanced_prob
+        self.hard_negative_prob = hard_negative_prob
 
         self.needle_min_neg = needle_min_neg
         self.needle_max_neg = needle_max_neg
@@ -198,12 +202,54 @@ class ScenarioAwareSampler(LabelAugmentation):
         texts, ints = zip(*selected)
         return list(texts), list(ints)
 
+    @staticmethod
+    def _score_negatives(negatives, positives):
+        """Score negatives by token overlap with positives. Higher = harder."""
+        if not positives or not negatives:
+            return [1.0] * len(negatives)
+
+        pos_tokens = set()
+        for text, _ in positives:
+            pos_tokens.update(text.lower().replace("_", " ").split())
+
+        scores = []
+        for text, _ in negatives:
+            neg_tokens = set(text.lower().replace("_", " ").split())
+            overlap = len(neg_tokens & pos_tokens)
+            scores.append(1.0 + overlap * 2.0)
+
+        return scores
+
+    def _select_negatives(self, negatives, n, positives=None):
+        """Select n negatives, optionally biased toward hard negatives.
+
+        Uses the Gumbel-top-k trick for exact weighted sampling without
+        replacement when hard negative selection is active.
+        """
+        if not negatives or n <= 0:
+            return []
+        n = min(n, len(negatives))
+
+        if positives and random.random() < self.hard_negative_prob:
+            scores = self._score_negatives(negatives, positives)
+            # Gumbel-top-k: add Gumbel noise to log-weights, take top-k
+            keys = [
+                math.log(s) - math.log(-math.log(max(random.random(), 1e-10)))
+                for s in scores
+            ]
+            top_k = sorted(
+                range(len(negatives)), key=lambda i: keys[i], reverse=True
+            )[:n]
+            return [negatives[i] for i in top_k]
+        else:
+            random.shuffle(negatives)
+            return negatives[:n]
+
     def _needle(self, positives, negatives):
         """Exactly 1 positive among many negatives."""
         if not positives or len(negatives) < self.needle_min_neg:
             return None
         random.shuffle(positives)
-        random.shuffle(negatives)
         n_neg = round(
             random.triangular(
                 self.needle_min_neg,
@@ -211,7 +257,8 @@ class ScenarioAwareSampler(LabelAugmentation):
                 min(self.needle_max_neg, len(negatives)),
             )
         )
-        return positives[:1] + negatives[:n_neg]
+        selected_neg = self._select_negatives(negatives, n_neg, positives)
+        return positives[:1] + selected_neg
 
     def _few_pos(self, positives, negatives):
         """Negatives dominate: pick n_neg first, then n_pos in [0, n_neg].
@@ -221,7 +268,6 @@ class ScenarioAwareSampler(LabelAugmentation):
         if len(negatives) < self.few_pos_min_neg:
             return None
         random.shuffle(positives)
-        random.shuffle(negatives)
         n_neg = round(
             random.triangular(
                 self.few_pos_min_neg,
@@ -232,7 +278,8 @@ class ScenarioAwareSampler(LabelAugmentation):
         n_pos = round(
             random.triangular(0, min(n_neg, len(positives)), min(n_neg, len(positives)))
         )
-        return positives[:n_pos] + negatives[:n_neg]
+        selected_neg = self._select_negatives(negatives, n_neg, positives)
+        return positives[:n_pos] + selected_neg
 
     def _few_neg(self, positives, negatives):
         """Positives dominate: pick n_pos first, then n_neg in [0, n_pos].
@@ -242,7 +289,6 @@ class ScenarioAwareSampler(LabelAugmentation):
         if len(positives) < self.few_neg_min_pos:
             return None
         random.shuffle(positives)
-        random.shuffle(negatives)
         n_pos = round(
             random.triangular(
                 self.few_neg_min_pos,
@@ -253,19 +299,20 @@ class ScenarioAwareSampler(LabelAugmentation):
         n_neg = round(
             random.triangular(0, min(n_pos, len(negatives)), min(n_pos, len(negatives)))
         )
-        return positives[:n_pos] + negatives[:n_neg]
+        selected_neg = self._select_negatives(negatives, n_neg, positives)
+        return positives[:n_pos] + selected_neg
 
     def _balanced(self, positives, negatives):
         """Roughly equal positives and negatives."""
         if not positives or not negatives:
             return None
         random.shuffle(positives)
-        random.shuffle(negatives)
         max_per = min(self.balanced_max_per_class, len(positives), len(negatives))
         if max_per < self.balanced_min_per_class:
             return None
         n = round(random.triangular(self.balanced_min_per_class, max_per, max_per))
-        return positives[:n] + negatives[:n]
+        selected_neg = self._select_negatives(negatives, n, positives)
+        return positives[:n] + selected_neg
 
     def __call__(
         self, labels_text: list[str], labels_int: list[int]
@@ -360,6 +407,70 @@ class LabelTokenMask(LabelAugmentation):
         )
 
 
+class LabelSimplification(LabelAugmentation):
+    """Add simplified versions of multi-token positive labels.
+
+    For each multi-token positive label, extracts individual meaningful
+    tokens and adds them as additional positives. This teaches compositional
+    transfer without reducing label diversity.
+
+    Example:
+        positives = ["historical contextualization", "political analysis"]
+        → adds "historical", "contextualization", "political", "analysis"
+          as additional positives (up to max_added)
+
+    Placed BEFORE LabelLimit so the limiter controls the final count.
+    """
+
+    def __init__(self, prob: float = 0.15, max_added: int = 2, min_token_len: int = 4):
+        self.prob = prob
+        self.max_added = max_added
+        self.min_token_len = min_token_len
+
+    def _simplify(self, label: str) -> list[str]:
+        """Extract meaningful tokens from a multi-token label."""
+        sep = "_" if "_" in label else " "
+        tokens = label.split(sep)
+        if len(tokens) <= 1:
+            return []
+        return [t for t in tokens if len(t) >= self.min_token_len]
+
+    def __call__(
+        self, labels_text: list[str], labels_int: list[int]
+    ) -> tuple[list[str], list[int]]:
+        if random.random() >= self.prob:
+            return labels_text, labels_int
+
+        positives = [(t, i) for t, i in zip(labels_text, labels_int) if i == 1]
+        existing = set(labels_text)
+        new_texts = []
+        new_ints = []
+
+        for text, _ in positives:
+            for simplified in self._simplify(text):
+                if simplified not in existing:
+                    new_texts.append(simplified)
+                    new_ints.append(1)
+                    existing.add(simplified)
+                    if len(new_texts) >= self.max_added:
+                        break
+            if len(new_texts) >= self.max_added:
+                break
+
+        if new_texts:
+            labels_text = labels_text + new_texts
+            labels_int = labels_int + new_ints
+
+        return labels_text, labels_int
+
+    def __repr__(self) -> str:
+        return (
+            f"LabelSimplification(prob={self.prob}, "
+            f"max_added={self.max_added}, "
+            f"min_token_len={self.min_token_len})"
+        )
+
+
 class LabelAugmentationPipeline:
     """Compose multiple label augmentations applied sequentially."""
 
@@ -381,5 +492,6 @@ class LabelAugmentationPipeline:
 LABEL_AUGMENTATION_REGISTRY: dict[str, type[LabelAugmentation]] = {
     "LabelLimit": LabelLimit,
     "LabelTokenMask": LabelTokenMask,
+    "LabelSimplification": LabelSimplification,
     "ScenarioAwareSampler": ScenarioAwareSampler,
 }

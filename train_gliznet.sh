@@ -27,7 +27,7 @@ nohup accelerate launch train_gliznet.py \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
     --supcon_margin 0.1 \
-    --scoring_method concat \
+    --scoring_method bilinear \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
