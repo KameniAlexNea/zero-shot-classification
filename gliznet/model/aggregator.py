@@ -16,6 +16,30 @@ class BilinearScoring(nn.Module):
     def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         return self.bilinear(text, labels)
 
+class LinearScoring(nn.Module):
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.linear = nn.Linear(hidden_size, 1)
+
+    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        return self.linear(text * labels)
+
+class ConcatScoring(nn.Module):
+    """Scoring via concatenation: Linear([text; label]) → logit.
+
+    Produces unbounded logits suitable for sigmoid/focal losses.
+    With LabelContextAttention already fusing text and label representations,
+    this lightweight head avoids the redundant learned interaction of bilinear.
+    Params: 2*D + 1 (vs D*D + 2D + 1 for bilinear).
+    """
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.linear = nn.Linear(hidden_size * 2, 1)
+
+    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        return self.linear(torch.cat([text, labels], dim=-1))
+
 
 class CosineScoring(nn.Module):
     def __init__(self):
@@ -74,6 +98,10 @@ class LabelAggregator(nn.Module):
 
         if config.scoring_method == "cosine":
             self.scoring = CosineScoring()
+        elif config.scoring_method == "dot_linear":
+            self.scoring = LinearScoring(hidden_size)
+        elif config.scoring_method == "concat_linear":
+            self.scoring = ConcatScoring(hidden_size)
         else:
             self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)

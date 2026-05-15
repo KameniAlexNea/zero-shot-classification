@@ -27,7 +27,7 @@ nohup accelerate launch train_gliznet.py \
     --supcon_loss_weight 1.0 \
     --label_repulsion_weight 0.1 \
     --supcon_margin 0.1 \
-    --scoring_method bilinear \
+    --scoring_method concat \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
@@ -61,8 +61,10 @@ nohup accelerate launch train_gliznet.py \
     --max_grad_norm 1.0 \
     \
     `# Evaluation & Checkpointing` \
-    --eval_strategy epoch \
-    --save_strategy epoch \
+    --eval_strategy steps \
+    --save_strategy steps \
+    --eval_steps 4000 \
+    --save_steps 4000 \
     --save_total_limit 5 \
     --load_best_model_at_end \
     --metric_for_best_model loss \

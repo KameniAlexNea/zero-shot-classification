@@ -53,7 +53,7 @@ class ModelArgs:
     )
     scoring_method: str = field(
         default="bilinear",
-        metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
+        metadata={"help": "Scoring head: 'bilinear', 'cosine', 'linear', or 'concat'"},
     )
     enrich_labels: bool = field(
         default=False,

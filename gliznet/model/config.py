@@ -38,7 +38,7 @@ class GliZNetConfig(PretrainedConfig):
         supcon_margin: float = 0.0,
         # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
         max_labels: int = 20,
-        # Scoring head: "bilinear" or "cosine"
+        # Scoring head: "bilinear", "cosine", "dot_linear", or "concat_linear"
         scoring_method: str = "bilinear",
         # Self-attention over [CLS + all labels] before cross-attention scoring
         enrich_labels: bool = False,
