@@ -14,7 +14,6 @@ from .label import (
     LabelAugmentation,
     LabelAugmentationPipeline,
     LabelLimit,
-    LabelSimplification,
     ScenarioAwareSampler,
 )
 from .text import (
@@ -35,7 +34,6 @@ __all__ = [
     # label
     "LabelAugmentation",
     "LabelLimit",
-    "LabelSimplification",
     "ScenarioAwareSampler",
     "LabelAugmentationPipeline",
     "LABEL_AUGMENTATION_REGISTRY",

@@ -12,9 +12,9 @@
 #   WordSplit         - split a word into two (nlpaug SplitAug)
 #
 # Available label augmentations:
-#   ScenarioAwareSampler        - scenario-aware label sampling
-#   LabelTokenMask               - randomly masks tokens in labels
-#   LabelSimplification          - adds simplified positive labels
+#   RatioEnforcement         - enforce a target pos/neg ratio
+#   RatioEnforcementSelector  - randomly pick neg-heavy, pos-heavy, or pass-through
+#   LabelLimit               - limits total labels & shuffles
 
 augmentations:
   - name: SuffixTruncation
@@ -94,9 +94,6 @@ label_augmentations:
       few_pos_prob: 0.40
       few_neg_prob: 0.10
       balanced_prob: 0.15
-      # hard negative selection: bias toward negatives sharing tokens
-      # with positives (0.0 = off, 1.0 = always)
-      hard_negative_prob: 0.3
       # needle: exactly 1 positive, 4-15 negatives
       needle_min_neg: 4
       needle_max_neg: 15
@@ -109,12 +106,6 @@ label_augmentations:
       # balanced: 3-10 of each class
       balanced_min_per_class: 3
       balanced_max_per_class: 10
-
-  - name: LabelSimplification
-    params:
-      prob: 0.15
-      max_added: 2
-      min_token_len: 4
 
   - name: LabelTokenMask
     params:

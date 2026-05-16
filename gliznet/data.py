@@ -18,80 +18,6 @@ from .tokenizer import GliZNETTokenizer
 from .training_config import LabelName
 
 
-def _add_cross_sample_negatives(
-    batch_label_texts: list[list[str]],
-    batch_label_ints: list[list[int]],
-    prob: float = 0.15,
-    max_added: int = 2,
-) -> tuple[list[list[str]], list[list[int]]]:
-    """Add positive labels from other samples as hard negatives.
-
-    For each sample (with probability ``prob``), finds positive labels from
-    other samples that share tokens with this sample's positives (semantically
-    close but different labels). Adds them as negatives.
-
-    Args:
-        batch_label_texts: List of label text lists per sample.
-        batch_label_ints: List of label int lists per sample.
-        prob: Probability of applying to each sample.
-        max_added: Maximum negatives to add per sample.
-
-    Returns:
-        Modified (batch_label_texts, batch_label_ints).
-    """
-    if len(batch_label_texts) < 2:
-        return batch_label_texts, batch_label_ints
-
-    # Collect positive labels and their tokens per sample
-    sample_positives: list[list[str]] = []
-    sample_pos_tokens: list[set[str]] = []
-    for texts, ints in zip(batch_label_texts, batch_label_ints):
-        pos = [t for t, i in zip(texts, ints) if i == 1]
-        tokens = set()
-        for p in pos:
-            tokens.update(p.lower().replace("_", " ").split())
-        sample_positives.append(pos)
-        sample_pos_tokens.append(tokens)
-
-    for i in range(len(batch_label_texts)):
-        if random.random() >= prob:
-            continue
-
-        existing = set(batch_label_texts[i])
-        my_tokens = sample_pos_tokens[i]
-        if not my_tokens:
-            continue
-
-        candidates = []
-        for j in range(len(batch_label_texts)):
-            if j == i:
-                continue
-            for pos_label in sample_positives[j]:
-                if pos_label in existing:
-                    continue
-                label_tokens = set(pos_label.lower().replace("_", " ").split())
-                overlap = len(label_tokens & my_tokens)
-                if overlap > 0:
-                    candidates.append((overlap, pos_label))
-
-        if not candidates:
-            continue
-
-        # Sort by overlap descending, take top-k
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        added = 0
-        for _, label in candidates:
-            if label not in existing:
-                batch_label_texts[i] = batch_label_texts[i] + [label]
-                batch_label_ints[i] = batch_label_ints[i] + [0]
-                existing.add(label)
-                added += 1
-                if added >= max_added:
-                    break
-
-    return batch_label_texts, batch_label_ints
-
-
 def load_dataset(
     path: str,
     name: str = None,
@@ -163,8 +89,6 @@ def add_tokenized_function(
     as_transform: bool = True,
     augmentation_pipeline: Optional[AugmentationPipeline] = None,
     label_augmentation_pipeline: Optional[LabelAugmentationPipeline] = None,
-    cross_sample_neg_prob: float = 0.0,
-    cross_sample_neg_max: int = 2,
 ) -> datasets.Dataset:
     """Tokenize the HuggingFace dataset using the GliZNETTokenizer.
 
@@ -197,8 +121,7 @@ def add_tokenized_function(
 
         # Prepare (text, labels) tuples for tokenizer
         tokenizer_inputs = []
-        all_label_texts = []
-        all_label_ints = []
+        labels_batch = []
 
         for text, raw_texts, raw_ints in zip(texts, raw_texts_batch, raw_ints_batch):
             # Apply text augmentation pipeline if provided
@@ -209,24 +132,7 @@ def add_tokenized_function(
             label_texts, label_ints = label_augmentation_pipeline(raw_texts, raw_ints)
 
             tokenizer_inputs.append((text, label_texts))
-            all_label_texts.append(label_texts)
-            all_label_ints.append(label_ints)
-
-        # Cross-sample hard negatives: steal positives from other samples
-        if cross_sample_neg_prob > 0:
-            all_label_texts, all_label_ints = _add_cross_sample_negatives(
-                all_label_texts, all_label_ints,
-                prob=cross_sample_neg_prob,
-                max_added=cross_sample_neg_max,
-            )
-            # Rebuild tokenizer_inputs with updated labels
-            tokenizer_inputs = [
-                (ti[0], lt) for ti, lt in zip(tokenizer_inputs, all_label_texts)
-            ]
-
-        labels_batch = [
-            torch.tensor(ints, dtype=torch.float32) for ints in all_label_ints
-        ]
+            labels_batch.append(torch.tensor(label_ints, dtype=torch.float32))
 
         # Tokenize all examples in batch
         tokenized: dict[str, torch.Tensor] = tokenizer(
