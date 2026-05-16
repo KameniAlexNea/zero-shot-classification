@@ -11,10 +11,13 @@ from gliznet.model.config import GliZNetConfig
 class BilinearScoring(nn.Module):
     def __init__(self, hidden_size: int):
         super().__init__()
-        self.bilinear = nn.Bilinear(hidden_size, hidden_size, 1)
+        self.bilinear = nn.Bilinear(hidden_size, hidden_size, hidden_size)
+        self.dropout = nn.Dropout(0.1)
+        self.linear = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.bilinear(text, labels)
+        return self.linear(F.relu(self.dropout(self.bilinear(text, labels))))
+
 
 class DotLinearScoring(nn.Module):
     def __init__(self, hidden_size: int):
@@ -23,6 +26,7 @@ class DotLinearScoring(nn.Module):
 
     def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         return self.linear(text * labels)
+
 
 class ConcatLinearScoring(nn.Module):
     def __init__(self, hidden_size: int):

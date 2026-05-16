@@ -349,7 +349,7 @@ class LabelTokenMask(LabelAugmentation):
     ) -> tuple[list[str], list[int]]:
         if random.random() >= self.prob:
             return labels_text, labels_int
-        labels_text = [self._mask_label(l) for l in labels_text]
+        labels_text = [self._mask_label(lab) for lab in labels_text]
         return labels_text, labels_int
 
     def __repr__(self) -> str:
