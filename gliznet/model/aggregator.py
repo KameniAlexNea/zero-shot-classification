@@ -11,12 +11,10 @@ from gliznet.model.config import GliZNetConfig
 class BilinearScoring(nn.Module):
     def __init__(self, hidden_size: int):
         super().__init__()
-        self.bilinear = nn.Bilinear(hidden_size, hidden_size, hidden_size)
-        self.dropout = nn.Dropout(0.1)
-        self.linear = nn.Linear(hidden_size, hidden_size)
+        self.bilinear = nn.Bilinear(hidden_size, hidden_size, 1)
 
     def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.linear(F.relu(self.dropout(self.bilinear(text, labels))))
+        return self.bilinear(text, labels)
 
 
 class DotLinearScoring(nn.Module):
@@ -132,11 +130,7 @@ class LabelAggregator(nn.Module):
         Returns:
             aggregated_text: (N, D) label-specific text representations.
         """
-        scale = self.attn_temperature.exp()
-        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) * scale
-        scores.masked_fill_(~text_mask.unsqueeze(1), float("-inf"))
-        attn = F.softmax(scores, dim=2)
-        agg_text_dense = torch.bmm(attn, hidden_states)  # (B, K, D)
+        agg_text_dense = self._text_repr_dense(dense_labels, hidden_states, text_mask)  # (B, K, D)
         aggregated_text = agg_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
         return aggregated_text
 
