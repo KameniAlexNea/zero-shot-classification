@@ -181,12 +181,20 @@ def main():
     )
 
     # Training: ZSHOT-HARDSET-v2 train split + optional additional datasets
-    train_data = load_dataset(
+    train_data_base = load_dataset(
+        path=model_args.dataset_path,
+        name=model_args.dataset_name,
+        split="train",
+        min_label_length=data_config.min_label_length,
+    )
+    train_data_fixed = load_dataset(
         path=model_args.dataset_path,
         name=model_args.dataset_name,
         split="train_fixed",
         min_label_length=data_config.min_label_length,
     )
+    train_data = datasets.concatenate_datasets([train_data_base, train_data_fixed])
+    train_data.shuffle(seed=training_args.data_seed, writer_batch_size=50000)
     size_before = len(train_data)
     if model_args.use_additional_datasets and model_args.max_extended_ds_size > 0:
         train_data = add_additional_ds(
