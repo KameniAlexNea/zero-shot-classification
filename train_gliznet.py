@@ -184,7 +184,7 @@ def main():
     train_data = load_dataset(
         path=model_args.dataset_path,
         name=model_args.dataset_name,
-        split="train",
+        split="train_fixed",
         min_label_length=data_config.min_label_length,
     )
     size_before = len(train_data)
