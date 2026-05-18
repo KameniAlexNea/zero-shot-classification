@@ -68,6 +68,7 @@ def create_model_tokenizer(args: ModelArgs):
             losses=args.losses,
             lab_token_id=tokenizer.lab_token_id,
             max_labels=args.max_labels,
+            enrich_labels=args.enrich_labels,
         )
         model = GliZNetForSequenceClassification.from_pretrained(
             args.model_name, config=config
@@ -79,6 +80,7 @@ def create_model_tokenizer(args: ModelArgs):
     config = GliZNetConfig(
         backbone_model=args.model_name,
         dropout_rate=args.dropout_rate,
+        enrich_labels=args.enrich_labels,
         # Loss configuration
         focal_loss_weight=args.focal_loss_weight,
         focal_gamma=args.focal_gamma,

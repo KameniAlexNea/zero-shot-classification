@@ -58,4 +58,5 @@ evaluate = [
     "ipywidgets>=8.1.8",
     "jupyter>=1.1.1",
     "peft>=0.19.1",
+    "seaborn>=0.13.2",
 ]
