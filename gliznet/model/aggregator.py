@@ -201,14 +201,14 @@ class LabelAggregator(nn.Module):
             dense_labels = self.label_context(dense_labels, dense_text, label_mask)
             # Gather enriched label embeddings
             aggregated_labels = dense_labels[all_batch_ids, all_label_ids - 1]
-
-        aggregated_text = self._text_repr(
-            dense_labels,
-            hidden_states,
-            text_mask,
-            all_batch_ids,
-            all_label_ids,
-        )
+            # Round 2: re-pool text with enriched labels
+            aggregated_text = self._text_repr(
+                dense_labels, hidden_states, text_mask, all_batch_ids, all_label_ids
+            )
+        else:
+            # No enrichment: use CLS embedding directly (labels already have text
+            # context from encoder self-attention, bilinear handles the interaction)
+            aggregated_text = hidden_states[:, 0][all_batch_ids]  # (N, D)
 
         logits = self.scoring(aggregated_text, aggregated_labels)
 

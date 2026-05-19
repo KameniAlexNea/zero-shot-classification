@@ -65,7 +65,7 @@ nohup accelerate launch train_gliznet.py \
     --save_strategy steps \
     --eval_steps 4000 \
     --save_steps 4000 \
-    --save_total_limit 5 \
+    --save_total_limit 10 \
     --load_best_model_at_end \
     --metric_for_best_model loss \
     --early_stopping_patience 3 \
@@ -82,7 +82,7 @@ nohup accelerate launch train_gliznet.py \
     --bf16 \
     \
     `# Logging & Monitoring` \
-    --logging_steps 100 \
+    --logging_steps 400 \
     --report_to wandb \
     --remove_unused_columns False \
     \
