@@ -16,41 +16,15 @@ class BilinearScoring(nn.Module):
     def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         return self.bilinear(text, labels)
 
-
-class DotLinearScoring(nn.Module):
-    def __init__(self, hidden_size: int):
-        super().__init__()
-        self.linear = nn.Linear(hidden_size, 1)
-
-    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.linear(text * labels)
-
-
-class ConcatLinearScoring(nn.Module):
-    def __init__(self, hidden_size: int):
-        super().__init__()
-        self.linear = nn.Linear(hidden_size * 2, 1)
-
-    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.linear(torch.cat([text, labels], dim=-1))
-
-
-class CosineScoring(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.logit_scale = nn.Parameter(torch.tensor(math.log(1 / 0.07)))
-
-    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        text_norm = F.normalize(text, p=2, dim=-1)
-        label_norm = F.normalize(labels, p=2, dim=-1)
-        scale = torch.clamp(self.logit_scale.exp(), max=100.0)
-        return (text_norm * label_norm).sum(dim=-1, keepdim=True) * scale
-
-
 class LabelContextAttention(nn.Module):
     """Cooperative label enrichment: each label's representation is fused with its
     first-pass text evidence, then labels attend to each other. This lets label_i
-    see what text evidence label_j found, enabling cooperative routing."""
+    see what text evidence label_j found, enabling cooperative routing.
+
+    Uses Pre-LN pattern: LayerNorm is applied to the inputs of the sub-layer,
+    and the residual connection is direct. This preserves the original semantic
+    direction in the output — critical for zero-shot generalization where unseen
+    labels must remain interpretable via their pretrained embeddings."""
 
     def __init__(self, hidden_size: int, num_heads: int = 8):
         super().__init__()
@@ -64,14 +38,15 @@ class LabelContextAttention(nn.Module):
         dense_text: torch.Tensor,  # (B, K, D) first-pass text pooling per label
         label_mask: torch.Tensor,  # (B, K) bool, True = valid label
     ) -> torch.Tensor:  # (B, K, D) enriched label embeddings
-        # Fuse each label with its text evidence to create the context memory
-        fused = self.fuse(torch.cat([dense_labels, dense_text], dim=-1))
-        # Cross-attention: labels query the fused peer context
+        # Fuse label + text evidence, then normalize (linear can blow up magnitudes)
+        fused = self.norm(self.fuse(torch.cat([dense_labels, dense_text], dim=-1)))
+        # Labels query the normalized fused context
         pad_mask = ~label_mask  # True = ignore
         out, _ = self.attn(
             query=dense_labels, key=fused, value=fused, key_padding_mask=pad_mask
         )
-        return self.norm(dense_labels + out)
+        # Direct residual: original direction always preserved in the sum
+        return dense_labels + out
 
 
 class LabelAggregator(nn.Module):
@@ -90,14 +65,7 @@ class LabelAggregator(nn.Module):
             torch.tensor(math.log(math.sqrt(float(hidden_size))))
         )
 
-        if config.scoring_method == "cosine":
-            self.scoring = CosineScoring()
-        elif config.scoring_method == "dot_linear":
-            self.scoring = DotLinearScoring(hidden_size)
-        elif config.scoring_method == "concat_linear":
-            self.scoring = ConcatLinearScoring(hidden_size)
-        else:
-            self.scoring = BilinearScoring(hidden_size)
+        self.scoring = BilinearScoring(hidden_size)
         self.dropout = nn.Dropout(config.dropout_rate)
         if config.enrich_labels:
             self.label_context = LabelContextAttention(hidden_size)
