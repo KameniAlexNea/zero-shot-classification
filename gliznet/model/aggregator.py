@@ -59,7 +59,6 @@ class LabelAggregator(nn.Module):
         hidden_size = config.backbone_config.hidden_size
         self.hidden_size = hidden_size
         self.lab_token_id = config.lab_token_id
-        self._inv_scale = hidden_size**-0.5
         # Learned temperature for attention over unit-norm vectors
         self.attn_temperature = nn.Parameter(
             torch.tensor(math.log(math.sqrt(float(hidden_size))))
