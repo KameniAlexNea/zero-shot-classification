@@ -10,10 +10,9 @@ class BilinearScoring(nn.Module):
     def __init__(self, hidden_size: int):
         super().__init__()
         self.bilinear = nn.Bilinear(hidden_size, hidden_size, 1)
-        self.norm = nn.LayerNorm(hidden_size)
 
     def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-        return self.bilinear(self.norm(text), self.norm(labels))
+        return self.bilinear(text, labels)
 
 
 class LabelContextFusion(nn.Module):
@@ -26,10 +25,11 @@ class LabelContextFusion(nn.Module):
 
     The attention output serves as the label-specific text representation."""
 
-    def __init__(self, hidden_size: int, num_heads: int = 8):
+    def __init__(self, hidden_size: int, dropout: float = 0.1, num_heads: int = 8):
         super().__init__()
         self.fuse = nn.Linear(hidden_size * 2, hidden_size)
-        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
+        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True, dropout=dropout)
+        self.norm = nn.LayerNorm(hidden_size)
 
     def forward(
         self,
@@ -44,9 +44,9 @@ class LabelContextFusion(nn.Module):
         # Labels query peer fused views
         pad_mask = ~label_mask  # True = ignore
         out, _ = self.attn(
-            query=dense_labels, key=fused, value=fused, key_padding_mask=pad_mask
+            query=fused, key=fused, value=fused, key_padding_mask=pad_mask
         )
-        return out
+        return self.norm(out)
 
 
 class LabelAggregator(nn.Module):
@@ -61,9 +61,8 @@ class LabelAggregator(nn.Module):
         self.lab_token_id = config.lab_token_id
 
         self.scoring = BilinearScoring(hidden_size)
-        self.dropout = nn.Dropout(config.dropout_rate)
         if config.enrich_labels:
-            self.context = LabelContextFusion(hidden_size)
+            self.context = LabelContextFusion(hidden_size, dropout=config.dropout_rate)
         else:
             self.context = None
 
@@ -81,7 +80,7 @@ class LabelAggregator(nn.Module):
             empty_emb = torch.empty(0, self.hidden_size, device=device)
             return empty_emb, empty_idx, empty_idx, 0
 
-        label_hidden = self.dropout(hidden_states[lab_mask])
+        label_hidden = hidden_states[lab_mask]
 
         lab_counts = lab_mask.sum(dim=1)
         max_k = int(lab_counts.max().item())
@@ -127,15 +126,14 @@ class LabelAggregator(nn.Module):
             label_embeddings: Label embeddings (N, D)
             text_repr: Label-specific text representations (N, D)
         """
-        B = hidden_states.shape[0]
-        D = hidden_states.shape[2]
+        B, _, D = hidden_states.shape
 
         aggregated_labels, all_batch_ids, all_label_ids, max_k = self.aggregate_labels(
             input_ids, hidden_states
         )
 
         # Early return if no labels found
-        if aggregated_labels.shape[0] == 0:
+        if max_k == 0:
             empty_logits = torch.empty(0, 1, device=hidden_states.device)
             return (
                 empty_logits,
