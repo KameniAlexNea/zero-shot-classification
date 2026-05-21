@@ -1,7 +1,9 @@
+import math
 from typing import Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from gliznet.model.config import GliZNetConfig
 
@@ -15,56 +17,96 @@ class BilinearScoring(nn.Module):
         return self.bilinear(text, labels)
 
 
-class LabelContextFusion(nn.Module):
-    """Label interaction through fused text-label representations.
+class CosineScoring(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.logit_scale = nn.Parameter(torch.tensor(math.log(1 / 0.07)))
 
-    Each label's identity is fused with CLS (shared text context), producing
-    per-label "claims on text". Labels then attend to each other's fused views,
-    enabling competitive/cooperative dynamics (e.g. "sports" suppresses "politics",
-    "basketball" reinforces "NBA").
+    def forward(self, text: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        text_norm = F.normalize(text, p=2, dim=-1)
+        label_norm = F.normalize(labels, p=2, dim=-1)
+        scale = torch.clamp(self.logit_scale.exp(), max=100.0)
+        return (text_norm * label_norm).sum(dim=-1, keepdim=True) * scale
 
-    The attention output serves as the label-specific text representation."""
 
-    def __init__(self, hidden_size: int, dropout: float = 0.1, num_heads: int = 8):
+class LabelContextAttention(nn.Module):
+    """Cooperative label enrichment: each label's representation is fused with its
+    first-pass text evidence, then labels attend to each other. This lets label_i
+    see what text evidence label_j found, enabling cooperative routing."""
+
+    def __init__(self, hidden_size: int, num_heads: int = 8):
         super().__init__()
         self.fuse = nn.Linear(hidden_size * 2, hidden_size)
-        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True, dropout=dropout)
-        self.norm = nn.LayerNorm(hidden_size)
+        self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
 
     def forward(
         self,
         dense_labels: torch.Tensor,  # (B, K, D) label embeddings
-        text_cls: torch.Tensor,  # (B, D) CLS text representation
+        dense_text: torch.Tensor,  # (B, K, D) first-pass text pooling per label
         label_mask: torch.Tensor,  # (B, K) bool, True = valid label
-    ) -> torch.Tensor:  # (B, K, D) label-specific text representations
-        # Expand CLS to match label positions
-        text_expanded = text_cls.unsqueeze(1).expand_as(dense_labels)  # (B, K, D)
-        # Fuse: each label's interpretation of shared text
-        fused = self.fuse(torch.cat([text_expanded, dense_labels], dim=-1))
-        # Labels query peer fused views
+    ) -> torch.Tensor:  # (B, K, D) enriched label embeddings
+        # Fuse each label with its text evidence to create the context memory
+        fused = self.fuse(torch.cat([dense_labels, dense_text], dim=-1))
+        # Cross-attention: labels query the fused peer context
         pad_mask = ~label_mask  # True = ignore
         out, _ = self.attn(
-            query=fused, key=fused, value=fused, key_padding_mask=pad_mask
+            query=dense_labels, key=fused, value=fused, key_padding_mask=pad_mask
         )
-        return self.norm(out)
+        return F.normalize(dense_labels + out, p=2, dim=-1)
 
 
 class LabelAggregator(nn.Module):
-    """Aggregates label token embeddings and computes scores via label interaction."""
+    """Aggregates label token embeddings and computes similarities using token-level attention."""
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.config = config
-
         hidden_size = config.backbone_config.hidden_size
         self.hidden_size = hidden_size
         self.lab_token_id = config.lab_token_id
+        # Learned temperature for attention over unit-norm vectors
+        self.attn_temperature = nn.Parameter(
+            torch.tensor(math.log(math.sqrt(float(hidden_size))))
+        )
 
-        self.scoring = BilinearScoring(hidden_size)
-        if config.enrich_labels:
-            self.context = LabelContextFusion(hidden_size, dropout=config.dropout_rate)
+        if config.scoring_method == "cosine":
+            self.scoring = CosineScoring()
         else:
-            self.context = None
+            self.scoring = BilinearScoring(hidden_size)
+        self.dropout = nn.Dropout(config.dropout_rate)
+        if config.enrich_labels:
+            self.label_context = LabelContextAttention(hidden_size)
+        else:
+            self.label_context = None
+
+    def _text_repr_dense(
+        self,
+        dense_labels: torch.Tensor,  # (B, K, D)
+        hidden_states: torch.Tensor,  # (B, L, D)
+        text_mask: torch.Tensor,  # (B, L)
+    ) -> torch.Tensor:  # (B, K, D)
+        """First-pass text pooling returning the full dense (B, K, D) tensor."""
+        scale = self.attn_temperature.exp()
+        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) * scale
+        scores.masked_fill_(~text_mask.unsqueeze(1), float("-inf"))
+        attn = F.softmax(scores, dim=2)
+        return torch.bmm(attn, hidden_states)  # (B, K, D)
+
+    def _text_repr(
+        self,
+        dense_labels: torch.Tensor,
+        hidden_states: torch.Tensor,
+        text_mask: torch.Tensor,
+        all_batch_ids: torch.Tensor,
+        all_label_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Cross-attention of each label over text tokens.
+
+        Returns:
+            aggregated_text: (N, D) label-specific text representations.
+        """
+        agg_text_dense = self._text_repr_dense(dense_labels, hidden_states, text_mask)  # (B, K, D)
+        aggregated_text = agg_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
+        return aggregated_text
 
     def aggregate_labels(
         self,
@@ -80,7 +122,7 @@ class LabelAggregator(nn.Module):
             empty_emb = torch.empty(0, self.hidden_size, device=device)
             return empty_emb, empty_idx, empty_idx, 0
 
-        label_hidden = hidden_states[lab_mask]
+        label_hidden = self.dropout(hidden_states[lab_mask])
 
         lab_counts = lab_mask.sum(dim=1)
         max_k = int(lab_counts.max().item())
@@ -110,29 +152,34 @@ class LabelAggregator(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, ...]:
-        """Aggregate label representations and compute scores.
+        """Aggregate label representations and compute similarities using token-level attention.
 
-        The encoder already performed full self-attention between text and label
-        tokens. CLS captures the global text representation; [LAB] tokens capture
-        label-specific representations enriched by text context.
-
-        When label context is enabled, labels attend to each other's fused
-        (CLS + label) views. The attention output is the text representation.
+        Args:
+            hidden_states: Encoder outputs (B, L, H)
+            lmask: Label mask where >0 indicates label tokens (B, L)
+            input_ids: Input token IDs (B, L)
+            attention_mask: Attention mask for text tokens (B, L)
 
         Returns:
             logits: Similarity scores (N, 1)
             batch_indices: Batch index for each score (N,)
             label_ids: Label ID for each score (N,)
-            label_embeddings: Label embeddings (N, D)
-            text_repr: Label-specific text representations (N, D)
+            label_embeddings: Aggregated label embeddings (N, D)
+            text_aggregations: Label-specific text representations (N, D)
         """
-        B, _, D = hidden_states.shape
+        B, L, D = hidden_states.shape
+
+        hidden_states = F.normalize(hidden_states, p=2, dim=-1)
+
+        # Identify text token positions (exclude label/special tokens)
+        lab_token_mask = input_ids == self.lab_token_id
+        text_mask = (lmask == 0) & (attention_mask == 1) & (~lab_token_mask)
 
         aggregated_labels, all_batch_ids, all_label_ids, max_k = self.aggregate_labels(
             input_ids, hidden_states
         )
 
-        # Early return if no labels found
+        # Early return if no label spans were found
         if max_k == 0:
             empty_logits = torch.empty(0, 1, device=hidden_states.device)
             return (
@@ -143,34 +190,39 @@ class LabelAggregator(nn.Module):
                 aggregated_labels,
             )
 
-        if self.context is not None:
-            # Build dense label tensor for attention
-            dense_labels = aggregated_labels.new_zeros(B, max_k, D)
-            dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels
+        # Token-level attention: attend over text tokens per label.
+        max_label_id = max_k
 
+        dense_labels = aggregated_labels.new_zeros(B, max_label_id, D)
+        dense_labels[all_batch_ids, all_label_ids - 1] = aggregated_labels
+
+        # Let all labels interact with each other and the global CLS token
+        if self.label_context is not None:
             label_mask = torch.zeros(
-                B, max_k, dtype=torch.bool, device=hidden_states.device
+                B, max_label_id, dtype=torch.bool, device=hidden_states.device
             )
             label_mask[all_batch_ids, all_label_ids - 1] = True
+            # Round 1: independent text pooling to get initial text locations
+            dense_text = self._text_repr_dense(dense_labels, hidden_states, text_mask)
+            # Cooperative enrichment: each label attends to peers + their text locations
+            dense_labels = self.label_context(dense_labels, dense_text, label_mask)
+            # Gather enriched label embeddings
+            aggregated_labels = dense_labels[all_batch_ids, all_label_ids - 1]
 
-            # CLS as shared text context
-            text_cls = hidden_states[:, 0]  # (B, D)
+        aggregated_text = self._text_repr(
+            dense_labels,
+            hidden_states,
+            text_mask,
+            all_batch_ids,
+            all_label_ids,
+        )
 
-            # Label interaction: attend to peer fused views
-            text_repr_dense = self.context(dense_labels, text_cls, label_mask)
-
-            # Gather per-label text representations
-            text_repr = text_repr_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
-        else:
-            # No interaction: use CLS directly
-            text_repr = hidden_states[:, 0][all_batch_ids]  # (N, D)
-
-        logits = self.scoring(text_repr, aggregated_labels)
+        logits = self.scoring(aggregated_text, aggregated_labels)
 
         return (
             logits,
             all_batch_ids,
             all_label_ids,
             aggregated_labels,
-            text_repr,
+            aggregated_text,
         )
