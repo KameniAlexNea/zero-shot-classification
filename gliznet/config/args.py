@@ -43,6 +43,12 @@ class ModelArgs:
             "help": "Weight for label repulsion loss (prevents embedding collapse)"
         },
     )
+    alignment_loss_weight: float = field(
+        default=0.0,
+        metadata={
+            "help": "Weight for cosine alignment loss between text and label embeddings"
+        },
+    )
 
     supcon_margin: float = field(
         default=0.0,
@@ -53,7 +59,7 @@ class ModelArgs:
     )
     scoring_method: str = field(
         default="bilinear",
-        metadata={"help": "Scoring head: 'bilinear', 'cosine', 'linear', or 'concat'"},
+        metadata={"help": "Scoring head: 'bilinear' or 'cosine'"},
     )
     enrich_labels: bool = field(
         default=False,

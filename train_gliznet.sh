@@ -28,6 +28,8 @@ nohup accelerate launch train_gliznet.py \
     --label_repulsion_weight 0.4 \
     --supcon_margin 0.25 \
     --scoring_method bilinear \
+    --losses softmax repulsion focal alignment \
+    --alignment_loss_weight 0.5 \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \

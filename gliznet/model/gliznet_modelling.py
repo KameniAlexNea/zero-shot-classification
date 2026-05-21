@@ -145,6 +145,7 @@ class GliZNetForSequenceClassification(GliZNetPreTrainedModel):
                 batch_indices=batch_indices,
                 label_ids=label_ids,
                 label_embeddings=label_embeddings,
+                text_embeddings=text_embeddings,
             )
             loss = loss_dict["total"]
             # Reconstruct dense (B, max_labels) logits so the Trainer can all_gather

@@ -222,10 +222,53 @@ class FocalLoss(nn.Module):
         return sample_loss[valid_samples].mean()
 
 
+class AlignmentLoss(nn.Module):
+    """Cosine alignment regularization between text and label embeddings.
+
+    Forces cos(text_repr_i, label_i) to be high for positive pairs and low
+    for negative pairs. This prevents the bilinear scorer from learning
+    arbitrary projections that ignore embedding geometry.
+
+    Uses CosineEmbeddingLoss (margin-based hinge): positives are pushed
+    toward cos=1, negatives only need cos < margin to incur zero loss.
+    """
+
+    def __init__(self, config: GliZNetConfig):
+        super().__init__()
+        self.margin = 0.0
+
+    def forward(
+        self,
+        label_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor,
+        batch_indices: torch.Tensor,
+        label_ids: torch.Tensor,
+        labels: torch.Tensor,
+        **_,
+    ) -> torch.Tensor:
+        if label_embeddings.numel() == 0 or text_embeddings is None:
+            return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
+
+        # Get ground truth for each (batch, label) pair
+        targets = labels[batch_indices, label_ids - 1]
+        valid = targets != -100
+        if not valid.any():
+            return label_embeddings.new_zeros(1, requires_grad=True).squeeze()
+
+        targets = targets[valid].float()
+        le = label_embeddings[valid]
+        te = text_embeddings[valid]
+
+        # Convert 0/1 targets to +1/-1 for CosineEmbeddingLoss convention
+        y = 2 * targets - 1
+        return F.cosine_embedding_loss(te, le, y, margin=self.margin)
+
+
 LOSS_REGISTRY: Dict[str, type] = {
     "softmax": SoftmaxLoss,
     "repulsion": RepulsionLoss,
     "focal": FocalLoss,
+    "alignment": AlignmentLoss,
 }
 
 
@@ -255,6 +298,7 @@ class GliZNetLoss(nn.Module):
             "softmax": config.supcon_loss_weight,
             "repulsion": config.label_repulsion_weight,
             "focal": config.focal_loss_weight,
+            "alignment": config.alignment_loss_weight,
         }
         modules: Dict[str, nn.Module] = {}
         for name in config.losses:
@@ -273,6 +317,7 @@ class GliZNetLoss(nn.Module):
         batch_indices: torch.Tensor,
         label_ids: torch.Tensor,
         label_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor = None,
     ) -> Dict[str, torch.Tensor]:
         result: Dict[str, torch.Tensor] = {}
 
@@ -310,6 +355,7 @@ class GliZNetLoss(nn.Module):
             "dense_logits": dense_logits,
             "labels": current_labels,
             "label_embeddings": label_embeddings,
+            "text_embeddings": text_embeddings,
             "label_ids": label_ids,
             "batch_indices": batch_indices,
         }
