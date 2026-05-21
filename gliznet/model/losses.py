@@ -229,13 +229,16 @@ class AlignmentLoss(nn.Module):
     for negative pairs. This prevents the bilinear scorer from learning
     arbitrary projections that ignore embedding geometry.
 
-    Uses CosineEmbeddingLoss (margin-based hinge): positives are pushed
-    toward cos=1, negatives only need cos < margin to incur zero loss.
+    Uses CosineEmbeddingLoss (margin-based hinge) with asymmetric weighting:
+    positives are pushed toward cos=1 with full weight, negatives only need
+    cos < margin and receive reduced weight to avoid fighting the bilinear head.
     """
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.margin = 0.0
+        self.margin = 0.2
+        self.weight_pos = 1.0
+        self.weight_neg = 0.5
 
     def forward(
         self,
@@ -261,7 +264,11 @@ class AlignmentLoss(nn.Module):
 
         # Convert 0/1 targets to +1/-1 for CosineEmbeddingLoss convention
         y = 2 * targets - 1
-        return F.cosine_embedding_loss(te, le, y, margin=self.margin)
+
+        # Per-element loss with asymmetric weighting
+        loss = F.cosine_embedding_loss(te, le, y, margin=self.margin, reduction="none")
+        weights = torch.where(y > 0, self.weight_pos, self.weight_neg)
+        return (loss * weights).mean()
 
 
 LOSS_REGISTRY: Dict[str, type] = {
