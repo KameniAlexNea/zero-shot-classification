@@ -69,7 +69,9 @@ class GliZNetConfig(PretrainedConfig):
         self.scoring_method = scoring_method
         self.enrich_labels = enrich_labels
         self.losses = (
-            list(losses) if losses is not None else ["softmax", "repulsion", "focal", "alignment"]
+            list(losses)
+            if losses is not None
+            else ["softmax", "repulsion", "focal", "alignment"]
         )
 
         # Resolve backbone_config without any network I/O.

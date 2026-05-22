@@ -104,7 +104,9 @@ class LabelAggregator(nn.Module):
         Returns:
             aggregated_text: (N, D) label-specific text representations.
         """
-        agg_text_dense = self._text_repr_dense(dense_labels, hidden_states, text_mask)  # (B, K, D)
+        agg_text_dense = self._text_repr_dense(
+            dense_labels, hidden_states, text_mask
+        )  # (B, K, D)
         aggregated_text = agg_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
         return aggregated_text
 
