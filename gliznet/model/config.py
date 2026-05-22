@@ -17,6 +17,7 @@ class GliZNetConfig(PretrainedConfig):
         focal_gamma: Focusing parameter for focal loss (higher = more focus on hard examples)
         supcon_loss_weight: Weight for multi-label softmax loss (legacy name; not true SupCon)
         label_repulsion_weight: Weight for VICReg collapse-prevention loss (default 0.0 — disabled).
+        alignment_loss_weight: Weight for cosine alignment regularization between text/label embeddings.
     """
 
     model_type = "gliznet"
@@ -33,12 +34,13 @@ class GliZNetConfig(PretrainedConfig):
         focal_gamma: float = 2.0,
         supcon_loss_weight: float = 1.0,
         label_repulsion_weight: float = 0.0,
+        alignment_loss_weight: float = 0.0,
         # One-vs-negatives margin: negatives are shifted up by this value before logsumexp,
         # forcing the model to maintain a gap of at least `m` between positive and negative logits.
         supcon_margin: float = 0.0,
         # Label count upper bound (compile-time constant, eliminates .item() graph breaks)
         max_labels: int = 20,
-        # Scoring head: "bilinear" or "cosine"
+        # Scoring head: "bilinear"
         scoring_method: str = "bilinear",
         # Self-attention over [CLS + all labels] before cross-attention scoring
         enrich_labels: bool = False,
@@ -61,12 +63,15 @@ class GliZNetConfig(PretrainedConfig):
         self.focal_gamma = focal_gamma
         self.supcon_loss_weight = supcon_loss_weight
         self.label_repulsion_weight = label_repulsion_weight
+        self.alignment_loss_weight = alignment_loss_weight
         self.supcon_margin = supcon_margin
         self.max_labels = max_labels
         self.scoring_method = scoring_method
         self.enrich_labels = enrich_labels
         self.losses = (
-            list(losses) if losses is not None else ["softmax", "repulsion", "focal"]
+            list(losses)
+            if losses is not None
+            else ["softmax", "repulsion", "focal", "alignment"]
         )
 
         # Resolve backbone_config without any network I/O.

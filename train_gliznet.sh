@@ -16,18 +16,19 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Model Configuration` \
     --model_name "${MODEL_PATH}" \
-    --model_class DebertaV2PreTrainedModel \
     --dropout_rate 0.1 \
     --enrich_labels \
     --save_only_model \
     \
     `# Loss Configuration (SupCon + VICReg + BCE) — matching best run config` \
-    --focal_loss_weight 0.8 \
+    --focal_loss_weight 1.2 \
     --focal_gamma 1.85 \
-    --supcon_loss_weight 1.0 \
-    --label_repulsion_weight 0.1 \
-    --supcon_margin 0.1 \
+    --supcon_loss_weight 0.8 \
+    --label_repulsion_weight 0.4 \
+    --supcon_margin 0.25 \
     --scoring_method bilinear \
+    --losses softmax repulsion focal alignment \
+    --alignment_loss_weight 0.2 \
     \
     `# Data Configuration` \
     --dataset_path alexneakameni/ZSHOT-HARDSET-v2 \
@@ -35,7 +36,7 @@ nohup accelerate launch train_gliznet.py \
     --shuffle_labels \
     --min_label_length 3 \
     --data_seed 42 \
-    --max_extended_ds_size 1000 \
+    --max_extended_ds_size 5000 \
     --use_additional_datasets \
     --text_augmentation True \
     --augmentation_config gliznet/config/augmentation_config.yaml \
@@ -49,8 +50,8 @@ nohup accelerate launch train_gliznet.py \
     \
     `# Training Arguments` \
     --run_name "gliznet_training_${TIMESTAMP}" \
-    --output_dir "results/deberta-v3-base_${TIMESTAMP}" \
-    --num_train_epochs 10 \
+    --output_dir "results/deberta_v3_base_${TIMESTAMP}" \
+    --num_train_epochs 5 \
     --per_device_train_batch_size 48 \
     --per_device_eval_batch_size 48 \
     --gradient_accumulation_steps 2 \
@@ -61,9 +62,11 @@ nohup accelerate launch train_gliznet.py \
     --max_grad_norm 1.0 \
     \
     `# Evaluation & Checkpointing` \
-    --eval_strategy epoch \
-    --save_strategy epoch \
-    --save_total_limit 5 \
+    --eval_strategy steps \
+    --save_strategy steps \
+    --eval_steps 4000 \
+    --save_steps 4000 \
+    --save_total_limit 10 \
     --load_best_model_at_end \
     --metric_for_best_model loss \
     --early_stopping_patience 3 \
@@ -80,7 +83,7 @@ nohup accelerate launch train_gliznet.py \
     --bf16 \
     \
     `# Logging & Monitoring` \
-    --logging_steps 100 \
+    --logging_steps 400 \
     --report_to wandb \
     --remove_unused_columns False \
     \

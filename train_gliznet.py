@@ -63,11 +63,13 @@ def create_model_tokenizer(args: ModelArgs):
             focal_gamma=args.focal_gamma,
             supcon_loss_weight=args.supcon_loss_weight,
             label_repulsion_weight=args.label_repulsion_weight,
+            alignment_loss_weight=args.alignment_loss_weight,
             supcon_margin=args.supcon_margin,
             scoring_method=args.scoring_method,
             losses=args.losses,
             lab_token_id=tokenizer.lab_token_id,
             max_labels=args.max_labels,
+            enrich_labels=args.enrich_labels,
         )
         model = GliZNetForSequenceClassification.from_pretrained(
             args.model_name, config=config
@@ -79,11 +81,13 @@ def create_model_tokenizer(args: ModelArgs):
     config = GliZNetConfig(
         backbone_model=args.model_name,
         dropout_rate=args.dropout_rate,
+        enrich_labels=args.enrich_labels,
         # Loss configuration
         focal_loss_weight=args.focal_loss_weight,
         focal_gamma=args.focal_gamma,
         supcon_loss_weight=args.supcon_loss_weight,
         label_repulsion_weight=args.label_repulsion_weight,
+        alignment_loss_weight=args.alignment_loss_weight,
         supcon_margin=args.supcon_margin,
         scoring_method=args.scoring_method,
         losses=args.losses,
@@ -181,12 +185,20 @@ def main():
     )
 
     # Training: ZSHOT-HARDSET-v2 train split + optional additional datasets
-    train_data = load_dataset(
+    train_data_base = load_dataset(
         path=model_args.dataset_path,
         name=model_args.dataset_name,
         split="train",
         min_label_length=data_config.min_label_length,
     )
+    train_data_fixed = load_dataset(
+        path=model_args.dataset_path,
+        name=model_args.dataset_name,
+        split="train_fixed",
+        min_label_length=data_config.min_label_length,
+    )
+    train_data = datasets.concatenate_datasets([train_data_base, train_data_fixed])
+    train_data.shuffle(seed=training_args.data_seed, writer_batch_size=50000)
     size_before = len(train_data)
     if model_args.use_additional_datasets and model_args.max_extended_ds_size > 0:
         train_data = add_additional_ds(

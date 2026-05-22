@@ -38,7 +38,6 @@ class LabelContextAttention(nn.Module):
         super().__init__()
         self.fuse = nn.Linear(hidden_size * 2, hidden_size)
         self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(hidden_size)
 
     def forward(
         self,
@@ -53,7 +52,7 @@ class LabelContextAttention(nn.Module):
         out, _ = self.attn(
             query=dense_labels, key=fused, value=fused, key_padding_mask=pad_mask
         )
-        return self.norm(dense_labels + out)
+        return F.normalize(dense_labels + out, p=2, dim=-1)
 
 
 class LabelAggregator(nn.Module):
@@ -61,12 +60,9 @@ class LabelAggregator(nn.Module):
 
     def __init__(self, config: GliZNetConfig):
         super().__init__()
-        self.config = config
-
         hidden_size = config.backbone_config.hidden_size
         self.hidden_size = hidden_size
         self.lab_token_id = config.lab_token_id
-        self._inv_scale = hidden_size**-0.5
         # Learned temperature for attention over unit-norm vectors
         self.attn_temperature = nn.Parameter(
             torch.tensor(math.log(math.sqrt(float(hidden_size))))
@@ -108,11 +104,9 @@ class LabelAggregator(nn.Module):
         Returns:
             aggregated_text: (N, D) label-specific text representations.
         """
-        scale = self.attn_temperature.exp()
-        scores = torch.bmm(dense_labels, hidden_states.transpose(1, 2)) * scale
-        scores.masked_fill_(~text_mask.unsqueeze(1), float("-inf"))
-        attn = F.softmax(scores, dim=2)
-        agg_text_dense = torch.bmm(attn, hidden_states)  # (B, K, D)
+        agg_text_dense = self._text_repr_dense(
+            dense_labels, hidden_states, text_mask
+        )  # (B, K, D)
         aggregated_text = agg_text_dense[all_batch_ids, all_label_ids - 1]  # (N, D)
         return aggregated_text
 
@@ -128,7 +122,7 @@ class LabelAggregator(nn.Module):
         if not lab_mask.any():
             empty_idx = torch.empty(0, dtype=torch.long, device=device)
             empty_emb = torch.empty(0, self.hidden_size, device=device)
-            return empty_emb, empty_idx, empty_idx
+            return empty_emb, empty_idx, empty_idx, 0
 
         label_hidden = self.dropout(hidden_states[lab_mask])
 
@@ -188,7 +182,7 @@ class LabelAggregator(nn.Module):
         )
 
         # Early return if no label spans were found
-        if aggregated_labels.shape[0] == 0:
+        if max_k == 0:
             empty_logits = torch.empty(0, 1, device=hidden_states.device)
             return (
                 empty_logits,

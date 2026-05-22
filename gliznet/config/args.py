@@ -9,12 +9,6 @@ class ModelArgs:
         default="microsoft/mdeberta-v3-base",
         metadata={"help": "Pretrained model name or path"},
     )
-    model_class: str = field(
-        default="DebertaV2PreTrainedModel",
-        metadata={
-            "help": "Model class to use (e.g., BertPreTrainedModel, DebertaV2PreTrainedModel)"
-        },
-    )
 
     # Architecture parameters
     dropout_rate: float = field(
@@ -41,6 +35,12 @@ class ModelArgs:
         default=0.1,
         metadata={
             "help": "Weight for label repulsion loss (prevents embedding collapse)"
+        },
+    )
+    alignment_loss_weight: float = field(
+        default=0.0,
+        metadata={
+            "help": "Weight for cosine alignment loss between text and label embeddings"
         },
     )
 

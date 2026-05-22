@@ -94,6 +94,31 @@ class RandomCaseChange(TextAugmentation):
         return " ".join(result)
 
 
+class PunctuationRemoval(TextAugmentation):
+    """Remove punctuation characters to simulate clean/informal text.
+
+    Prevents the model from relying on punctuation (e.g. periods, commas)
+    as spurious features for classification.
+    """
+
+    def __init__(self, punct_prob: float = 0.8, keep_apostrophe: bool = True):
+        self.punct_prob = punct_prob
+        self.keep_apostrophe = keep_apostrophe
+
+    def __call__(self, text: str) -> str:
+        result = []
+        for ch in text:
+            if ch in string.punctuation:
+                if self.keep_apostrophe and ch == "'":
+                    result.append(ch)
+                elif random.random() >= self.punct_prob:
+                    result.append(ch)
+            else:
+                result.append(ch)
+        # Collapse multiple spaces
+        return " ".join("".join(result).split())
+
+
 # ─── nlpaug wrapper ──────────────────────────────────────────────────────────
 
 
@@ -147,6 +172,7 @@ AUGMENTATION_REGISTRY: dict[str, callable] = {
     # Custom (no nlpaug equivalent)
     "SuffixTruncation": lambda **kw: SuffixTruncation(**kw),
     "RandomCaseChange": lambda **kw: RandomCaseChange(**kw),
+    "PunctuationRemoval": lambda **kw: PunctuationRemoval(**kw),
     # nlpaug character-level
     "KeyboardTypo": lambda **kw: _NlpAugWrapper(nac.KeyboardAug(**kw), "KeyboardTypo"),
     "OcrTypo": lambda **kw: _NlpAugWrapper(nac.OcrAug(**kw), "OcrTypo"),

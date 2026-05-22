@@ -7,7 +7,7 @@ from collections import namedtuple
 
 import torch
 import torch.nn as nn
-from transformers import AutoModel
+from transformers import AutoModel, BertConfig
 
 from gliznet.model import GliZNetConfig, GliZNetForSequenceClassification
 from gliznet.model.aggregator import LabelAggregator
@@ -71,11 +71,27 @@ LABELS = torch.tensor([[1.0, -100], [0.0, -100]])
 LAB_TOKEN_ID = 1013
 
 
+def _tiny_backbone_cfg(**overrides) -> BertConfig:
+    """Tiny BertConfig — no network I/O, near-instant model allocation."""
+    defaults = dict(
+        hidden_size=HIDDEN,
+        num_hidden_layers=1,
+        num_attention_heads=1,
+        intermediate_size=32,
+        vocab_size=30522,
+        max_position_embeddings=128,
+    )
+    defaults.update(overrides)
+    return BertConfig(**defaults)
+
+
 def _make_model():
-    model = GliZNetForSequenceClassification.from_pretrained(
-        "bert-base-uncased",
+    cfg = GliZNetConfig(
+        backbone_model="bert-base-uncased",
+        backbone_config=_tiny_backbone_cfg(),
         lab_token_id=LAB_TOKEN_ID,
     )
+    model = GliZNetForSequenceClassification(cfg)
     model.backbone = DummyEncoder(HIDDEN)
     model.config.backbone_config = namedtuple("cfg", ("hidden_size",))(HIDDEN)
     model.aggregator = LabelAggregator(model.config)
@@ -122,11 +138,13 @@ class TestCustomTokens:
         return GliZNETTokenizer.from_pretrained("bert-base-uncased", lab_token="[LAB]")
 
     def _make(self, tokenizer, **kwargs):
-        model = GliZNetForSequenceClassification.from_pretrained(
-            "bert-base-uncased",
+        cfg = GliZNetConfig(
+            backbone_model="bert-base-uncased",
+            backbone_config=_tiny_backbone_cfg(),
             lab_token_id=tokenizer.lab_token_id,
             **kwargs,
         )
+        model = GliZNetForSequenceClassification(cfg)
         model.resize_token_embeddings(len(tokenizer))
         return model
 
@@ -137,18 +155,24 @@ class TestCustomTokens:
         return model
 
     def test_resize_token_embeddings(self):
-        model = GliZNetForSequenceClassification.from_pretrained("bert-base-uncased")
-        orig_size = model.config.backbone_config.vocab_size
+        cfg = GliZNetConfig(
+            backbone_model="bert-base-uncased",
+            backbone_config=_tiny_backbone_cfg(vocab_size=100),
+        )
+        model = GliZNetForSequenceClassification(cfg)
+        orig_size = model.config.backbone_config.vocab_size  # 100
         new_size = orig_size + 5
         model.resize_token_embeddings(new_size)
         assert model.config.backbone_config.vocab_size == new_size
         assert model.backbone.get_input_embeddings().num_embeddings == new_size
 
     def test_lab_token_id_set(self, tokenizer):
-        model = GliZNetForSequenceClassification.from_pretrained(
-            "bert-base-uncased",
+        cfg = GliZNetConfig(
+            backbone_model="bert-base-uncased",
+            backbone_config=_tiny_backbone_cfg(),
             lab_token_id=tokenizer.lab_token_id,
         )
+        model = GliZNetForSequenceClassification(cfg)
         assert model.config.lab_token_id == tokenizer.lab_token_id
 
     def test_forward_lab_token_mode(self, tokenizer):
