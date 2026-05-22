@@ -74,6 +74,12 @@ augmentations:
     params:
       word_prob: 0.05
 
+  - name: PunctuationRemoval
+    prob: 0.6
+    params:
+      punct_prob: 0.8
+      keep_apostrophe: true
+
 # Label augmentations are applied sequentially to (labels_text, labels_int)
 #
 # ScenarioAwareSampler targets real-world inference patterns:

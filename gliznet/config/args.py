@@ -9,12 +9,6 @@ class ModelArgs:
         default="microsoft/mdeberta-v3-base",
         metadata={"help": "Pretrained model name or path"},
     )
-    model_class: str = field(
-        default="DebertaV2PreTrainedModel",
-        metadata={
-            "help": "Model class to use (e.g., BertPreTrainedModel, DebertaV2PreTrainedModel)"
-        },
-    )
 
     # Architecture parameters
     dropout_rate: float = field(
