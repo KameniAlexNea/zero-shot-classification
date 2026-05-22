@@ -21,11 +21,15 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
 GLIZNET_ID = "alexneakameni/gliznet-deberta-v3-base"
+GLIZNET_MODERN_ID = "alexneakameni/gliznet-ModernBERT-base"
 GLICLASS_ID = "knowledgator/gliclass-base-v3.0"
 EVAL_JSON = Path(__file__).parent / "eval_examples.json"
 
 gliznet_pipeline = ZeroShotClassificationPipeline.from_pretrained(
     GLIZNET_ID, classification_type="multi-label", device="cpu"
+)
+gliznet_modern_pipeline = ZeroShotClassificationPipeline.from_pretrained(
+    GLIZNET_MODERN_ID, classification_type="multi-label", device="cpu"
 )
 
 
@@ -68,14 +72,21 @@ def _apply_threshold(scores: dict, threshold: float) -> dict:
 def classify(text: str, labels_str: str, classification_type: str, threshold: float):
     labels = [l.strip() for l in labels_str.split(",") if l.strip()]
     if not text or not labels:
-        return {}, {}
+        return {}, {}, {}
 
-    # GliZNet
+    # GliZNet DeBERTa
     gz_output = gliznet_pipeline(
         text, labels, threshold=None, classification_type=classification_type
     )
     gz_scores = {item.label: round(item.score, 4) for item in gz_output.labels}
     gz_scores = _apply_threshold(gz_scores, threshold)
+
+    # GliZNet ModernBERT
+    gzm_output = gliznet_modern_pipeline(
+        text, labels, threshold=None, classification_type=classification_type
+    )
+    gzm_scores = {item.label: round(item.score, 4) for item in gzm_output.labels}
+    gzm_scores = _apply_threshold(gzm_scores, threshold)
 
     # GLiClass (threshold=0.0 returns all labels; we filter manually below)
     gc_pipeline = gliclass_pipelines.get(classification_type, gliclass_pipelines["multi-label"])
@@ -83,7 +94,7 @@ def classify(text: str, labels_str: str, classification_type: str, threshold: fl
     gc_scores = {r["label"]: round(r["score"], 4) for r in gc_results}
     gc_scores = _apply_threshold(gc_scores, threshold)
 
-    return gz_scores, gc_scores
+    return gz_scores, gzm_scores, gc_scores
 
 
 def _load_eval_examples():
@@ -183,11 +194,17 @@ EXAMPLES = [
 # ── Helpers for evaluation ───────────────────────────────────────────────────
 
 def _get_ranked_scores(text, labels):
-    """Return ranked (label, score) lists for both models, sorted by score desc.
+    """Return ranked (label, score) lists for all models, sorted by score desc.
     Always uses multi-label mode so every label gets a score."""
     gz_output = gliznet_pipeline(text, labels, threshold=None, classification_type="multi-label")
     gz_ranked = sorted(
         [(item.label, item.score) for item in gz_output.labels],
+        key=lambda x: x[1], reverse=True,
+    )
+
+    gzm_output = gliznet_modern_pipeline(text, labels, threshold=None, classification_type="multi-label")
+    gzm_ranked = sorted(
+        [(item.label, item.score) for item in gzm_output.labels],
         key=lambda x: x[1], reverse=True,
     )
 
@@ -198,7 +215,7 @@ def _get_ranked_scores(text, labels):
         key=lambda x: x[1], reverse=True,
     )
 
-    return gz_ranked, gc_ranked
+    return gz_ranked, gzm_ranked, gc_ranked
 
 
 def _example_metrics(ranked, expected_set, threshold):
@@ -243,50 +260,57 @@ def _example_metrics(ranked, expected_set, threshold):
 def _sample_random():
     """Pick a random eval example and return fields + multi-label predictions."""
     if not EVAL_EXAMPLES:
-        return "", "", "multi-label", "", "", {}, {}
+        return "", "", "multi-label", "", "", {}, {}, {}
     ex = random.choice(EVAL_EXAMPLES)
     labels_str = ", ".join(ex["labels"])
     expected_str = ", ".join(ex["expected"])
     why_not_lines = [f"'{k}' — {v}" for k, v in ex.get("not_labels_explained", {}).items()]
     why_not_str = "\n".join(why_not_lines)
 
-    gz_ranked, gc_ranked = _get_ranked_scores(ex["text"], ex["labels"])
+    gz_ranked, gzm_ranked, gc_ranked = _get_ranked_scores(ex["text"], ex["labels"])
     gz_display = {l: round(s, 4) for l, s in gz_ranked}
+    gzm_display = {l: round(s, 4) for l, s in gzm_ranked}
     gc_display = {l: round(s, 4) for l, s in gc_ranked}
 
     return (
         ex["text"], labels_str, "multi-label",
         expected_str, why_not_str,
-        gz_display, gc_display,
+        gz_display, gzm_display, gc_display,
     )
 
 
 def _run_full_eval(threshold, progress=gr.Progress()):
-    """Evaluate both models on all examples with ranking + classification metrics."""
+    """Evaluate all models on all examples with ranking + classification metrics."""
     if not EVAL_EXAMPLES:
         return "No examples loaded.", pd.DataFrame()
 
     rows = []
     metric_keys = ("hit@1", "hit@3", "mrr", "ndcg@3", "ndcg@5", "ndcg", "precision", "recall", "f1")
     gz_agg = {k: [] for k in metric_keys}
+    gzm_agg = {k: [] for k in metric_keys}
     gc_agg = {k: [] for k in metric_keys}
     gz_all_y, gz_all_scores = [], []
+    gzm_all_y, gzm_all_scores = [], []
     gc_all_y, gc_all_scores = [], []
 
     for ex in progress.tqdm(EVAL_EXAMPLES, desc="Evaluating"):
         expected = set(ex["expected"])
-        gz_ranked, gc_ranked = _get_ranked_scores(ex["text"], ex["labels"])
+        gz_ranked, gzm_ranked, gc_ranked = _get_ranked_scores(ex["text"], ex["labels"])
 
         gz_m = _example_metrics(gz_ranked, expected, threshold)
+        gzm_m = _example_metrics(gzm_ranked, expected, threshold)
         gc_m = _example_metrics(gc_ranked, expected, threshold)
 
         for k in metric_keys:
             gz_agg[k].append(gz_m[k])
+            gzm_agg[k].append(gzm_m[k])
             gc_agg[k].append(gc_m[k])
 
         # Collect for global ROC AUC
         gz_all_y.extend(gz_m["y_true"])
         gz_all_scores.extend(gz_m["y_scores"])
+        gzm_all_y.extend(gzm_m["y_true"])
+        gzm_all_scores.extend(gzm_m["y_scores"])
         gc_all_y.extend(gc_m["y_true"])
         gc_all_scores.extend(gc_m["y_scores"])
 
@@ -304,12 +328,14 @@ def _run_full_eval(threshold, progress=gr.Progress()):
             return ", ".join(l for l, _ in ranked[:k])
 
         gz_top = _top_until_covered(gz_ranked, expected)
+        gzm_top = _top_until_covered(gzm_ranked, expected)
         gc_top = _top_until_covered(gc_ranked, expected)
 
         rows.append({
             "text": ex["text"][:80] + ("…" if len(ex["text"]) > 80 else ""),
             "expected": ", ".join(sorted(expected)),
-            "GliZNet ranking": gz_top,
+            "GliZNet-DeBERTa ranking": gz_top,
+            "GliZNet-ModernBERT ranking": gzm_top,
             "GLiClass ranking": gc_top,
         })
 
@@ -319,6 +345,10 @@ def _run_full_eval(threshold, progress=gr.Progress()):
         gz_auc = roc_auc_score(gz_all_y, gz_all_scores)
     except ValueError:
         gz_auc = float("nan")
+    try:
+        gzm_auc = roc_auc_score(gzm_all_y, gzm_all_scores)
+    except ValueError:
+        gzm_auc = float("nan")
     try:
         gc_auc = roc_auc_score(gc_all_y, gc_all_scores)
     except ValueError:
@@ -335,31 +365,33 @@ def _run_full_eval(threshold, progress=gr.Progress()):
     lines = [
         f"## Results — {n} examples, threshold={threshold}\n",
         "### Ranking Metrics\n",
-        "| Metric | GliZNet | GLiClass |",
-        "|--------|---------|----------|",
+        "| Metric | GliZNet-DeBERTa | GliZNet-ModernBERT | GLiClass |",
+        "|--------|-----------------|--------------------|-----------|\n",
     ]
     for display, key in ranking_keys:
         gz_val = np.mean(gz_agg[key])
+        gzm_val = np.mean(gzm_agg[key])
         gc_val = np.mean(gc_agg[key])
-        lines.append(f"| {display} | {gz_val:.4f} | {gc_val:.4f} |")
+        lines.append(f"| {display} | {gz_val:.4f} | {gzm_val:.4f} | {gc_val:.4f} |")
 
     lines += [
         "",
         f"### Classification Metrics (threshold={threshold})\n",
-        "| Metric | GliZNet | GLiClass |",
-        "|--------|---------|----------|",
+        "| Metric | GliZNet-DeBERTa | GliZNet-ModernBERT | GLiClass |",
+        "|--------|-----------------|--------------------|-----------|\n",
     ]
     for display, key in clf_keys:
         gz_val = np.mean(gz_agg[key])
+        gzm_val = np.mean(gzm_agg[key])
         gc_val = np.mean(gc_agg[key])
-        lines.append(f"| {display} | {gz_val:.4f} | {gc_val:.4f} |")
+        lines.append(f"| {display} | {gz_val:.4f} | {gzm_val:.4f} | {gc_val:.4f} |")
 
     lines += [
         "",
         "### ROC AUC (micro, across all label decisions)\n",
-        "| Metric | GliZNet | GLiClass |",
-        "|--------|---------|----------|",
-        f"| ROC AUC | {gz_auc:.4f} | {gc_auc:.4f} |",
+        "| Metric | GliZNet-DeBERTa | GliZNet-ModernBERT | GLiClass |",
+        "|--------|-----------------|--------------------|-----------|\n",
+        f"| ROC AUC | {gz_auc:.4f} | {gzm_auc:.4f} | {gc_auc:.4f} |",
     ]
 
     return "\n".join(lines), pd.DataFrame(rows)
@@ -370,8 +402,9 @@ def _run_full_eval(threshold, progress=gr.Progress()):
 with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
     gr.Markdown(
         "# Zero-Shot Classification: GliZNet vs GLiClass\n"
-        "Compare **GliZNet** (`alexneakameni/gliznet-deberta-v3-base`) "
-        "against **GLiClass** (`knowledgator/gliclass-base-v3.0`)."
+        "Compare **GliZNet-DeBERTa** (`alexneakameni/gliznet-deberta-v3-base`), "
+        "**GliZNet-ModernBERT** (`alexneakameni/gliznet-ModernBERT-base`), "
+        "and **GLiClass** (`knowledgator/gliclass-base-v3.0`)."
     )
 
     with gr.Tabs():
@@ -396,19 +429,20 @@ with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
                 classify_btn = gr.Button("Classify", variant="primary")
 
             with gr.Row():
-                gz_out = gr.Label(label="GliZNet")
+                gz_out = gr.Label(label="GliZNet-DeBERTa")
+                gzm_out = gr.Label(label="GliZNet-ModernBERT")
                 gc_out = gr.Label(label="GLiClass")
 
             classify_btn.click(
                 fn=classify,
                 inputs=[text_input, labels_input, cls_type, threshold],
-                outputs=[gz_out, gc_out],
+                outputs=[gz_out, gzm_out, gc_out],
             )
 
             random_btn.click(
                 fn=_sample_random,
                 inputs=[],
-                outputs=[text_input, labels_input, cls_type, expected_box, why_not_box, gz_out, gc_out],
+                outputs=[text_input, labels_input, cls_type, expected_box, why_not_box, gz_out, gzm_out, gc_out],
             )
 
             def _classify_example(text, labels_str, classification_type, threshold, _expected, _why_not):
@@ -417,7 +451,7 @@ with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
             gr.Examples(
                 examples=EXAMPLES,
                 inputs=[text_input, labels_input, cls_type, threshold, expected_box, why_not_box],
-                outputs=[gz_out, gc_out],
+                outputs=[gz_out, gzm_out, gc_out],
                 fn=_classify_example,
                 cache_examples=True,
             )
@@ -425,7 +459,7 @@ with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
         # ── Tab 2: Batch evaluation ──────────────────────────────────────
         with gr.TabItem("Evaluation"):
             gr.Markdown(
-                f"Run both models on all **{len(EVAL_EXAMPLES)}** examples and compute "
+                f"Run all models on all **{len(EVAL_EXAMPLES)}** examples and compute "
                 "ranking metrics (Hit@k, MRR, NDCG) and classification metrics "
                 "(Precision, Recall, F1, ROC AUC).\n\n"
                 "All examples are evaluated as **multi-label**: every candidate label "

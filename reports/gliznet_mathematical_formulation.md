@@ -2,7 +2,7 @@
 
 ## Abstract
 
-GliZNet (Generalized Label-Informed Zero-Shot Network) is a novel architecture for zero-shot text classification that leverages label semantics through a carefully designed sequence construction, a label aggregator with cross-attention, and a multi-objective loss function combining one-vs-negatives softmax ranking, label repulsion, and focal loss. This document provides a comprehensive mathematical formulation of the model, detailing how each component contributes to the overall effectiveness.
+GliZNet (Generalized Label-Informed Zero-Shot Network) is a novel architecture for zero-shot text classification that leverages label semantics through a carefully designed sequence construction, a label aggregator with cross-attention, and a multi-objective loss function combining one-vs-negatives softmax ranking, label repulsion, focal loss, and cosine alignment regularisation. This document provides a comprehensive mathematical formulation of the model, detailing how each component contributes to the overall effectiveness.
 
 ---
 
@@ -277,13 +277,13 @@ where $\tau = \exp(\log \tau_0)$ is a learnable temperature (initialized to $1/0
 
 ## 8. Loss Function: Multi-Objective Optimization
 
-GliZNet's loss is a weighted combination of three complementary objectives:
+GliZNet's loss is a weighted combination of four complementary objectives:
 
 $$
-\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softmax}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{focal}} \mathcal{L}_{\text{focal}}
+\mathcal{L}_{\text{total}} = \lambda_{\text{softmax}} \mathcal{L}_{\text{softmax}} + \lambda_{\text{repulsion}} \mathcal{L}_{\text{repulsion}} + \lambda_{\text{focal}} \mathcal{L}_{\text{focal}} + \lambda_{\text{alignment}} \mathcal{L}_{\text{alignment}}
 $$
 
-where $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{repulsion}} = 0.1$, $\lambda_{\text{focal}} = 0.8$ are hyperparameters.
+where $\lambda_{\text{softmax}} = 0.8$, $\lambda_{\text{repulsion}} = 0.4$, $\lambda_{\text{focal}} = 1.2$, and $\lambda_{\text{alignment}} = 0.2$ are hyperparameters.
 
 ### 8.1 One-vs-Negatives Softmax Loss (Primary Objective)
 
@@ -294,7 +294,7 @@ For each sample $b$, let:
 - $\mathcal{P}_b = \{j \mid y_{b,j} = 1\}$ be the set of positive (ground truth) labels
 - $\mathcal{N}_b = \{j \mid y_{b,j} = 0,\, \text{valid}\}$ be the valid negative labels
 
-For each positive $p \in \mathcal{P}_b$, the loss is the cross-entropy of that positive against all negatives, with an optional additive margin $m \geq 0$ on the negatives:
+For each positive $p \in \mathcal{P}_b$, the loss is the cross-entropy of that positive against all negatives, with an optional additive margin $m \geq 0$ on the negatives (currently $m = 0.25$):
 
 $$
 \ell_{b,p} = \log\!\left(\exp(\text{sim}_{b,p}) + \sum_{n \in \mathcal{N}_b} \exp(\text{sim}_{b,n} + m)\right) - \text{sim}_{b,p}
@@ -470,6 +470,58 @@ $$
 
 Together, they provide both **discriminative ranking** (which label is most compatible) and **calibrated thresholding** (is each label's probability above a meaningful decision boundary) signals.
 
+### 8.4 Alignment Loss (Embedding Geometry Regularisation)
+
+#### **8.4.1 Motivation**
+
+The bilinear scorer (§7.1.1) learns a full interaction matrix $\mathbf{W}_{\text{bilinear}} \in \mathbb{R}^{d_h \times d_h}$, which is powerful but unconstrained — it can learn arbitrary projections that ignore the cosine geometry of the embedding space. Without regularisation, the model might rely entirely on the bilinear head while letting embeddings drift into degenerate configurations where geometrically similar vectors receive very different scores.
+
+The alignment loss acts as an inductive bias: it encourages the embedding space to be meaningful *on its own* (high cosine similarity for matching text-label pairs, low for non-matching), so the bilinear head can refine an already informative geometry rather than building one from scratch.
+
+#### **8.4.2 Formulation**
+
+For each valid (text, label) pair $(b, j)$ with ground-truth target $y_{b,j} \in \{0, 1\}$, convert to the CosineEmbeddingLoss convention $\tilde{y}_{b,j} = 2y_{b,j} - 1 \in \{-1, +1\}$.
+
+The per-element loss is:
+
+$$
+\ell_{b,j}^{\text{align}} = \begin{cases}
+1 - \cos(\mathbf{e}_{b,j}^{\text{text}}, \mathbf{e}_{b,j}^{\text{label}}) & \text{if } \tilde{y}_{b,j} = +1 \text{ (positive pair)} \\
+\max(0,\; \cos(\mathbf{e}_{b,j}^{\text{text}}, \mathbf{e}_{b,j}^{\text{label}}) - \mu) & \text{if } \tilde{y}_{b,j} = -1 \text{ (negative pair)}
+\end{cases}
+$$
+
+where $\mu = 0.2$ is the margin. Positive pairs are pushed toward $\cos = 1$; negative pairs only incur loss if their cosine similarity exceeds $\mu$ (i.e., they are "too close").
+
+#### **8.4.3 Asymmetric Weighting**
+
+Positive and negative pairs receive different weights:
+
+$$
+\mathcal{L}_{\text{alignment}} = \frac{1}{|\mathcal{V}|} \sum_{(b,j) \in \mathcal{V}} w_{b,j} \cdot \ell_{b,j}^{\text{align}}
+$$
+
+where $\mathcal{V} = \{(b,j) \mid y_{b,j} \neq -100\}$ is the set of valid (non-padding) pairs, and:
+
+$$
+w_{b,j} = \begin{cases}
+w_{\text{pos}} = 1.0 & \text{if } y_{b,j} = 1 \\
+w_{\text{neg}} = 0.5 & \text{if } y_{b,j} = 0
+\end{cases}
+$$
+
+**Why asymmetric?** The bilinear head is the primary scorer; the alignment loss is a regulariser. Positives should *strongly* cluster (full weight) to maintain embedding quality, but negatives only need to stay below the margin — pushing them too aggressively toward $\cos = -1$ would fight the bilinear head's ability to learn nuanced negative-pair scoring.
+
+#### **8.4.4 Interaction with Other Losses**
+
+The alignment loss provides a complementary gradient signal:
+
+- **Softmax + Focal**: Operate on bilinear logits $\text{sim}_{b,j}$ — they shape the scoring function
+- **Repulsion**: Operates on label embeddings within each sample — prevents collapse
+- **Alignment**: Operates on cosine similarity between text and label embeddings — shapes the embedding *geometry* directly
+
+This means the alignment loss regularises the representations that feed *into* the bilinear scorer, ensuring they carry meaningful directional information even before the learned interaction matrix is applied.
+
 ---
 
 ## 9. Training Dynamics and Optimization
@@ -479,14 +531,15 @@ Together, they provide both **discriminative ranking** (which label is most comp
 The composite loss creates a rich gradient landscape. For label embedding $\mathbf{e}_j^{\text{label}}$:
 
 $$
-\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{softmax}} \frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{focal}} \frac{\partial \mathcal{L}_{\text{focal}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}}
+\frac{\partial \mathcal{L}_{\text{total}}}{\partial \mathbf{e}_j^{\text{label}}} = \lambda_{\text{softmax}} \frac{\partial \mathcal{L}_{\text{softmax}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{repulsion}} \frac{\partial \mathcal{L}_{\text{repulsion}}}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{focal}} \frac{\partial \mathcal{L}_{\text{focal}}}{\partial \text{sim}_j} \frac{\partial \text{sim}_j}{\partial \mathbf{e}_j^{\text{label}}} + \lambda_{\text{alignment}} \frac{\partial \mathcal{L}_{\text{alignment}}}{\partial \mathbf{e}_j^{\text{label}}}
 $$
 
-**Three forces**:
+**Four forces**:
 
 1. **One-vs-negatives softmax**: For each positive, push its logit above all negative logits by at least margin $m$ (relative ranking)
 2. **Repulsion**: Push different labels apart within the same sample (geometric)
 3. **Focal loss**: Class-balanced, scenario-adaptive calibration signal. Full focusing ($\gamma = 1.85$) for mixed-class samples; standard BCE ($\gamma = 0$) for pure-class samples where softmax loss provides no gradient. Positive and negative class losses are averaged separately with equal weight, preventing minority-class dilution.
+4. **Alignment**: Regularise the embedding geometry — push matching text-label pairs toward high cosine similarity and non-matching pairs below a margin, ensuring the bilinear head operates on a meaningful embedding space.
 
 ### 9.2 Learnable Parameters
 
@@ -511,7 +564,7 @@ The `LabelContextAttention` block accounts for the vast majority ($\approx 6d_h^
 - Optimizer: AdamW with weight decay
 - Learning rate: 1e-5 to 5e-5 (lower for backbone, higher for new parameters)
 - Warmup: 10% of total steps
-- Loss weights: $\lambda_{\text{softmax}} = 1.0$, $\lambda_{\text{focal}} = 0.8$ ($\gamma = 1.85$, adaptive), $\lambda_{\text{repulsion}} = 0.1$; margin $m = 0.1$
+- Loss weights: $\lambda_{\text{softmax}} = 0.8$, $\lambda_{\text{focal}} = 1.2$ ($\gamma = 1.85$, adaptive), $\lambda_{\text{repulsion}} = 0.4$, $\lambda_{\text{alignment}} = 0.2$; margin $m = 0.25$
 
 **Scheduler**: Cosine decay after warmup to prevent overfitting
 
@@ -595,11 +648,11 @@ For batch size $B$, sequence length $L$, and $K$ labels:
 
 ### 11.2 Comparison to Related Approaches
 
-| Method                  | Sequence                          | Passes | Label Interaction     | Loss                        |
-| ----------------------- | --------------------------------- | ------ | --------------------- | --------------------------- |
-| **Cross-Encoder** | [CLS] text [SEP] label            | $K$  | None (independent)    | BCE                         |
-| **Dual-Encoder**  | [CLS] text; [CLS] label           | 2      | None                  | Contrastive                 |
-| **GliZNet**       | [CLS] text [SEP] labels [LAB] ... | 1      | Full (self-attention) | Softmax + Repulsion + Focal |
+| Method                  | Sequence                          | Passes | Label Interaction     | Loss                                    |
+| ----------------------- | --------------------------------- | ------ | --------------------- | --------------------------------------- |
+| **Cross-Encoder** | [CLS] text [SEP] label            | $K$  | None (independent)    | BCE                                     |
+| **Dual-Encoder**  | [CLS] text; [CLS] label           | 2      | None                  | Contrastive                             |
+| **GliZNet**       | [CLS] text [SEP] labels [LAB] ... | 1      | Full (self-attention) | Softmax + Repulsion + Focal + Alignment |
 
 **GliZNet advantages**:
 
@@ -628,7 +681,12 @@ For batch size $B$, sequence length $L$, and $K$ labels:
 - Higher → more separated labels, risk of over-separation
 - Lower → risk of collapse
 
-**Recommended**: Start with $(1.0, 0.8, 0.1)$ for (softmax, focal, repulsion) and tune based on validation.
+**$\lambda_{\text{alignment}}$**: Embedding geometry
+
+- Higher → stronger cosine-space regularisation, bilinear head has less freedom
+- Lower → bilinear head dominates, embedding geometry may degrade
+
+**Recommended**: Start with $(0.8, 1.2, 0.4, 0.2)$ for (softmax, focal, repulsion, alignment) and tune based on validation.
 
 ### 12.2 Attention Temperature $\tau_{\text{attn}}$
 
@@ -686,7 +744,7 @@ GliZNet represents a novel synthesis of:
 - **L2-normalised representation space**: Stable gradients without learned projections
 - **Label-conditioned attention**: Dynamic text aggregation per label
 - **Label enrichment**: Cooperative label context via multi-head self-attention
-- **Multi-objective learning**: Balancing discrimination (softmax), diversity (repulsion), and hard-example focus (focal loss)
+- **Multi-objective learning**: Balancing discrimination (softmax), diversity (repulsion), hard-example focus (focal loss), and embedding geometry (alignment)
 
 The mathematical formulation reveals how these components interact:
 
@@ -694,6 +752,7 @@ The mathematical formulation reveals how these components interact:
 - Repulsion prevents collapse while respecting context
 - Attention enables fine-grained text-label matching
 - Focal loss focuses training on hard examples
+- Alignment loss regularises embedding geometry for the bilinear scorer
 - Label enrichment enables cooperative routing between labels
 
 Together, these design choices create a powerful, efficient, and interpretable zero-shot classification architecture.
@@ -720,11 +779,12 @@ Together, these design choices create a powerful, efficient, and interpretable z
 | $\mathcal{L}_{\text{softmax}}$   | One-vs-negatives softmax loss                 | scalar                        |
 | $\mathcal{L}_{\text{repulsion}}$ | Per-sample VICReg repulsion loss              | scalar                        |
 | $\mathcal{L}_{\text{focal}}$     | Adaptive focal loss                           | scalar                        |
+| $\mathcal{L}_{\text{alignment}}$ | Cosine alignment regularisation loss          | scalar                        |
 
 ---
 
 ---
 
-**Document Version**: 2.1
-**Last Updated**: May 13, 2026
+**Document Version**: 2.2
+**Last Updated**: May 22, 2026
 **Author**: Alex Kameni

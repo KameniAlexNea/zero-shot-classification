@@ -6,6 +6,7 @@ tags:
   - zero-shot-classification
   - text-classification
   - deberta
+  - modernbert
   - gliznet
   - joint-encoding
   - contrastive-learning
@@ -15,14 +16,20 @@ metrics:
   - mrr
   - hit_at_k
   - ndcg
-base_model: microsoft/deberta-v3-base
+base_model:
+  - microsoft/deberta-v3-base
+  - answerdotai/ModernBERT-base
 pipeline_tag: zero-shot-classification
 ---
-# GliZNet — DeBERTa-v3-base
+# GliZNet
 
 **GliZNet** (Generalized Zero-Shot Network) is a zero-shot text classification model that processes the input text and **all candidate labels jointly in a single forward pass**, achieving O(1) inference complexity regardless of the number of labels.
 
-Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deberta-v3-base), GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with additive margin), auxiliary focal loss, and a partial VICReg regularizer (variance + covariance terms only — the invariance term is dropped, leaving a pure label-repulsion objective) sharpens discrimination between semantically similar labels.
+Available in two backbone variants:
+- **[alexneakameni/gliznet-deberta-v3-base](https://huggingface.co/alexneakameni/gliznet-deberta-v3-base)** — DeBERTa-v3-base backbone (~184M params)
+- **[alexneakameni/gliznet-ModernBERT-base](https://huggingface.co/alexneakameni/gliznet-ModernBERT-base)** — ModernBERT-base backbone (~150M params)
+
+GliZNet encodes text and labels together in one sequence, extracts each label's representation from its `[LAB]` separator token, builds a label-specific text summary via cross-attention, and scores each pair with a bilinear head. A hybrid loss combining one-vs-negatives softmax (primary, with additive margin), auxiliary focal loss, and a partial VICReg regularizer (variance + covariance terms only — the invariance term is dropped, leaving a pure label-repulsion objective) sharpens discrimination between semantically similar labels.
 
 > **Paper**: *GliZNet: A Novel Architecture for Zero-Shot Text Classification*
 > Alex Kameni (Ivalua / Massy, France)
@@ -34,15 +41,15 @@ Built on top of [microsoft/deberta-v3-base](https://huggingface.co/microsoft/deb
 
 ## Model Details
 
-| Property              | Value                                         |
-| --------------------- | --------------------------------------------- |
-| Backbone              | `microsoft/deberta-v3-base` (~184 M params) |
-| Scoring head          | Bilinear (`nn.Bilinear(D, D, 1)`)           |
-| Max sequence length   | 512 tokens                                    |
-| Label separator token | `[LAB]`                                     |
-| Label representation  | `[LAB]` token hidden state                  |
-| Training precision    | `bfloat16`                                  |
-| Model type ID         | `gliznet`                                   |
+| Property              | Value                                                                    |
+| --------------------- | ------------------------------------------------------------------------ |
+| Backbone              | `microsoft/deberta-v3-base` (~184M) or `answerdotai/ModernBERT-base` (~150M) |
+| Scoring head          | Bilinear (`nn.Bilinear(D, D, 1)`)                                       |
+| Max sequence length   | 512 tokens                                                               |
+| Label separator token | `[LAB]`                                                                  |
+| Label representation  | `[LAB]` token hidden state                                              |
+| Training precision    | `bfloat16`                                                               |
+| Model type ID         | `gliznet`                                                                |
 
 ### Architecture Summary
 
@@ -108,23 +115,24 @@ GLiClass variants are the closest published competitors; all encode text and lab
 
 ### Macro F1 on GLiClass benchmark datasets
 
-| Dataset              | GliZNet (ours)   | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-base |
-| -------------------- | ---------------- | ----------------- | ---------------- | -------------------- |
-| CR                   | 0.8783           | 0.9281            | 0.9127           | 0.8936               |
-| SST-2                | 0.9010           | 0.9176            | 0.8959           | 0.8982               |
-| SST-5                | 0.3739           | 0.3798            | 0.3236           | 0.2885               |
-| IMDb                 | 0.8909           | 0.9366            | 0.9248           | 0.9154               |
-| 20-Newsgroups        | 0.4957           | 0.5806            | 0.5045           | 0.3342               |
-| Enron Spam           | 0.4983           | 0.7574            | 0.6252           | 0.5903               |
-| Financial PhraseBank | 0.7604           | 0.9023            | 0.9094           | 0.4121               |
-| AG News              | 0.7346           | 0.7229            | 0.7209           | 0.7069               |
-| Emotion              | 0.4655           | 0.4504            | 0.4450           | 0.4249               |
-| Rotten Tomatoes      | 0.7714           | 0.8411            | 0.7943           | 0.7060               |
-| **AVERAGE**    | **0.6770** | **0.7417**  | **0.7056** | **0.6170**     |
+| Dataset              | GliZNet ModernBERT-Base (ours) | GliZNet DeBERTa-v3-Base (ours) | GLiClass-large-v3 | GLiClass-base-v3 | GLiClass-modern-base |
+| -------------------- | ------------------------------ | ------------------------------ | ----------------- | ---------------- | -------------------- |
+| CR                   | 0.8902                         | 0.9001                         | 0.9281            | 0.9127           | 0.8936               |
+| SST-2                | 0.8710                         | 0.8858                         | 0.9176            | 0.8959           | 0.8982               |
+| SST-5                | 0.4227                         | 0.3387                         | 0.3798            | 0.3236           | 0.2885               |
+| IMDb                 | 0.8866                         | 0.9037                         | 0.9366            | 0.9248           | 0.9154               |
+| 20-Newsgroups        | 0.3981                         | 0.4862                         | 0.5806            | 0.5045           | 0.3342               |
+| Enron Spam           | 0.4317                         | 0.5892                         | 0.7574            | 0.6252           | 0.5903               |
+| Financial PhraseBank | 0.8037                         | 0.7970                         | 0.9023            | 0.9094           | 0.4121               |
+| AG News              | 0.7800                         | 0.7384                         | 0.7229            | 0.7209           | 0.7069               |
+| Emotion              | 0.4042                         | 0.5135                         | 0.4504            | 0.4450           | 0.4249               |
+| Rotten Tomatoes      | 0.7456                         | 0.7357                         | 0.8411            | 0.7943           | 0.7060               |
+| **AVERAGE**          | **0.6634**                     | **0.6888**                     | **0.7417**        | **0.7056**       | **0.6170**           |
 
-**Δ GliZNet vs GLiClass-large**: −0.0647 · **Δ vs GLiClass-base**: −0.0286 · **Δ vs GLiClass-modern-base**: +0.0600
+**Δ GliZNet-ModernBERT vs GLiClass-large**: −0.0783 · **Δ vs GLiClass-base**: −0.0422 · **Δ vs GLiClass-modern-base**: +0.0464
+**Δ GliZNet-DeBERTa vs GLiClass-large**: −0.0529 · **Δ vs GLiClass-base**: −0.0168 · **Δ vs GLiClass-modern-base**: +0.0718
 
-*GliZNet is a DeBERTa-v3-**base** model trained on synthetic data with augmentation; GLiClass-large uses a significantly bigger backbone. GliZNet surpasses GLiClass-base on AG News and Rotten Tomatoes.*
+*Both GliZNet variants are **base**-size models trained on synthetic data with a single-stage pipeline. GliZNet-DeBERTa surpasses GLiClass-base on AG News, Emotion, and SST-5. GliZNet-ModernBERT excels on SST-5 (+0.0991 vs GLiClass-base) and AG News (+0.0591).*
 
 ---
 
@@ -142,7 +150,7 @@ GLiClass variants are the closest published competitors; all encode text and lab
 | Precision             | bf16                                                                                                                        |
 | Distributed training  | DDP via `accelerate launch`                                                                                               |
 | Hardware              | 2 × NVIDIA GPU                                                                                                             |
-| Loss                  | One-vs-negatives softmax (weight 1.0, margin 0.1) + focal loss (weight 0.8, γ=1.85, adaptive γ=0 for pure-class samples, class-balanced averaging) + label repulsion (weight 0.1) |
+| Loss                  | One-vs-negatives softmax (weight 0.8, margin 0.25) + focal loss (weight 1.2, γ=1.85, adaptive γ=0 for pure-class samples, class-balanced averaging) + label repulsion (weight 0.4) + alignment loss (weight 0.2, cosine embedding loss with margin=0.2, asymmetric weighting) |
 | Max labels per sample | 20                                                                                                                          |
 | Label enrichment      | `LabelContextAttention`: each label attends to peers + their first-pass text evidence (cooperative routing)                 |
 | Text augmentation     | nlpaug pipeline (keyboard typos, OCR typos, char swap/delete, word delete, spelling errors, suffix truncation, case change) |

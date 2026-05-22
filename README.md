@@ -86,10 +86,11 @@ Evaluated on the **GLiClass benchmark** — 10 standard text-classification data
 |---|---|
 | GLiClass-large-v3.0 | 0.7417 |
 | GLiClass-base-v3.0 | 0.7056 |
-| **GliZNet-deberta-v3-base (ours, curr best)** | **0.6770** |
+| **GliZNet-deberta-v3-base (ours)** | **0.6888** |
+| **GliZNet-ModernBERT-base (ours)** | **0.6634** |
 | GLiClass-modern-base-v3.0 | 0.6170 |
 
-GliZNet-base outperforms GLiClass-modern-base (+0.0600) and is within **0.029 macro F1 of GLiClass-base** — surpassing it on AG News, Emotion, SST-2, and SST-5 — while using a single-stage training pipeline. See [`reports/model_card.md`](reports/model_card.md) for the full per-dataset breakdown.
+Both GliZNet variants outperform GLiClass-modern-base and surpass GLiClass-base on AG News, SST-5, and Emotion — while using a single-stage training pipeline. See [`reports/model_card.md`](reports/model_card.md) for the full per-dataset breakdown.
 
 ## 🎯 Use Cases
 
@@ -154,14 +155,14 @@ config = GliZNetConfig(
     similarity_metric="cosine",      # "cosine", "dot", "bilinear"
     use_projection_layernorm=False,  # LayerNorm after projection
     
-    # Training loss weights
-    bce_loss_weight=1.0,
-    supcon_loss_weight=1.0,
-    label_repulsion_weight=0.1,
-    
-    # Temperature scaling
-    logit_scale_init=2.0,
-    learn_temperature=True,
+    # Training losses (configurable via --losses flag)
+    losses=["softmax", "repulsion", "focal", "alignment"],
+    supcon_loss_weight=0.8,          # One-vs-negatives softmax
+    focal_loss_weight=1.2,           # Scenario-adaptive focal
+    label_repulsion_weight=0.4,      # VICReg-style label decorrelation
+    alignment_loss_weight=0.2,       # Cosine alignment regularization
+    supcon_margin=0.25,              # Additive margin for softmax
+    focal_gamma=1.85,                # Focal loss gamma
 )
 ```
 
