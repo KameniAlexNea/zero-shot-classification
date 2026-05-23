@@ -281,6 +281,7 @@ def _sample_random():
 
 def _run_full_eval(threshold, progress=gr.Progress()):
     """Evaluate all models on all examples with ranking + classification metrics."""
+    # print(f"[EVAL] Starting evaluation with threshold={threshold}, {len(EVAL_EXAMPLES)} examples")
     if not EVAL_EXAMPLES:
         return "No examples loaded.", pd.DataFrame()
 
@@ -293,8 +294,9 @@ def _run_full_eval(threshold, progress=gr.Progress()):
     gzm_all_y, gzm_all_scores = [], []
     gc_all_y, gc_all_scores = [], []
 
-    for ex in progress.tqdm(EVAL_EXAMPLES, desc="Evaluating"):
+    for i, ex in enumerate(progress.tqdm(EVAL_EXAMPLES, desc="Evaluating")):
         expected = set(ex["expected"])
+        # print(f"[EVAL] Example {i+1}/{len(EVAL_EXAMPLES)}")
         gz_ranked, gzm_ranked, gc_ranked = _get_ranked_scores(ex["text"], ex["labels"])
 
         gz_m = _example_metrics(gz_ranked, expected, threshold)
@@ -366,7 +368,7 @@ def _run_full_eval(threshold, progress=gr.Progress()):
         f"## Results — {n} examples, threshold={threshold}\n",
         "### Ranking Metrics\n",
         "| Metric | GliZNet-DeBERTa | GliZNet-ModernBERT | GLiClass |",
-        "|--------|-----------------|--------------------|-----------|\n",
+        "|--------|------------------|--------------------|----------|",
     ]
     for display, key in ranking_keys:
         gz_val = np.mean(gz_agg[key])
@@ -378,7 +380,7 @@ def _run_full_eval(threshold, progress=gr.Progress()):
         "",
         f"### Classification Metrics (threshold={threshold})\n",
         "| Metric | GliZNet-DeBERTa | GliZNet-ModernBERT | GLiClass |",
-        "|--------|-----------------|--------------------|-----------|\n",
+        "|--------|------------------|--------------------|----------|",
     ]
     for display, key in clf_keys:
         gz_val = np.mean(gz_agg[key])
@@ -390,11 +392,14 @@ def _run_full_eval(threshold, progress=gr.Progress()):
         "",
         "### ROC AUC (micro, across all label decisions)\n",
         "| Metric | GliZNet-DeBERTa | GliZNet-ModernBERT | GLiClass |",
-        "|--------|-----------------|--------------------|-----------|\n",
+        "|--------|------------------|--------------------|----------|",
         f"| ROC AUC | {gz_auc:.4f} | {gzm_auc:.4f} | {gc_auc:.4f} |",
     ]
 
-    return "\n".join(lines), pd.DataFrame(rows)
+    md_result = "\n".join(lines)
+    df_result = pd.DataFrame(rows)
+    # print(f"[EVAL] Done. Returning markdown ({len(md_result)} chars) + {len(df_result)} rows.")
+    return md_result, df_result
 
 
 # ── UI ───────────────────────────────────────────────────────────────────────
@@ -453,7 +458,7 @@ with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
                 inputs=[text_input, labels_input, cls_type, threshold, expected_box, why_not_box],
                 outputs=[gz_out, gzm_out, gc_out],
                 fn=_classify_example,
-                cache_examples=True,
+                cache_examples=False,
             )
 
         # ── Tab 2: Batch evaluation ──────────────────────────────────────
@@ -477,7 +482,7 @@ with gr.Blocks(title="Zero-Shot Classification: GliZNet vs GLiClass") as demo:
             eval_metrics = gr.Markdown("*Click 'Run Evaluation' to start.*")
             eval_table = gr.Dataframe(
                 label="Per-example results (ranked labels until all expected are covered)",
-                interactive=True,
+                interactive=False,
                 wrap=True,
             )
 
